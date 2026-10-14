@@ -36,7 +36,7 @@ function loadSources(names, overrides) {
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
-      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData']
+      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
   return { ...ctx.__exports, timers, window: ctx.window, setFetch: (fn) => { ctx.__fetch = fn; } };
@@ -660,7 +660,7 @@ test('T1.3 reporting: after handing over to the original player, nothing more is
 function apiRig(dryRun) {
   const sent = [];
   const local = new Map(dryRun ? [['lite-player-for-echo360:dryRun', JSON.stringify(dryRun)]] : []);
-  const m = loadSources(['00-util', '10-adapter', '11-echo360-api'], {
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api'], {
     localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v) },
   });
   m.setFetch((url, init) => {
@@ -1664,4 +1664,50 @@ test('interface text joins its parts with the language\'s punctuation, not liter
     .flatMap((f) => readFileSync(join(root, 'src', f), 'utf8').split('\n').map((l, i) => [f + ':' + (i + 1), l]))
     .filter(([, l]) => glued.test(l)).map(([at]) => at);
   assert.deepEqual(bad, []);
+});
+
+test('a failure that may pass (no connection, server error) is told apart from "not offered here"', () => {
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api']);
+  const fetchFailed = new TypeError('Failed to fetch');
+  assert.equal(m.isTransient(fetchFailed), true);
+  for (const s of [0, 408, 429, 500, 502, 503]) assert.equal(m.isTransient(new m.ApiError(s)), true, String(s));
+  for (const s of [200, 401, 403, 404]) assert.equal(m.isTransient(new m.ApiError(s)), false, String(s));
+  assert.equal(m.isTransient(new Error('empty transcript')), false);
+});
+
+test('the playback failure says why in words, not the player library\'s code', () => {
+  const m = loadSources(['00-util', '01-i18n', '35-stream']);
+  const r = (f, online = true) => m.playbackFailReason({ details: 'fragLoadError', code: 0, media: false, ...f }, online);
+  assert.equal(r({ code: 503 }), 'the video server answered with error 503');
+  assert.equal(r({ code: 404 }), 'the video file is not on the server (404)');
+  assert.equal(r({ code: 0 }, false), 'there is no network connection');
+  assert.equal(r({ code: 0 }), 'the video server could not be reached');
+  assert.equal(r({ media: true, details: 'bufferAppendError' }), 'the video data could not be read');
+  for (const x of [r({ code: 503 }), r({}), r({ media: true })]) assert.doesNotMatch(x, /fragLoadError|bufferAppendError/);
+});
+
+test('captions: a transcript that failed for now with no captions file rejects; "there are none" resolves to []', async () => {
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api']);
+  const lesson = { transcriptUrl: '/t', captionsUrl: '/c.vtt' };
+  const res = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => (typeof body === 'string' ? body : '') });
+  const vtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n';
+  const run = (t, c) => { m.setFetch(async (u) => (u === '/t' ? t() : c())); return m.echo360ClassroomAdapter.fetchCues(lesson); };
+  const offline = () => { throw new TypeError('Failed to fetch'); };
+  await assert.rejects(run(offline, offline), (e) => m.isTransient(e));
+  await assert.rejects(run(() => res(500, {}), () => res(404, '')), (e) => e.status === 500);
+  assert.equal((await run(() => res(404, {}), () => res(404, ''))).length, 0, 'no transcript, no captions: none');
+  assert.equal((await run(() => res(500, {}), () => res(200, vtt))).length, 1, 'captions file stands in');
+});
+
+test('an expired school sign-in (Echo360 redirects to its login page) is said as such, not as no connection', async () => {
+  const { m, api } = apiRig();
+  let init = null;
+  m.setFetch((url, i) => { init = i; return Promise.resolve({ type: 'opaqueredirect', ok: false, status: 0 }); });
+  await assert.rejects(api.notes(), (e) => {
+    assert.equal(init.redirect, 'manual', 'the redirect is not followed (followed, it fails like no connection)');
+    assert.ok(e.login);
+    assert.equal(m.isTransient(e), false, 'retrying does not help');
+    assert.match(m.errorText(e), /sign-in has expired/);
+    return true;
+  });
 });

@@ -165,12 +165,18 @@ const echo360ClassroomAdapter = {
 
 // Transcript cues as [{ start, end, text, speaker }] (seconds), sorted by start. Uses the
 // transcript API (same cues as the captions, with speaker labels) and falls back to the
-// WebVTT captions file. Resolves to [] when the recording has neither.
+// WebVTT captions file. Resolves to [] when the recording has neither; rejects when the
+// transcript failed for now (isTransient: no connection, server error) and there is no
+// captions file to fall back on, so the player can offer to try again.
 echo360ClassroomAdapter.fetchCues = function (lesson) {
   const fromTranscript = () => {
     if (!lesson.transcriptUrl) return Promise.reject(new Error('no transcript url'));
-    return fetch(lesson.transcriptUrl, { credentials: 'include', headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('transcript HTTP ' + r.status))))
+    // As Echo360Api.request: a redirect only goes to the login page (sign-in expired).
+    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } })
+      .then((r) => {
+        if (r.type === 'opaqueredirect') throw Object.assign(new Error('HTTP 401'), { status: 401, login: true });
+        return r.ok ? r.json() : Promise.reject(Object.assign(new Error('HTTP ' + r.status), { status: r.status }));
+      })
       .then((j) => {
         const raw = j && j.data && j.data.contentJSON && j.data.contentJSON.cues;
         if (!Array.isArray(raw) || !raw.length) throw new Error('empty transcript');
@@ -185,10 +191,14 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
       .then((r) => (r.ok ? r.text() : ''))
       .then(parseVtt);
   };
+  let failed = null;
   return fromTranscript()
-    .catch(() => fromVtt())
-    .then((cues) => cues.sort((a, b) => a.start - b.start))
-    .catch(() => []);
+    .catch((e) => { failed = e; return fromVtt(); })
+    .catch(() => [])
+    .then((cues) => {
+      if (!cues.length && failed && (isTransient(failed) || failed.login)) throw failed;
+      return cues.sort((a, b) => a.start - b.start);
+    });
 };
 
 function parseVttTime(s) {

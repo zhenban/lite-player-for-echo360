@@ -299,9 +299,14 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .pausehint svg { width: 14px; height: 14px; }
 .paused:not(.waiting) .pausehint { display: inline-flex; }
 .paused:not(.waiting) .title { margin-right: 0; }
-/* Session renewal in progress: a small label in the corner, never over the controls. */
-.sessionhint { position: absolute; right: var(--sp3); top: 64px; z-index: 5; display: flex; align-items: center; gap: var(--sp2);
-  padding: 6px var(--sp3) 6px 10px; border-radius: var(--r2); background: var(--overlay); font-size: 12px; pointer-events: none; }
+/* Session renewal in progress, or offline: a small label in the corner, never over the controls. */
+:is(.sessionhint, .nethint) { position: absolute; right: var(--sp3); top: 64px; z-index: 5; display: flex; align-items: center; gap: var(--sp2);
+  padding: 6px var(--sp3) 6px 10px; border-radius: var(--r2); background: var(--overlay); font-size: 12px; pointer-events: none;
+  max-width: calc(100% - 24px); }
+/* Offline explains the renewal too (it waits for the network); show one label. */
+.nethint:not([hidden]) ~ .sessionhint { display: none; }
+.pane.loadfailed > :not(.loaderr) { display: none; }
+.loaderr { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp3); padding: var(--sp4); color: var(--text-2); }
 .sessionhint i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .9s linear infinite; }
 .toast { position: absolute; z-index: 6; left: 50%; bottom: 100px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp3);
   padding: var(--sp2) var(--sp2) var(--sp2) var(--sp4); border-radius: var(--r3); background: var(--overlay); font-size: 13px; box-shadow: var(--shadow);
@@ -600,6 +605,7 @@ function playerTemplate() {
   </div>
   <div class="captions" hidden><span></span></div>
   <div class="center"><div class="spinner"></div></div>
+  <div class="nethint" role="status" hidden><span>${tr('offlineHint')}</span></div>
   <div class="sessionhint" role="status" hidden><i></i><span>${tr('sessionRenewing')}</span></div>
   <div class="top">
     <a class="back" aria-label="${tr('back')}" data-tip="${tr('back')}">${svg('back')}</a>

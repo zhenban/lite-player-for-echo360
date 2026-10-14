@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.19.0
+// @version      0.20.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.19.0';
+  const VERSION = '0.20.0';
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -651,7 +651,19 @@ const STRINGS = {
     minute: '1 minute',
     minutes: '{n} minutes',
     playbackFailedTitle: 'Playback failed',
-    playbackFailedText: 'The video could not be loaded ({detail}). You can retry or switch to the original player.',
+    playbackFailedText: 'The video could not be loaded: {detail}. You can retry or switch to the original player.',
+    failMedia: 'the video data could not be read',
+    failServer: 'the video server answered with error {code}',
+    failMissing: 'the video file is not on the server ({code})',
+    failRefused: 'the video server refused the request ({code})',
+    failOffline: 'there is no network connection',
+    failUnreachable: 'the video server could not be reached',
+    netError: 'Echo360 could not be reached',
+    offlineHint: 'No connection. Playback continues when you are back online.',
+    notesLoadFailed: 'Could not load your notes ({error}).',
+    discussionLoadFailed: 'Could not load the discussion ({error}).',
+    transcriptLoadFailed: 'Could not load the transcript ({error}).',
+    captionsLoadFailed: 'The transcript could not be loaded. You can try again in the Transcript tab.',
     retry: 'Retry',
     close: 'Close',
     errorNotice: 'Lite Player for Echo360 ran into an unexpected error and switched to the original player (with the CPU fix enabled).',
@@ -1091,7 +1103,19 @@ STRINGS.zh = {
   minute: '1 分钟',
   minutes: '{n} 分钟',
   playbackFailedTitle: '播放失败',
-  playbackFailedText: '视频无法加载（{detail}）。可以重试，或切换到原播放器。',
+  playbackFailedText: '视频无法加载：{detail}。可以重试，或切换到原播放器。',
+  failMedia: '视频数据无法读取',
+  failServer: '视频服务器返回错误 {code}',
+  failMissing: '服务器上没有这个视频文件（{code}）',
+  failRefused: '视频服务器拒绝了请求（{code}）',
+  failOffline: '没有网络连接',
+  failUnreachable: '连不上视频服务器',
+  netError: '连不上 Echo360',
+  offlineHint: '网络已断开，恢复后会自动继续播放。',
+  notesLoadFailed: '无法加载你的笔记（{error}）。',
+  discussionLoadFailed: '无法加载讨论（{error}）。',
+  transcriptLoadFailed: '无法加载转录（{error}）。',
+  captionsLoadFailed: '转录没能加载，可以在“转录”标签页重试。',
   retry: '重试',
   close: '关闭',
   errorNotice: 'Echo360 轻量播放器遇到意外错误，已切换到原播放器（CPU 修复已开启）。',
@@ -1900,12 +1924,18 @@ const echo360ClassroomAdapter = {
 
 // Transcript cues as [{ start, end, text, speaker }] (seconds), sorted by start. Uses the
 // transcript API (same cues as the captions, with speaker labels) and falls back to the
-// WebVTT captions file. Resolves to [] when the recording has neither.
+// WebVTT captions file. Resolves to [] when the recording has neither; rejects when the
+// transcript failed for now (isTransient: no connection, server error) and there is no
+// captions file to fall back on, so the player can offer to try again.
 echo360ClassroomAdapter.fetchCues = function (lesson) {
   const fromTranscript = () => {
     if (!lesson.transcriptUrl) return Promise.reject(new Error('no transcript url'));
-    return fetch(lesson.transcriptUrl, { credentials: 'include', headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('transcript HTTP ' + r.status))))
+    // As Echo360Api.request: a redirect only goes to the login page (sign-in expired).
+    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } })
+      .then((r) => {
+        if (r.type === 'opaqueredirect') throw Object.assign(new Error('HTTP 401'), { status: 401, login: true });
+        return r.ok ? r.json() : Promise.reject(Object.assign(new Error('HTTP ' + r.status), { status: r.status }));
+      })
       .then((j) => {
         const raw = j && j.data && j.data.contentJSON && j.data.contentJSON.cues;
         if (!Array.isArray(raw) || !raw.length) throw new Error('empty transcript');
@@ -1920,10 +1950,14 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
       .then((r) => (r.ok ? r.text() : ''))
       .then(parseVtt);
   };
+  let failed = null;
   return fromTranscript()
-    .catch(() => fromVtt())
-    .then((cues) => cues.sort((a, b) => a.start - b.start))
-    .catch(() => []);
+    .catch((e) => { failed = e; return fromVtt(); })
+    .catch(() => [])
+    .then((cues) => {
+      if (!cues.length && failed && (isTransient(failed) || failed.login)) throw failed;
+      return cues.sort((a, b) => a.start - b.start);
+    });
 };
 
 function parseVttTime(s) {
@@ -1990,9 +2024,25 @@ class ApiError extends Error {
   }
 }
 
+// A failure that may pass by itself: no connection (fetch rejects with a TypeError), a
+// timeout, too many requests or a server error. Any other refusal (401, 403, 404, an
+// answer saying "ko") means the feature is not offered here.
+function isTransient(e) {
+  if (e && e.name === 'TypeError') return true;
+  const s = e && e.status;
+  return s === 0 || s === 408 || s === 429 || s >= 500;
+}
+
 // What to tell the user about a failed request or operation.
 function errorText(e) {
+  if (e && e.login) return tr('authLoginExpiredText');
   return (e && (e.serverText || e.message)) || String(e);
+}
+
+// The same for a failed load: no connection in words instead of fetch's "Failed to fetch".
+function loadErrorText(e) {
+  if (e && e.name === 'TypeError') return tr(navigator.onLine === false ? 'failOffline' : 'netError');
+  return errorText(e);
 }
 
 // Same thumbnail choice as the original player: first thumbnail set, the last image taken
@@ -2021,12 +2071,15 @@ class Echo360Api {
 
   async request(method, path, body) {
     /** @type {RequestInit & { headers: Record<string, string> }} */
-    const opts = { method, credentials: 'include', headers: { Accept: 'application/json' } };
+    // A redirect is not followed: Echo360 only redirects to its login page, once the school
+    // sign-in has expired (followed, it fails as "Failed to fetch", like no connection).
+    const opts = { method, credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
     const r = await fetch(path, opts);
+    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
     let j = null;
     try { j = await r.json(); } catch (e) { /* empty body */ }
     if (!r.ok || (j && j.status === 'ko')) throw new ApiError(r.status, j && j.message);
@@ -2653,9 +2706,14 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .pausehint svg { width: 14px; height: 14px; }
 .paused:not(.waiting) .pausehint { display: inline-flex; }
 .paused:not(.waiting) .title { margin-right: 0; }
-/* Session renewal in progress: a small label in the corner, never over the controls. */
-.sessionhint { position: absolute; right: var(--sp3); top: 64px; z-index: 5; display: flex; align-items: center; gap: var(--sp2);
-  padding: 6px var(--sp3) 6px 10px; border-radius: var(--r2); background: var(--overlay); font-size: 12px; pointer-events: none; }
+/* Session renewal in progress, or offline: a small label in the corner, never over the controls. */
+:is(.sessionhint, .nethint) { position: absolute; right: var(--sp3); top: 64px; z-index: 5; display: flex; align-items: center; gap: var(--sp2);
+  padding: 6px var(--sp3) 6px 10px; border-radius: var(--r2); background: var(--overlay); font-size: 12px; pointer-events: none;
+  max-width: calc(100% - 24px); }
+/* Offline explains the renewal too (it waits for the network); show one label. */
+.nethint:not([hidden]) ~ .sessionhint { display: none; }
+.pane.loadfailed > :not(.loaderr) { display: none; }
+.loaderr { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp3); padding: var(--sp4); color: var(--text-2); }
 .sessionhint i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .9s linear infinite; }
 .toast { position: absolute; z-index: 6; left: 50%; bottom: 100px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp3);
   padding: var(--sp2) var(--sp2) var(--sp2) var(--sp4); border-radius: var(--r3); background: var(--overlay); font-size: 13px; box-shadow: var(--shadow);
@@ -2954,6 +3012,7 @@ function playerTemplate() {
   </div>
   <div class="captions" hidden><span></span></div>
   <div class="center"><div class="spinner"></div></div>
+  <div class="nethint" role="status" hidden><span>${tr('offlineHint')}</span></div>
   <div class="sessionhint" role="status" hidden><i></i><span>${tr('sessionRenewing')}</span></div>
   <div class="top">
     <a class="back" aria-label="${tr('back')}" data-tip="${tr('back')}">${svg('back')}</a>
@@ -3606,7 +3665,8 @@ class Stream {
       }
     }
     log.warn('fatal hls error', data.type, data.details, code || '');
-    this.onFatal({ auth: code === 401 || code === 403, details: data.details });
+    this.onFatal({ auth: code === 401 || code === 403, details: data.details, code: code || 0,
+      media: data.type === platform.Hls.ErrorTypes.MEDIA_ERROR });
   }
 
   kick(at) {
@@ -3650,6 +3710,19 @@ class Stream {
     v.load();
     this.uri = null;
   }
+}
+
+// Why the video could not be loaded, in words, from what stream.onFatal reports
+// ({ code, media, details }) and whether the browser is online.
+function playbackFailReason(f, online) {
+  if (f.media) return tr('failMedia');
+  const c = f.code;
+  if (c >= 500) return tr('failServer', { code: c });
+  if (c === 404 || c === 410) return tr('failMissing', { code: c });
+  if (c >= 400) return tr('failRefused', { code: c });
+  if (!online) return tr('failOffline');
+  if (/load|timeout|network/i.test(f.details || '')) return tr('failUnreachable');
+  return f.details || tr('failUnreachable');
 }
 
 // ---- 36-session.js ----
@@ -3991,6 +4064,8 @@ class LitePlayer {
     this.ui = { dragging: false };
     this.sync = null;
     this.followerFailed = false;
+    this.playbackFailed = false;    // the "playback failed" message is up
+    this.partRetries = new Map();   // side-panel tab -> load again, for loads that failed for now
     this.frame = new FrameTask(() => this.render(), () => this.host);
     this.d.add(() => this.frame.cancel());
 
@@ -4395,9 +4470,25 @@ class LitePlayer {
       this.recoverAccess(this.clock, () => this.showAuthError());
       return;
     }
-    this.showError(tr('playbackFailedTitle'), tr('playbackFailedText', { detail: f.details }),
-      [[tr('retry'), () => { this.hideError(); this.loadClock(this.clockPos, this.clock.position(), true); }, true],
-        [tr('useOriginal'), () => this.opts.onFallback('error')]]);
+    this.showError(tr('playbackFailedTitle'), tr('playbackFailedText', { detail: playbackFailReason(f, navigator.onLine !== false) }),
+      [[tr('retry'), () => this.retryPlayback(), true], [tr('useOriginal'), () => this.opts.onFallback('error')]]);
+    this.playbackFailed = true;
+  }
+
+  retryPlayback() {
+    this.hideError();
+    this.loadClock(this.clockPos, this.clock.position(), true);
+  }
+
+  // Back online: load again at once instead of waiting for the next retry, and retry a
+  // playback that gave up while offline. Parts that failed to load try again too.
+  onOnline() {
+    this.$('.nethint').hidden = true;
+    if (this.playbackFailed) { this.retryPlayback(); return; }
+    const v = this.video;
+    if (!v.paused && v.readyState < 3) this.clock.kick(v.currentTime);
+    if (this.follower && this.fvideo.readyState < 3) this.follower.kick(this.fvideo.currentTime);
+    for (const retry of this.partRetries.values()) retry();
   }
 
   // The video files were refused: renew the access in the background and carry on from
@@ -4584,6 +4675,9 @@ class LitePlayer {
     on('ended', () => this.savePosition(0));
     d.listen(document, 'visibilitychange', () => { if (!document.hidden) this.render(true); });
     d.listen(window, 'hashchange', () => { const tm = this.linkTime(); if (tm != null) this.seek(tm); });
+    d.listen(window, 'offline', () => { this.$('.nethint').hidden = false; });
+    d.listen(window, 'online', () => this.onOnline());
+    if (navigator.onLine === false) this.$('.nethint').hidden = false;
 
     // Stall watchdog (playing, not seeking, time has not moved for STALL_SEC) and, every
     // few ticks, the local resume position as a fallback for the server-side one.
@@ -4761,10 +4855,24 @@ class LitePlayer {
     this.cues = null;
     const none = () => { if (!this.destroyed) this.menus.captionsAvailable(tr('captionsNone')); };
     if (!this.opts.fetchCues) { none(); if (this.silence) this.silence.start([]); return; }
-    this.opts.fetchCues(this.lesson).then((cues) => {
-      if (this.destroyed) return;
-      if (this.silence) this.silence.start(cues);
-      if (!cues.length) { none(); return; }
+    // Silence detection waits until it is known whether there is a transcript (a load that
+    // failed for now is retried), so that it does not settle for the audio-only analysis.
+    let cues = [];
+    const load = () => this.opts.fetchCues(this.lesson).then((c) => {
+      if (this.destroyed) return false;
+      if (this.silence) this.silence.start(c);
+      if (!c.length) { none(); return false; }
+      cues = c;
+      return true;
+    }, (e) => {
+      log.warn('captions:', e && e.message ? e.message : e);
+      if (this.destroyed) return false;
+      if (isTransient(e) || e.login) { this.menus.captionsAvailable(tr('captionsLoadFailed')); return e; }
+      none();
+      if (this.silence) this.silence.start([]);
+      return false;
+    });
+    this.loadPart('transcript', this.transcript, load, () => {
       this.cues = cues;
       if (this.slidesPane) this.slidesPane.invalidate();
       if (this.reporter) this.reporter.captionsAvailable = cues.length;
@@ -4772,8 +4880,7 @@ class LitePlayer {
       this.transcript.setCues(cues);
       this.menus.captionsAvailable('');
       if (this.prefs.captions) this.menus.setCaptions(true, true);
-      this.registerTab('transcript', this.transcript);
-    }, (e) => { none(); log.warn('captions:', e && e.message ? e.message : e); });
+    }, 'transcriptLoadFailed');
   }
 
   // ---- audio processing ----
@@ -4960,21 +5067,64 @@ class LitePlayer {
     this.tags = new TagStore(l, () => { if (!this.destroyed && this.notes) this.notes.changed(); });
     this.tags.load().catch((e) => log.warn('tags:', e && e.message ? e.message : e));
     this.notes = new NotesPane(this, this.$('.pane[data-pane=notes]'), api, canFlag, this.d.feature('notes'));
-    this.notes.load().then((ok) => {
-      if (this.destroyed || !ok) return;
+    this.loadPart('notes', this.notes, () => this.notes.load(), () => {
       this.notesReady = true;
       this.$('.bmbtn').hidden = false;
       this.menus.fitBar();
       this.menuActions.exportNotes = () => this.notes.openExport();
       this.renderFlagButton();
       this.renderBookmarkButton();
-      this.registerTab('notes', this.notes);
-    });
+    }, 'notesLoadFailed');
     this.discussion = new DiscussionPane(this, this.$('.pane[data-pane=discussion]'), api, this.d.feature('discussion'));
-    this.discussion.load().then((ok) => {
-      if (this.destroyed || !ok) return;
-      this.registerTab('discussion', this.discussion);
-    });
+    this.loadPart('discussion', this.discussion, () => this.discussion.load(), () => {}, 'discussionLoadFailed');
+  }
+
+  // Loads what a side-panel tab shows. `load` resolves true when loaded, false when this
+  // lesson does not offer it (no tab), or to the error. An error that may pass by itself
+  // (isTransient: no connection, server error) keeps the tab, which says what happened
+  // with "Retry"; it is also tried again when the browser comes back online.
+  loadPart(tab, controller, load, ready, failKey) {
+    const pane = this.$('.pane[data-pane=' + tab + ']');
+    let busy = false;
+    const attempt = () => {
+      if (busy || this.destroyed) return;
+      busy = true;
+      Promise.resolve().then(load).then((r) => r, (e) => e).then(guard((r) => {
+        busy = false;
+        if (this.destroyed) return;
+        if (r === true) {
+          this.partRetries.delete(tab);
+          this.showPartError(pane, '');
+          ready();
+          this.registerTab(tab, controller);
+        } else if (r && (r.login || (r.status === 401 && !this.lesson.isAnonymousUser))) {
+          // Signed out: only signing in again helps, which a reload offers.
+          this.showPartError(pane, tr('authLoginExpiredText'), () => this.reloadHere(), tr('reload'));
+          this.registerTab(tab, controller);
+        } else if (r && isTransient(r)) {
+          log.info(tab + ' failed to load, can retry:', r.message);
+          this.partRetries.set(tab, attempt);
+          this.showPartError(pane, tr(failKey, { error: loadErrorText(r) }), attempt);
+          this.registerTab(tab, controller);
+        }
+      }));
+    };
+    attempt();
+  }
+
+  showPartError(pane, msg, action, label) {
+    let box = pane.querySelector(':scope > .loaderr');
+    if (msg && !box) {
+      box = el('div.loaderr', { role: 'alert' }, el('p'), el('button.pbtn'));
+      pane.prepend(box);
+    }
+    pane.classList.toggle('loadfailed', !!msg);
+    if (!box) return;
+    box.hidden = !msg;
+    box.querySelector('p').textContent = msg;
+    const b = box.querySelector('button');
+    b.textContent = label || tr('retry');
+    b.onclick = action || null;
   }
 
   updateMarkers() {
@@ -5072,7 +5222,7 @@ class LitePlayer {
     this.wake();
   }
 
-  hideError() { this.$('.error').hidden = true; }
+  hideError() { this.$('.error').hidden = true; this.playbackFailed = false; }
 
   destroy() {
     if (this.destroyed) return;
@@ -6930,8 +7080,9 @@ class TranscriptPanel {
     this.search = elem.querySelector('.tsearch');
     this.countEl = elem.querySelector('.tcount');
     this.backBtn = elem.querySelector('.tback');
+    // Empty until setCues: the tab can be shown before (a load that failed, with "Retry").
     this.cues = [];
-    this.index = null;
+    this.index = new CueIndex([]);
     this.rows = null;
     this.current = -1;
     this.follow = true;
@@ -6947,6 +7098,8 @@ class TranscriptPanel {
     this.cues = cues;
     this.index = new CueIndex(cues);
     if (this.rows) { this.list.textContent = ''; this.rows = null; }
+    // Shown already (a load that failed, then "Retry"): build the new list now.
+    if (this.visible) this.show(true);
   }
 
   get open() { return this.visible; }
@@ -7204,12 +7357,12 @@ class NotesPane {
     this.build();
   }
 
-  // Resolves true when notes are available for this recording.
+  // Resolves true when notes are loaded, else to the error (see player.loadPart).
   async load() {
     const [notes, flags] = await Promise.allSettled([this.api.notes(), this.canFlag ? this.api.flags() : Promise.resolve([])]);
     if (notes.status !== 'fulfilled') {
       log.info('notes unavailable:', notes.reason && notes.reason.message);
-      return false;
+      return notes.reason || false;
     }
     this.items = notes.value.concat(flags.status === 'fulfilled' ? flags.value : []);
     this.sort();
@@ -7896,7 +8049,7 @@ class DiscussionPane {
     this.build();
   }
 
-  // Resolves true when discussions are enabled for this lesson.
+  // Resolves true when loaded, else to the error (see player.loadPart).
   // Loads can overlap (after a write, on opening the tab, "Refresh"): only the newest one's
   // answer is used, so an older answer arriving late cannot hide a post just made.
   async load() {
@@ -7913,8 +8066,8 @@ class DiscussionPane {
     } catch (e) {
       if (seq !== this.loadSeq) return false;
       log.info('discussions unavailable:', e.message);
-      if (this.loadedAt) this.showError(tr('loadFailed', { error: errorText(e) }));
-      return false;
+      if (this.loadedAt) this.showError(tr('loadFailed', { error: loadErrorText(e) }));
+      return e || false;
     }
   }
 
@@ -7976,7 +8129,8 @@ class DiscussionPane {
     this.updateLinkLabel();
     if (this.dirty) this.render();
     // Refresh when the tab is opened, at most once a minute (no live push channel).
-    if (Date.now() - this.loadedAt > 60000) this.load();
+    // Never loaded: the first load failed and the tab says so, with "Retry".
+    if (this.loadedAt && Date.now() - this.loadedAt > 60000) this.load();
   }
 
   showError(msg) {

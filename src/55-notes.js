@@ -25,12 +25,12 @@ class NotesPane {
     this.build();
   }
 
-  // Resolves true when notes are available for this recording.
+  // Resolves true when notes are loaded, else to the error (see player.loadPart).
   async load() {
     const [notes, flags] = await Promise.allSettled([this.api.notes(), this.canFlag ? this.api.flags() : Promise.resolve([])]);
     if (notes.status !== 'fulfilled') {
       log.info('notes unavailable:', notes.reason && notes.reason.message);
-      return false;
+      return notes.reason || false;
     }
     this.items = notes.value.concat(flags.status === 'fulfilled' ? flags.value : []);
     this.sort();

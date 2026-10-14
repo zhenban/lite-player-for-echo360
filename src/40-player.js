@@ -51,6 +51,8 @@ class LitePlayer {
     this.ui = { dragging: false };
     this.sync = null;
     this.followerFailed = false;
+    this.playbackFailed = false;    // the "playback failed" message is up
+    this.partRetries = new Map();   // side-panel tab -> load again, for loads that failed for now
     this.frame = new FrameTask(() => this.render(), () => this.host);
     this.d.add(() => this.frame.cancel());
 
@@ -455,9 +457,25 @@ class LitePlayer {
       this.recoverAccess(this.clock, () => this.showAuthError());
       return;
     }
-    this.showError(tr('playbackFailedTitle'), tr('playbackFailedText', { detail: f.details }),
-      [[tr('retry'), () => { this.hideError(); this.loadClock(this.clockPos, this.clock.position(), true); }, true],
-        [tr('useOriginal'), () => this.opts.onFallback('error')]]);
+    this.showError(tr('playbackFailedTitle'), tr('playbackFailedText', { detail: playbackFailReason(f, navigator.onLine !== false) }),
+      [[tr('retry'), () => this.retryPlayback(), true], [tr('useOriginal'), () => this.opts.onFallback('error')]]);
+    this.playbackFailed = true;
+  }
+
+  retryPlayback() {
+    this.hideError();
+    this.loadClock(this.clockPos, this.clock.position(), true);
+  }
+
+  // Back online: load again at once instead of waiting for the next retry, and retry a
+  // playback that gave up while offline. Parts that failed to load try again too.
+  onOnline() {
+    this.$('.nethint').hidden = true;
+    if (this.playbackFailed) { this.retryPlayback(); return; }
+    const v = this.video;
+    if (!v.paused && v.readyState < 3) this.clock.kick(v.currentTime);
+    if (this.follower && this.fvideo.readyState < 3) this.follower.kick(this.fvideo.currentTime);
+    for (const retry of this.partRetries.values()) retry();
   }
 
   // The video files were refused: renew the access in the background and carry on from
@@ -644,6 +662,9 @@ class LitePlayer {
     on('ended', () => this.savePosition(0));
     d.listen(document, 'visibilitychange', () => { if (!document.hidden) this.render(true); });
     d.listen(window, 'hashchange', () => { const tm = this.linkTime(); if (tm != null) this.seek(tm); });
+    d.listen(window, 'offline', () => { this.$('.nethint').hidden = false; });
+    d.listen(window, 'online', () => this.onOnline());
+    if (navigator.onLine === false) this.$('.nethint').hidden = false;
 
     // Stall watchdog (playing, not seeking, time has not moved for STALL_SEC) and, every
     // few ticks, the local resume position as a fallback for the server-side one.
@@ -821,10 +842,24 @@ class LitePlayer {
     this.cues = null;
     const none = () => { if (!this.destroyed) this.menus.captionsAvailable(tr('captionsNone')); };
     if (!this.opts.fetchCues) { none(); if (this.silence) this.silence.start([]); return; }
-    this.opts.fetchCues(this.lesson).then((cues) => {
-      if (this.destroyed) return;
-      if (this.silence) this.silence.start(cues);
-      if (!cues.length) { none(); return; }
+    // Silence detection waits until it is known whether there is a transcript (a load that
+    // failed for now is retried), so that it does not settle for the audio-only analysis.
+    let cues = [];
+    const load = () => this.opts.fetchCues(this.lesson).then((c) => {
+      if (this.destroyed) return false;
+      if (this.silence) this.silence.start(c);
+      if (!c.length) { none(); return false; }
+      cues = c;
+      return true;
+    }, (e) => {
+      log.warn('captions:', e && e.message ? e.message : e);
+      if (this.destroyed) return false;
+      if (isTransient(e) || e.login) { this.menus.captionsAvailable(tr('captionsLoadFailed')); return e; }
+      none();
+      if (this.silence) this.silence.start([]);
+      return false;
+    });
+    this.loadPart('transcript', this.transcript, load, () => {
       this.cues = cues;
       if (this.slidesPane) this.slidesPane.invalidate();
       if (this.reporter) this.reporter.captionsAvailable = cues.length;
@@ -832,8 +867,7 @@ class LitePlayer {
       this.transcript.setCues(cues);
       this.menus.captionsAvailable('');
       if (this.prefs.captions) this.menus.setCaptions(true, true);
-      this.registerTab('transcript', this.transcript);
-    }, (e) => { none(); log.warn('captions:', e && e.message ? e.message : e); });
+    }, 'transcriptLoadFailed');
   }
 
   // ---- audio processing ----
@@ -1020,21 +1054,64 @@ class LitePlayer {
     this.tags = new TagStore(l, () => { if (!this.destroyed && this.notes) this.notes.changed(); });
     this.tags.load().catch((e) => log.warn('tags:', e && e.message ? e.message : e));
     this.notes = new NotesPane(this, this.$('.pane[data-pane=notes]'), api, canFlag, this.d.feature('notes'));
-    this.notes.load().then((ok) => {
-      if (this.destroyed || !ok) return;
+    this.loadPart('notes', this.notes, () => this.notes.load(), () => {
       this.notesReady = true;
       this.$('.bmbtn').hidden = false;
       this.menus.fitBar();
       this.menuActions.exportNotes = () => this.notes.openExport();
       this.renderFlagButton();
       this.renderBookmarkButton();
-      this.registerTab('notes', this.notes);
-    });
+    }, 'notesLoadFailed');
     this.discussion = new DiscussionPane(this, this.$('.pane[data-pane=discussion]'), api, this.d.feature('discussion'));
-    this.discussion.load().then((ok) => {
-      if (this.destroyed || !ok) return;
-      this.registerTab('discussion', this.discussion);
-    });
+    this.loadPart('discussion', this.discussion, () => this.discussion.load(), () => {}, 'discussionLoadFailed');
+  }
+
+  // Loads what a side-panel tab shows. `load` resolves true when loaded, false when this
+  // lesson does not offer it (no tab), or to the error. An error that may pass by itself
+  // (isTransient: no connection, server error) keeps the tab, which says what happened
+  // with "Retry"; it is also tried again when the browser comes back online.
+  loadPart(tab, controller, load, ready, failKey) {
+    const pane = this.$('.pane[data-pane=' + tab + ']');
+    let busy = false;
+    const attempt = () => {
+      if (busy || this.destroyed) return;
+      busy = true;
+      Promise.resolve().then(load).then((r) => r, (e) => e).then(guard((r) => {
+        busy = false;
+        if (this.destroyed) return;
+        if (r === true) {
+          this.partRetries.delete(tab);
+          this.showPartError(pane, '');
+          ready();
+          this.registerTab(tab, controller);
+        } else if (r && (r.login || (r.status === 401 && !this.lesson.isAnonymousUser))) {
+          // Signed out: only signing in again helps, which a reload offers.
+          this.showPartError(pane, tr('authLoginExpiredText'), () => this.reloadHere(), tr('reload'));
+          this.registerTab(tab, controller);
+        } else if (r && isTransient(r)) {
+          log.info(tab + ' failed to load, can retry:', r.message);
+          this.partRetries.set(tab, attempt);
+          this.showPartError(pane, tr(failKey, { error: loadErrorText(r) }), attempt);
+          this.registerTab(tab, controller);
+        }
+      }));
+    };
+    attempt();
+  }
+
+  showPartError(pane, msg, action, label) {
+    let box = pane.querySelector(':scope > .loaderr');
+    if (msg && !box) {
+      box = el('div.loaderr', { role: 'alert' }, el('p'), el('button.pbtn'));
+      pane.prepend(box);
+    }
+    pane.classList.toggle('loadfailed', !!msg);
+    if (!box) return;
+    box.hidden = !msg;
+    box.querySelector('p').textContent = msg;
+    const b = box.querySelector('button');
+    b.textContent = label || tr('retry');
+    b.onclick = action || null;
   }
 
   updateMarkers() {
@@ -1132,7 +1209,7 @@ class LitePlayer {
     this.wake();
   }
 
-  hideError() { this.$('.error').hidden = true; }
+  hideError() { this.$('.error').hidden = true; this.playbackFailed = false; }
 
   destroy() {
     if (this.destroyed) return;

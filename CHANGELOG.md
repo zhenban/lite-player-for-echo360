@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0
+When something goes wrong with the network or Echo360:
+- **Offline**: a label says "No connection. Playback continues when you are back online." When the connection is back, loading starts again at once, and a playback that gave up while offline is retried by itself.
+- **The video cannot be loaded**: the message now says why in plain words (the video server answered with an error, could not be reached, there is no connection, or the video data could not be read) instead of a code like "fragLoadError". Retry and "Switch to the original player" are still there.
+- **Notes, discussion or transcript fail to load**: the tab stays and says what happened, with Retry; it also tries again when you are back online. Before, the tab quietly disappeared (and a transcript that failed looked like a recording without captions). A tab that this lesson does not offer is still not shown.
+- **Expired school sign-in**: notes, discussion and transcript say that your Echo360 sign-in has expired, with a Reload button that comes back at the same position, instead of failing as if there were no connection.
+- Fix: opening the Transcript tab before the transcript had arrived stopped the tab from opening properly (the top-bar button stayed on the previous tab).
+
 ## 0.19.0
 New:
 - **Chinese interface.** The player follows the browser's language: with any Chinese setting (zh-CN, zh-TW, zh-HK…) it is in simplified Chinese, otherwise in English. Choose a language yourself in ⋮ → Language; the page reloads and playback continues where it was. Dates in the discussion follow the same language. Diagnostics stay in English so they can be shared in issues.

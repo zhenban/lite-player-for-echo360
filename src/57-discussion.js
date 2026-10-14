@@ -25,7 +25,7 @@ class DiscussionPane {
     this.build();
   }
 
-  // Resolves true when discussions are enabled for this lesson.
+  // Resolves true when loaded, else to the error (see player.loadPart).
   // Loads can overlap (after a write, on opening the tab, "Refresh"): only the newest one's
   // answer is used, so an older answer arriving late cannot hide a post just made.
   async load() {
@@ -42,8 +42,8 @@ class DiscussionPane {
     } catch (e) {
       if (seq !== this.loadSeq) return false;
       log.info('discussions unavailable:', e.message);
-      if (this.loadedAt) this.showError(tr('loadFailed', { error: errorText(e) }));
-      return false;
+      if (this.loadedAt) this.showError(tr('loadFailed', { error: loadErrorText(e) }));
+      return e || false;
     }
   }
 
@@ -105,7 +105,8 @@ class DiscussionPane {
     this.updateLinkLabel();
     if (this.dirty) this.render();
     // Refresh when the tab is opened, at most once a minute (no live push channel).
-    if (Date.now() - this.loadedAt > 60000) this.load();
+    // Never loaded: the first load failed and the tab says so, with "Retry".
+    if (this.loadedAt && Date.now() - this.loadedAt > 60000) this.load();
   }
 
   showError(msg) {

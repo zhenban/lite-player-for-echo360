@@ -160,8 +160,9 @@ class TranscriptPanel {
     this.search = elem.querySelector('.tsearch');
     this.countEl = elem.querySelector('.tcount');
     this.backBtn = elem.querySelector('.tback');
+    // Empty until setCues: the tab can be shown before (a load that failed, with "Retry").
     this.cues = [];
-    this.index = null;
+    this.index = new CueIndex([]);
     this.rows = null;
     this.current = -1;
     this.follow = true;
@@ -177,6 +178,8 @@ class TranscriptPanel {
     this.cues = cues;
     this.index = new CueIndex(cues);
     if (this.rows) { this.list.textContent = ''; this.rows = null; }
+    // Shown already (a load that failed, then "Retry"): build the new list now.
+    if (this.visible) this.show(true);
   }
 
   get open() { return this.visible; }

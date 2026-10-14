@@ -208,7 +208,8 @@ class Stream {
       }
     }
     log.warn('fatal hls error', data.type, data.details, code || '');
-    this.onFatal({ auth: code === 401 || code === 403, details: data.details });
+    this.onFatal({ auth: code === 401 || code === 403, details: data.details, code: code || 0,
+      media: data.type === platform.Hls.ErrorTypes.MEDIA_ERROR });
   }
 
   kick(at) {
@@ -252,4 +253,17 @@ class Stream {
     v.load();
     this.uri = null;
   }
+}
+
+// Why the video could not be loaded, in words, from what stream.onFatal reports
+// ({ code, media, details }) and whether the browser is online.
+function playbackFailReason(f, online) {
+  if (f.media) return tr('failMedia');
+  const c = f.code;
+  if (c >= 500) return tr('failServer', { code: c });
+  if (c === 404 || c === 410) return tr('failMissing', { code: c });
+  if (c >= 400) return tr('failRefused', { code: c });
+  if (!online) return tr('failOffline');
+  if (/load|timeout|network/i.test(f.details || '')) return tr('failUnreachable');
+  return f.details || tr('failUnreachable');
 }

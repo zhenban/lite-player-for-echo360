@@ -231,3 +231,54 @@ test('a reload the player makes (language, expired session) comes back where pla
     pg.w.close();
   }
 });
+
+test('a side-panel load that fails for now keeps its tab with "Retry"; one the lesson does not offer has no tab', async () => {
+  const pg = page();
+  const w = pg.w;
+  // Echo360 for this test: notes fail with a server error once, discussion is refused
+  // (not offered here), the transcript and captions fail with no connection until online.
+  let notesCalls = 0;
+  let online = false;
+  const json = (status, body) => new w.Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  w.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/notes/content')) return ++notesCalls === 1 ? json(500, {}) : json(200, { status: 'ok', data: [] });
+    if (u.includes('/questions')) return json(403, {});
+    if (u.includes('/transcript') || u.includes('.vtt')) {
+      if (!online) throw new TypeError('Failed to fetch');
+      return u.includes('.vtt') ? new w.Response('') : json(200, { data: { contentJSON: { cues: [{ startMs: 0, endMs: 2000, content: 'Hello' }, { startMs: 2000, endMs: 4000, content: 'there' }] } } });
+    }
+    throw new Error('offline in tests');
+  };
+  pg.start();
+  const p = pg.player();
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  const pane = (t) => p.root.querySelector('.pane[data-pane=' + t + ']');
+  try {
+    await settle();
+    assert.ok(p.sidebar.has('notes'), 'notes tab kept');
+    assert.ok(pane('notes').classList.contains('loadfailed'));
+    assert.match(pane('notes').querySelector('.loaderr').textContent, /HTTP 500/);
+    assert.ok(!p.sidebar.has('discussion'), 'a refusal means not offered: no tab');
+    assert.ok(p.sidebar.has('transcript'), 'transcript tab kept');
+    // Shown before the cues arrive: an empty list, not an error.
+    p.sidebar.open('transcript');
+    assert.equal(p.sidebar.active, 'transcript');
+    assert.equal(p.root.querySelector('.top [data-open=transcript]').getAttribute('aria-pressed'), 'true');
+
+    pane('notes').querySelector('.loaderr button').click();
+    await settle();
+    assert.ok(!pane('notes').classList.contains('loadfailed'), 'Retry loaded the notes');
+    assert.ok(p.notesReady);
+
+    online = true;
+    w.dispatchEvent(new w.Event('online'));
+    await settle();
+    assert.ok(!pane('transcript').classList.contains('loadfailed'), 'back online: loaded again');
+    assert.equal(pane('transcript').querySelectorAll('.trow').length, 2, 'the open tab shows the new list');
+  } finally {
+    p.destroy();
+    await w.happyDOM.abort();
+    w.close();
+  }
+});

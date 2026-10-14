@@ -27,9 +27,25 @@ class ApiError extends Error {
   }
 }
 
+// A failure that may pass by itself: no connection (fetch rejects with a TypeError), a
+// timeout, too many requests or a server error. Any other refusal (401, 403, 404, an
+// answer saying "ko") means the feature is not offered here.
+function isTransient(e) {
+  if (e && e.name === 'TypeError') return true;
+  const s = e && e.status;
+  return s === 0 || s === 408 || s === 429 || s >= 500;
+}
+
 // What to tell the user about a failed request or operation.
 function errorText(e) {
+  if (e && e.login) return tr('authLoginExpiredText');
   return (e && (e.serverText || e.message)) || String(e);
+}
+
+// The same for a failed load: no connection in words instead of fetch's "Failed to fetch".
+function loadErrorText(e) {
+  if (e && e.name === 'TypeError') return tr(navigator.onLine === false ? 'failOffline' : 'netError');
+  return errorText(e);
 }
 
 // Same thumbnail choice as the original player: first thumbnail set, the last image taken
@@ -58,12 +74,15 @@ class Echo360Api {
 
   async request(method, path, body) {
     /** @type {RequestInit & { headers: Record<string, string> }} */
-    const opts = { method, credentials: 'include', headers: { Accept: 'application/json' } };
+    // A redirect is not followed: Echo360 only redirects to its login page, once the school
+    // sign-in has expired (followed, it fails as "Failed to fetch", like no connection).
+    const opts = { method, credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
     const r = await fetch(path, opts);
+    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
     let j = null;
     try { j = await r.json(); } catch (e) { /* empty body */ }
     if (!r.ok || (j && j.status === 'ko')) throw new ApiError(r.status, j && j.message);
