@@ -60,6 +60,10 @@ class LitePlayer {
     this.dual = this.sources.length >= 2;
     const savedPrimary = this.sources.findIndex((s) => s.index === this.prefs.primary);
     this.primaryPos = savedPrimary >= 0 ? savedPrimary : 0;
+    this.onlyFrom = null;     // the shown view before showOnly(), or null
+    this.emptyScreen = null;
+    this.toastNext = null;    // a message waiting for the shown one to close (toast)
+    this.toastFrom = null;    // the source of the automatic message shown
     this.clockPos = this.sources[this.primaryPos].av ? this.primaryPos : this.sources.findIndex((s) => s.av);
 
     this.buildDom();
@@ -105,6 +109,16 @@ class LitePlayer {
       this.menuValues.silence = () => this.silence.value();
     });
     featureGuard('slide chapters', () => this.setupSlides());
+    featureGuard('camera for an empty screen', () => {
+      this.emptyScreen = new EmptyScreenLayout({
+        lesson, prefs: this.prefs, savePrefs: () => this.savePrefs(), duration: () => this.duration(), sources: this.sources,
+        uniform: () => (this.slides ? this.slides.uniform : []),
+        screenIndex: () => (this.slides ? this.slides.screenIndex : null),
+        primaryPos: () => this.primaryPos, layout: () => this.prefs.layout,
+        canSwitch: () => this.dual && !this.followerFailed && !this.pdfMode,
+        showOnly: (pos) => this.showOnly(pos), toast: (msg, action, fn, valid) => this.toast(msg, action, fn, { later: true, from: 'emptyScreen', valid }),
+      }, this.d.feature('camera for an empty screen'));
+    });
     featureGuard('slide reader', () => this.setupDeck());
     featureGuard('captions', () => this.loadCues());
     featureGuard('notes and discussion', () => this.loadInteractions());
@@ -143,7 +157,22 @@ class LitePlayer {
 
   get layout() {
     if (this.pdfMode) return this.prefs.layout;
+    if (this.onlyFrom !== null) return 'single';
     return this.dual && !this.followerFailed ? this.prefs.layout : 'single';
+  }
+
+  // Shows the view at `pos` alone for now (the other one is empty), without changing the
+  // chosen layout; null goes back to it (EmptyScreenLayout).
+  showOnly(pos) {
+    if (pos === null) {
+      if (this.onlyFrom === null) return;
+      this.primaryPos = this.onlyFrom;
+      this.onlyFrom = null;
+    } else {
+      if (this.onlyFrom === null) this.onlyFrom = this.primaryPos;
+      this.primaryPos = pos;
+    }
+    this.applyLayout();
   }
 
   // The lecturer's PDF shown in the picture area, next to one video (see SlideReader).
@@ -432,6 +461,7 @@ class LitePlayer {
 
   setLayout(layout) {
     if (!(this.dual || this.pdfMode) || !LAYOUTS.includes(layout)) return;
+    if (this.emptyScreen) this.emptyScreen.manual();
     this.followerFailed = false;
     this.prefs.layout = layout;
     this.savePrefs();
@@ -442,6 +472,8 @@ class LitePlayer {
   // video is shown next to it (or, with one video, swaps the PDF and the video).
   swapViews() {
     if (!this.dual) { if (this.pdfMode) this.swapPdf(); return; }
+    // The camera was shown alone for an empty screen: a swap asks for the screen back.
+    if (this.emptyScreen && this.emptyScreen.manual()) return;
     const next = this.secondaryPos;
     // A source without an audio+video rendition can only be shown as the follower.
     if ((this.layout === 'single' || this.pdfMode) && !this.sources[next].av) return;
@@ -541,6 +573,8 @@ class LitePlayer {
       cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
+      canEmptyCamera: () => !!this.emptyScreen && this.dual,
+      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.video.currentTime); },
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
@@ -648,6 +682,7 @@ class LitePlayer {
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
       if (this.notes && this.notesReady) this.notes.update();
+      if (this.emptyScreen) this.emptyScreen.tick(ct);
       if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
@@ -920,13 +955,16 @@ class LitePlayer {
 
   onSlidesChange() {
     const a = this.slides;
-    if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; if (this.silence) this.silence.update(); }
+    let empty = false;
+    if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; empty = true; if (this.silence) this.silence.update(); }
     // The screen view is known now: the per-view quality settings may apply differently.
     if (a.screenIndex !== this.knownScreen) {
       this.knownScreen = a.screenIndex;
+      empty = true;
       this.quality.apply();
       if (this.deck) this.deck.screenKnown();
     }
+    if (empty && this.emptyScreen) this.emptyScreen.tick(this.video.currentTime);
     this.renderChapterMarks();
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.
@@ -1181,16 +1219,31 @@ class LitePlayer {
     this.zoom.zoomAt(elem, factor, 0.5, 0.5);
   }
 
-  toast(msg, action, fn) {
+  // One message at a time. opts.later: an automatic message (opts.from names its source)
+  // waits while another source's message is shown, so that it does not take away an action
+  // the user may still want (such as "Start over"); it replaces one from its own source.
+  // When the shown one closes, the newest waiting one follows if opts.valid() still holds.
+  toast(msg, action, fn, opts) {
     const elem = this.$('.toast');
+    const o = opts || {};
+    if (o.later && !elem.hidden && this.toastFrom !== o.from) { this.toastNext = [msg, action, fn, o]; return; }
+    this.toastNext = null;
+    this.toastFrom = o.from || null;
     elem.querySelector('.msg').textContent = msg;
     const btn = elem.querySelector('.act');
     btn.hidden = !action;
     btn.textContent = action || '';
-    btn.onclick = guard((ev) => { elem.hidden = true; if (fn) fn(ev); });
+    const close = () => {
+      elem.hidden = true;
+      this.toastFrom = null;
+      const next = this.toastNext;
+      this.toastNext = null;
+      if (next && !this.destroyed && (!next[3].valid || next[3].valid())) this.toast(next[0], next[1], next[2], { from: next[3].from });
+    };
+    btn.onclick = guard((ev) => { close(); if (fn) fn(ev); });
     elem.hidden = false;
     clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => { elem.hidden = true; }, 8000);
+    this.toastTimer = setTimeout(close, 8000);
   }
 
   showError(title, text, actions) {

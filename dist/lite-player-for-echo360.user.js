@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.20.1
+// @version      0.21.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.20.1';
+  const VERSION = '0.21.0';
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -287,6 +287,10 @@ const STRINGS = {
     volumeLevel: 'Volume {pct}%',
     muted: 'Muted',
     swapViews: 'Swap views',
+    emptyScreenCamera: 'The screen shows nothing: showing the camera only.',
+    emptyScreenBack: 'The screen shows a picture again: back to your layout.',
+    emptyScreenAuto: 'Camera only while the screen is empty',
+    emptyScreenAutoDesc: 'Long stretches without a picture on the screen show the camera alone. Choosing a layout yourself turns this off for that recording.',
     swapViewsKey: 'Swap views (S)',
     layout: 'Layout',
     layoutNow: 'Layout: {layout}',
@@ -636,6 +640,7 @@ const STRINGS = {
     featureNotesDiscussion: 'notes and discussion',
     featureSilence: 'silence detection',
     featureSlideChapters: 'slide chapters',
+    featureEmptyCamera: 'the camera for an empty screen',
     featureSlideReader: 'the slide reader',
     featureNotes: 'notes',
     featureSession: 'session renewal',
@@ -700,7 +705,7 @@ function uiLocale() {
 const FEATURE_NAMES = {
   player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
   'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
-  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'slide reader': 'featureSlideReader',
+  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'slide reader': 'featureSlideReader',
   notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
 };
 function featureName(id) {
@@ -741,6 +746,10 @@ STRINGS.zh = {
   volumeLevel: '音量 {pct}%',
   muted: '已静音',
   swapViews: '交换画面',
+  emptyScreenCamera: '屏幕没有画面，已只显示摄像机',
+  emptyScreenBack: '屏幕恢复画面，已恢复原来的布局',
+  emptyScreenAuto: '屏幕没有画面时只显示摄像机',
+  emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机。在一节录像里自己选过布局后，这节录像不再自动切换。',
   swapViewsKey: '交换画面（S）',
   layout: '布局',
   layoutNow: '布局：{layout}',
@@ -1088,6 +1097,7 @@ STRINGS.zh = {
   featureNotesDiscussion: '笔记和讨论',
   featureSilence: '无声段检测',
   featureSlideChapters: '幻灯片章节',
+  featureEmptyCamera: '屏幕无画面时显示摄像机',
   featureSlideReader: '幻灯片跟读',
   featureNotes: '笔记',
   featureSession: '会话续期',
@@ -1315,6 +1325,14 @@ const DRAG_SEEK_MS = 200;              // seeking at most this often while dragg
 // position it left, if the page is back within this long (a page load takes seconds).
 const RELOAD_RESUME_MS = 60000;
 const RESUME_END_SEC = 10;             // a resume point this close to the end starts over instead (nothing left to watch)
+
+// ---- the camera alone while the screen is empty (43-empty-screen.js) ----
+// Shortest empty-screen stretch that switches to the camera alone. An interface choice, not
+// a measurement: each switch moves the pictures and loads a stream, so it should happen at
+// most once a minute or so; an input being switched or a video starting on the screen ends
+// sooner than the new layout would settle. Six sampling steps, so one sample that happened
+// to catch a black frame never switches.
+const EMPTY_SCREEN_MIN_SEC = 60;
 
 // ---- menus and buttons (32-ui-kit.js, 48-speed.js, 49-volume.js, 55-notes.js) ----
 const POP_GAP = 8;                     // px between a popover and its button
@@ -2733,6 +2751,9 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 
 /* The time above the progress bar makes the bar taller: notices move up with it. */
 .stage:has(.bottom.compact) :is(.toast, .skipsil, .endnote) { bottom: 132px; }
+/* A message goes above the Skip button or the end-of-lecture notice, which sit at its height. */
+.stage:has(:is(.skipsil, .endnote):not([hidden], .fade)) .toast { bottom: 148px; }
+.stage:has(.bottom.compact):has(:is(.skipsil, .endnote):not([hidden], .fade)) .toast { bottom: 180px; }
 .stage:has(.bottom.compact) .captions { bottom: 132px; }
 
 /* ---- dialogs (shortcuts, diagnostics, errors) ---- */
@@ -3942,6 +3963,7 @@ function prefDefaults() {
     silence: { auto: false, min: 30, sens: 'normal' },
     copySpan: 60,
     pdfMain: false, pdfFirst: false,
+    emptyCamera: true,
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
     lang: 'auto',
@@ -3989,6 +4011,7 @@ function sanitizePrefs(raw) {
     copySpan: oneOf(r.copySpan, COPY_SPANS, d.copySpan),
     pdfMain: bool(r.pdfMain, d.pdfMain),
     pdfFirst: bool(r.pdfFirst, d.pdfFirst),
+    emptyCamera: bool(r.emptyCamera, d.emptyCamera),
     quality: { screen: height(quality.screen), camera: height(quality.camera) },
     theme: oneOf(r.theme, THEMES, d.theme),
     // 'auto' or a language code; one without a table means English (uiLang).
@@ -4073,6 +4096,10 @@ class LitePlayer {
     this.dual = this.sources.length >= 2;
     const savedPrimary = this.sources.findIndex((s) => s.index === this.prefs.primary);
     this.primaryPos = savedPrimary >= 0 ? savedPrimary : 0;
+    this.onlyFrom = null;     // the shown view before showOnly(), or null
+    this.emptyScreen = null;
+    this.toastNext = null;    // a message waiting for the shown one to close (toast)
+    this.toastFrom = null;    // the source of the automatic message shown
     this.clockPos = this.sources[this.primaryPos].av ? this.primaryPos : this.sources.findIndex((s) => s.av);
 
     this.buildDom();
@@ -4118,6 +4145,16 @@ class LitePlayer {
       this.menuValues.silence = () => this.silence.value();
     });
     featureGuard('slide chapters', () => this.setupSlides());
+    featureGuard('camera for an empty screen', () => {
+      this.emptyScreen = new EmptyScreenLayout({
+        lesson, prefs: this.prefs, savePrefs: () => this.savePrefs(), duration: () => this.duration(), sources: this.sources,
+        uniform: () => (this.slides ? this.slides.uniform : []),
+        screenIndex: () => (this.slides ? this.slides.screenIndex : null),
+        primaryPos: () => this.primaryPos, layout: () => this.prefs.layout,
+        canSwitch: () => this.dual && !this.followerFailed && !this.pdfMode,
+        showOnly: (pos) => this.showOnly(pos), toast: (msg, action, fn, valid) => this.toast(msg, action, fn, { later: true, from: 'emptyScreen', valid }),
+      }, this.d.feature('camera for an empty screen'));
+    });
     featureGuard('slide reader', () => this.setupDeck());
     featureGuard('captions', () => this.loadCues());
     featureGuard('notes and discussion', () => this.loadInteractions());
@@ -4156,7 +4193,22 @@ class LitePlayer {
 
   get layout() {
     if (this.pdfMode) return this.prefs.layout;
+    if (this.onlyFrom !== null) return 'single';
     return this.dual && !this.followerFailed ? this.prefs.layout : 'single';
+  }
+
+  // Shows the view at `pos` alone for now (the other one is empty), without changing the
+  // chosen layout; null goes back to it (EmptyScreenLayout).
+  showOnly(pos) {
+    if (pos === null) {
+      if (this.onlyFrom === null) return;
+      this.primaryPos = this.onlyFrom;
+      this.onlyFrom = null;
+    } else {
+      if (this.onlyFrom === null) this.onlyFrom = this.primaryPos;
+      this.primaryPos = pos;
+    }
+    this.applyLayout();
   }
 
   // The lecturer's PDF shown in the picture area, next to one video (see SlideReader).
@@ -4445,6 +4497,7 @@ class LitePlayer {
 
   setLayout(layout) {
     if (!(this.dual || this.pdfMode) || !LAYOUTS.includes(layout)) return;
+    if (this.emptyScreen) this.emptyScreen.manual();
     this.followerFailed = false;
     this.prefs.layout = layout;
     this.savePrefs();
@@ -4455,6 +4508,8 @@ class LitePlayer {
   // video is shown next to it (or, with one video, swaps the PDF and the video).
   swapViews() {
     if (!this.dual) { if (this.pdfMode) this.swapPdf(); return; }
+    // The camera was shown alone for an empty screen: a swap asks for the screen back.
+    if (this.emptyScreen && this.emptyScreen.manual()) return;
     const next = this.secondaryPos;
     // A source without an audio+video rendition can only be shown as the follower.
     if ((this.layout === 'single' || this.pdfMode) && !this.sources[next].av) return;
@@ -4554,6 +4609,8 @@ class LitePlayer {
       cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
+      canEmptyCamera: () => !!this.emptyScreen && this.dual,
+      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.video.currentTime); },
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
@@ -4661,6 +4718,7 @@ class LitePlayer {
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
       if (this.notes && this.notesReady) this.notes.update();
+      if (this.emptyScreen) this.emptyScreen.tick(ct);
       if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
@@ -4933,13 +4991,16 @@ class LitePlayer {
 
   onSlidesChange() {
     const a = this.slides;
-    if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; if (this.silence) this.silence.update(); }
+    let empty = false;
+    if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; empty = true; if (this.silence) this.silence.update(); }
     // The screen view is known now: the per-view quality settings may apply differently.
     if (a.screenIndex !== this.knownScreen) {
       this.knownScreen = a.screenIndex;
+      empty = true;
       this.quality.apply();
       if (this.deck) this.deck.screenKnown();
     }
+    if (empty && this.emptyScreen) this.emptyScreen.tick(this.video.currentTime);
     this.renderChapterMarks();
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.
@@ -5194,16 +5255,31 @@ class LitePlayer {
     this.zoom.zoomAt(elem, factor, 0.5, 0.5);
   }
 
-  toast(msg, action, fn) {
+  // One message at a time. opts.later: an automatic message (opts.from names its source)
+  // waits while another source's message is shown, so that it does not take away an action
+  // the user may still want (such as "Start over"); it replaces one from its own source.
+  // When the shown one closes, the newest waiting one follows if opts.valid() still holds.
+  toast(msg, action, fn, opts) {
     const elem = this.$('.toast');
+    const o = opts || {};
+    if (o.later && !elem.hidden && this.toastFrom !== o.from) { this.toastNext = [msg, action, fn, o]; return; }
+    this.toastNext = null;
+    this.toastFrom = o.from || null;
     elem.querySelector('.msg').textContent = msg;
     const btn = elem.querySelector('.act');
     btn.hidden = !action;
     btn.textContent = action || '';
-    btn.onclick = guard((ev) => { elem.hidden = true; if (fn) fn(ev); });
+    const close = () => {
+      elem.hidden = true;
+      this.toastFrom = null;
+      const next = this.toastNext;
+      this.toastNext = null;
+      if (next && !this.destroyed && (!next[3].valid || next[3].valid())) this.toast(next[0], next[1], next[2], { from: next[3].from });
+    };
+    btn.onclick = guard((ev) => { close(); if (fn) fn(ev); });
     elem.hidden = false;
     clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => { elem.hidden = true; }, 8000);
+    this.toastTimer = setTimeout(close, 8000);
   }
 
   showError(title, text, actions) {
@@ -5520,6 +5596,127 @@ class KeyboardShortcuts {
   }
 }
 
+// ---- 43-empty-screen.js ----
+// ===================================================================================
+// The camera alone while the screen view shows nothing: the slide analysis' empty-screen
+// stretches (a black screen, "no signal") are planned ahead, and only long ones switch
+// (EMPTY_SCREEN_MIN_SEC), so the layout does not flip back and forth. Until the analysis
+// has found them nothing switches. A layout chosen by hand in a recording turns this off
+// for that recording (remembered); each switch says so, with Undo. On by default; the
+// switch is on the layout page of the settings menu.
+//
+// deps: { lesson, prefs (prefs.emptyCamera), savePrefs(), uniform() (empty-screen
+//         stretches, [] until known), duration(), sources, primaryPos(), screenIndex()
+//         (null until known), layout() (the chosen one), canSwitch() (two views, no PDF
+//         in the picture area), showOnly(pos | null), toast(msg, action, fn, valid())
+//         (valid: whether a message that had to wait is still true) }
+// ===================================================================================
+
+// The stretches to show the camera in: empty-screen stretches of at least minSec. One
+// that ends before the recording does ends a sampling step early: the screen came back
+// somewhere in that step, and a moment of black is better than missing the start.
+function emptyScreenPlan(uniform, duration, minSec, step) {
+  const out = [];
+  for (const u of uniform || []) {
+    if (u.end - u.start < minSec) continue;
+    const end = u.end >= duration - 0.5 ? duration : u.end - step;
+    if (end > u.start) out.push({ start: u.start, end });
+  }
+  return out;
+}
+
+const EMPTY_LAYOUT_KEY = 'layoutChosen';   // recordings whose layout was chosen by hand
+const EMPTY_LAYOUT_KEEP = 300;             // newest kept (a small list in the settings store)
+
+class EmptyScreenLayout {
+  constructor(deps, disposer) {
+    this.x = deps;
+    this.d = disposer;
+    this.on = false;          // showing the camera alone now
+    this.known = null;        // the uniform list the plan was made from
+    this.plan = [];
+    this.cameraPos = -1;
+    this.chosen = (store.get(EMPTY_LAYOUT_KEY, []) || []).includes(deps.lesson.id);
+    disposer.add(() => { if (this.on) this.x.showOnly(null); });
+  }
+
+  // The camera's position, or -1: the view that is not the analysed screen and can play
+  // alone (it has sound).
+  camera() {
+    const x = this.x;
+    const screen = x.screenIndex();
+    if (screen == null) return -1;
+    const screenPos = x.sources.findIndex((s) => s.index === screen);
+    if (screenPos < 0) return -1;
+    return x.sources.findIndex((s, i) => i !== screenPos && s.av);
+  }
+
+  // Whether the chosen layout shows the screen at all (not the camera alone already).
+  screenShown(cameraPos) {
+    return this.x.layout() !== 'single' || this.x.primaryPos() !== cameraPos;
+  }
+
+  // Called as playback moves (timeupdate, seeked) and when the stretches become known.
+  tick(t) {
+    const x = this.x;
+    // Turned off, or the PDF took the picture area: back to the chosen layout.
+    if (this.on && (!x.prefs.emptyCamera || !x.canSwitch())) { this.leave(false); return; }
+    if (this.chosen) return;
+    const u = x.uniform();
+    if (u !== this.known) {
+      this.known = u;
+      this.plan = emptyScreenPlan(u, x.duration(), EMPTY_SCREEN_MIN_SEC, CHAPTER_STEP_SEC);
+    }
+    if (!x.prefs.emptyCamera || !x.canSwitch()) return;
+    let inside = false;
+    for (const s of this.plan) if (t >= s.start && t < s.end) { inside = true; break; }
+    if (inside && !this.on) {
+      const cam = this.camera();
+      if (cam < 0 || !this.screenShown(cam)) return;
+      this.enter(cam, true);
+    } else if (!inside && this.on) {
+      this.leave(true);
+    }
+  }
+
+  enter(cam, say) {
+    this.on = true;
+    this.cameraPos = cam;
+    this.x.showOnly(cam);
+    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.leave(false); this.choose(); }, () => this.on);
+  }
+
+  leave(say) {
+    this.on = false;
+    this.x.showOnly(null);
+    // Undo keeps the camera alone, as if chosen by hand.
+    if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
+  }
+
+  // The user arranged the views: the chosen arrangement takes over and this recording is
+  // not switched again. Returns whether the camera was shown alone (it is not any more).
+  manual() {
+    const was = this.on;
+    if (was) this.leave(false);
+    this.choose();
+    return was;
+  }
+
+  choose() {
+    if (this.chosen) return;
+    this.chosen = true;
+    const id = this.x.lesson.id;
+    const list = (store.get(EMPTY_LAYOUT_KEY, []) || []).filter((v) => v !== id);
+    list.push(id);
+    store.set(EMPTY_LAYOUT_KEY, list.slice(-EMPTY_LAYOUT_KEEP));
+  }
+
+  setEnabled(on) {
+    this.x.prefs.emptyCamera = !!on;
+    this.x.savePrefs();
+  }
+}
+
 // ---- 43-layout.js ----
 // ===================================================================================
 // Arranging the two pictures by hand: the divider between them (side by side) and the
@@ -5753,6 +5950,7 @@ class QualityController {
 // deps: { $, root, pops (Popovers), stage, video, prefs, savePrefs(), cc (CaptionsView),
 //         cues() ([] until loaded), focusView() (see LitePlayer), title, duration(), toast(msg),
 //         layouts() (offered: [] none), layout(), setLayout(l), swap(), pdfMode(),
+//         canEmptyCamera(), setEmptyCamera(on) (the camera alone while the screen is empty),
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
 //         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
@@ -5893,6 +6091,10 @@ class MenuBar {
       { kind: 'text', text: () => tr('layoutPdfNote'), hidden: () => !x.pdfMode() },
       { kind: 'sep' },
       { kind: 'action', label: tr('swapViews'), key: 'S', run: () => x.swap() },
+      {
+        kind: 'toggle', label: tr('emptyScreenAuto'), desc: tr('emptyScreenAutoDesc'),
+        on: () => !!x.prefs.emptyCamera, set: (on) => x.setEmptyCamera(on), hidden: () => !x.canEmptyCamera(),
+      },
     ];
   }
 

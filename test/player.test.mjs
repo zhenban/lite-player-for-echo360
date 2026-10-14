@@ -315,3 +315,31 @@ test('the open Notes and Discussion tabs say the playing moment, not the moment 
     w.close();
   }
 });
+
+test('an automatic message waits for the one shown, replaces its own, and is dropped once no longer true', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  const box = p.root.querySelector('.toast');
+  const text = () => (box.hidden ? null : box.querySelector('.msg').textContent);
+  let on = true;
+  try {
+    p.toast('Resumed', 'Start over', () => {});
+    p.toast('Camera only', 'Undo', () => {}, { later: true, from: 'empty', valid: () => on });
+    assert.equal(text(), 'Resumed', '"Start over" stays available');
+    box.querySelector('.act').click();
+    assert.equal(text(), 'Camera only', 'shown when the other one closes');
+    on = false;
+    p.toast('Back', 'Undo', () => {}, { later: true, from: 'empty', valid: () => !on });
+    assert.equal(text(), 'Back', 'replaces its own message at once');
+    p.toast('Resumed', 'Start over', () => {});
+    p.toast('Camera only', 'Undo', () => {}, { later: true, from: 'empty', valid: () => on });
+    on = false;   // and back again before its turn came
+    box.querySelector('.act').click();
+    assert.equal(text(), null, 'a message that is no longer true is not shown');
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});

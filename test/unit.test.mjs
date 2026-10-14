@@ -36,7 +36,7 @@ function loadSources(names, overrides) {
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
-      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason']
+      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
   return { ...ctx.__exports, timers, window: ctx.window, setFetch: (fn) => { ctx.__fetch = fn; } };
@@ -1710,4 +1710,91 @@ test('an expired school sign-in (Echo360 redirects to its login page) is said as
     assert.match(m.errorText(e), /sign-in has expired/);
     return true;
   });
+});
+
+test('camera for an empty screen: only long stretches, planned ahead; a hand-chosen layout ends it for the recording', () => {
+  const kv = new Map();
+  const m = loadSources(['00-util', '01-i18n', '43-empty-screen'], {
+    localStorage: { getItem: (k) => (kv.has(k) ? kv.get(k) : null), setItem: (k, v) => kv.set(k, String(v)) },
+  });
+  const MIN = m.EMPTY_SCREEN_MIN_SEC;
+  // Short stretches are ignored; one that ends before the recording ends a step early; one
+  // that runs to the end keeps its end.
+  assert.equal(JSON.stringify(m.emptyScreenPlan([{ start: 0, end: MIN - 10 }, { start: 100, end: 100 + MIN + 30 }, { start: 900, end: 1000 }], 1000, MIN, 10)),
+    JSON.stringify([{ start: 100, end: 100 + MIN + 20 }, { start: 900, end: 1000 }]));
+
+  const make = (lessonId, over) => {
+    const st = { shown: null, toasts: [], uniform: [], screen: null, layout: 'side', primary: 0, pdf: false };
+    const prefs = { emptyCamera: true };
+    const deps = Object.assign({
+      lesson: { id: lessonId }, prefs, savePrefs() {}, duration: () => 3000,
+      sources: [{ index: 0, av: 'screen.m3u8' }, { index: 1, av: 'camera.m3u8' }],
+      uniform: () => st.uniform, screenIndex: () => st.screen, primaryPos: () => st.primary, layout: () => st.layout,
+      canSwitch: () => !st.pdf, showOnly: (pos) => { st.shown = pos; }, toast: (msg, action, fn) => st.toasts.push({ msg, fn }),
+    }, over);
+    const d = new m.Disposer();
+    return { st, prefs, e: new m.EmptyScreenLayout(deps, d), d };
+  };
+  const { st, e } = make('lesson-a');
+  // Nothing is known yet: nothing switches.
+  e.tick(500);
+  assert.equal(st.shown, null);
+  st.screen = 0;
+  st.uniform = [{ start: 400, end: 700 }, { start: 1000, end: 1020 }];
+  e.tick(450);
+  assert.equal(st.shown, 1, 'the camera alone in a long empty stretch');
+  assert.match(st.toasts.at(-1).msg, /camera only/);
+  e.tick(1010);
+  assert.equal(st.shown, null, 'a short one is not followed; back to the layout');
+  assert.match(st.toasts.at(-1).msg, /back to your layout/);
+  e.tick(1015);
+  assert.equal(st.shown, null);
+  // Undo on "back": the camera stays, and this recording is not switched any more.
+  st.toasts.at(-1).fn();
+  assert.equal(st.shown, 1);
+  e.tick(800);
+  assert.equal(st.shown, 1, 'held after Undo');
+  assert.equal(e.manual(), true, 'a layout chosen by hand shows the screen again');
+  assert.equal(st.shown, null);
+  e.tick(450);
+  assert.equal(st.shown, null, 'no more switching in this recording');
+  // Remembered for the recording, not for others.
+  assert.equal(make('lesson-a').e.chosen, true);
+  const b = make('lesson-b');
+  b.st.screen = 0;
+  b.st.uniform = [{ start: 0, end: 3000 }];
+  b.e.tick(0);
+  assert.equal(b.st.shown, 1, 'a recording whose screen is empty throughout opens with the camera');
+  // Undo right away: back, and not again.
+  b.st.toasts.at(-1).fn();
+  assert.equal(b.st.shown, null);
+  b.e.tick(10);
+  assert.equal(b.st.shown, null);
+  // The camera already shown alone, the switch turned off, or the PDF in the picture area.
+  const c = make('lesson-c');
+  c.st.screen = 0;
+  c.st.uniform = [{ start: 0, end: 3000 }];
+  c.st.layout = 'single';
+  c.st.primary = 1;
+  c.e.tick(5);
+  assert.equal(c.st.shown, null, 'the screen is not shown: nothing to do');
+  assert.equal(c.st.toasts.length, 0);
+  c.st.primary = 0;
+  c.e.tick(5);
+  assert.equal(c.st.shown, 1, 'the screen shown alone switches too');
+  c.st.pdf = true;
+  c.e.tick(6);
+  assert.equal(c.st.shown, null, 'the PDF in the picture area: back');
+  c.st.pdf = false;
+  c.prefs.emptyCamera = false;
+  c.e.tick(7);
+  assert.equal(c.st.shown, null, 'turned off');
+  // Destroyed while showing the camera: the layout is handed back.
+  const g = make('lesson-d');
+  g.st.screen = 1;
+  g.st.uniform = [{ start: 0, end: 3000 }];
+  g.e.tick(1);
+  assert.equal(g.st.shown, 0, 'the camera is whichever view is not the screen');
+  g.d.dispose();
+  assert.equal(g.st.shown, null);
 });

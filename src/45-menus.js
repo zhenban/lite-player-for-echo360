@@ -15,6 +15,7 @@
 // deps: { $, root, pops (Popovers), stage, video, prefs, savePrefs(), cc (CaptionsView),
 //         cues() ([] until loaded), focusView() (see LitePlayer), title, duration(), toast(msg),
 //         layouts() (offered: [] none), layout(), setLayout(l), swap(), pdfMode(),
+//         canEmptyCamera(), setEmptyCamera(on) (the camera alone while the screen is empty),
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
 //         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
@@ -155,6 +156,10 @@ class MenuBar {
       { kind: 'text', text: () => tr('layoutPdfNote'), hidden: () => !x.pdfMode() },
       { kind: 'sep' },
       { kind: 'action', label: tr('swapViews'), key: 'S', run: () => x.swap() },
+      {
+        kind: 'toggle', label: tr('emptyScreenAuto'), desc: tr('emptyScreenAutoDesc'),
+        on: () => !!x.prefs.emptyCamera, set: (on) => x.setEmptyCamera(on), hidden: () => !x.canEmptyCamera(),
+      },
     ];
   }
 

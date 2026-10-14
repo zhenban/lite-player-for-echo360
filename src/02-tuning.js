@@ -191,6 +191,14 @@ const DRAG_SEEK_MS = 200;              // seeking at most this often while dragg
 const RELOAD_RESUME_MS = 60000;
 const RESUME_END_SEC = 10;             // a resume point this close to the end starts over instead (nothing left to watch)
 
+// ---- the camera alone while the screen is empty (43-empty-screen.js) ----
+// Shortest empty-screen stretch that switches to the camera alone. An interface choice, not
+// a measurement: each switch moves the pictures and loads a stream, so it should happen at
+// most once a minute or so; an input being switched or a video starting on the screen ends
+// sooner than the new layout would settle. Six sampling steps, so one sample that happened
+// to catch a black frame never switches.
+const EMPTY_SCREEN_MIN_SEC = 60;
+
 // ---- menus and buttons (32-ui-kit.js, 48-speed.js, 49-volume.js, 55-notes.js) ----
 const POP_GAP = 8;                     // px between a popover and its button
 const POP_MARGIN = 8;                  // px kept free at the edges of the player

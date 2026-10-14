@@ -22,6 +22,7 @@ function prefDefaults() {
     silence: { auto: false, min: 30, sens: 'normal' },
     copySpan: 60,
     pdfMain: false, pdfFirst: false,
+    emptyCamera: true,
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
     lang: 'auto',
@@ -69,6 +70,7 @@ function sanitizePrefs(raw) {
     copySpan: oneOf(r.copySpan, COPY_SPANS, d.copySpan),
     pdfMain: bool(r.pdfMain, d.pdfMain),
     pdfFirst: bool(r.pdfFirst, d.pdfFirst),
+    emptyCamera: bool(r.emptyCamera, d.emptyCamera),
     quality: { screen: height(quality.screen), camera: height(quality.camera) },
     theme: oneOf(r.theme, THEMES, d.theme),
     // 'auto' or a language code; one without a table means English (uiLang).

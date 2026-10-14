@@ -326,6 +326,9 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 
 /* The time above the progress bar makes the bar taller: notices move up with it. */
 .stage:has(.bottom.compact) :is(.toast, .skipsil, .endnote) { bottom: 132px; }
+/* A message goes above the Skip button or the end-of-lecture notice, which sit at its height. */
+.stage:has(:is(.skipsil, .endnote):not([hidden], .fade)) .toast { bottom: 148px; }
+.stage:has(.bottom.compact):has(:is(.skipsil, .endnote):not([hidden], .fade)) .toast { bottom: 180px; }
 .stage:has(.bottom.compact) .captions { bottom: 132px; }
 
 /* ---- dialogs (shortcuts, diagnostics, errors) ---- */

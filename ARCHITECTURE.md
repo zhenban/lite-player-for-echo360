@@ -46,7 +46,7 @@ runs immediately must come after what it uses.
 | `38-sync.js` | Keeping the second (muted) video in step with the first |
 | `39-prefs.js` | Settings: defaults and validation |
 | `40-player.js` | `LitePlayer`: builds the player, owns the streams and layout, assembles the parts |
-| `41`–`47` | The player's parts: seek bar, keyboard, layout dragging, quality, menus, floating window, silence controls |
+| `41`–`47` | The player's parts: seek bar, keyboard, layout dragging, the camera alone while the screen is empty (`43-empty-screen.js`), quality, menus, floating window, silence controls |
 | `50`–`59` | Features: zoom, A-B loop, watched parts, captions and transcript, side panel, notes, tags, discussion, progress-bar markers, notices |
 | `60-audio.js` | Audio tools (levelling, clearer voice, mono) with Web Audio |
 | `61-media-io.js` | Background media work: playlist parsing, ranged downloads, the IndexedDB store (`idbCache`), the `BackgroundGate` |
@@ -218,6 +218,7 @@ IndexedDB database `lite-player-for-echo360`, store `cache` (`61-media-io.js` `i
 
 User data is included in backups (`85-export.js`); analysis results are not.
 `localStorage` (prefix `lite-player-for-echo360:`): `prefs` (settings), `pos:<id>` (resume point),
+`layoutChosen` (recordings whose layout was chosen by hand: no automatic camera-only view),
 and the switches below.
 
 ## 8. Talking to Echo360

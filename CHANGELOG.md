@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.0
+New:
+- **Camera only while the screen is empty.** When the screen view shows nothing for a long stretch (a blackboard lecture with the projector off, a black screen at the end), the player shows the camera alone and goes back to your layout when the screen has a picture again. A recording whose screen is empty throughout opens with the camera. A short message says so each time, with Undo. Short black moments are ignored, so the layout does not jump back and forth. Once you choose a layout yourself in a recording, it is not switched again in that recording. Turn it off in ⋮ → Layout. It starts once the recording's slide analysis has run (at once for a recording opened before).
+
+Fixes:
+- A message from the player (for example "Resumed at… Start over") is no longer replaced by an automatic one; the automatic one follows when it closes.
+- Messages no longer overlap the "Skip" button or the "The lecture has ended" notice.
+
 ## 0.20.1
 Fix: with the Notes or Discussion tab open, the note box ("Write a private note at…") and "Link to…" kept the time from when the tab was opened, while the note or post went to the time playing when you sent it. They now follow playback and seeking.
 

@@ -26,6 +26,10 @@ const STRINGS = {
     volumeLevel: 'Volume {pct}%',
     muted: 'Muted',
     swapViews: 'Swap views',
+    emptyScreenCamera: 'The screen shows nothing: showing the camera only.',
+    emptyScreenBack: 'The screen shows a picture again: back to your layout.',
+    emptyScreenAuto: 'Camera only while the screen is empty',
+    emptyScreenAutoDesc: 'Long stretches without a picture on the screen show the camera alone. Choosing a layout yourself turns this off for that recording.',
     swapViewsKey: 'Swap views (S)',
     layout: 'Layout',
     layoutNow: 'Layout: {layout}',
@@ -375,6 +379,7 @@ const STRINGS = {
     featureNotesDiscussion: 'notes and discussion',
     featureSilence: 'silence detection',
     featureSlideChapters: 'slide chapters',
+    featureEmptyCamera: 'the camera for an empty screen',
     featureSlideReader: 'the slide reader',
     featureNotes: 'notes',
     featureSession: 'session renewal',
@@ -439,7 +444,7 @@ function uiLocale() {
 const FEATURE_NAMES = {
   player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
   'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
-  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'slide reader': 'featureSlideReader',
+  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'slide reader': 'featureSlideReader',
   notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
 };
 function featureName(id) {
