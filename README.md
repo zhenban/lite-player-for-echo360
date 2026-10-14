@@ -37,6 +37,7 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 - **A-B loop**: replay a stretch (a derivation, a sentence) as often as you like.
 - **Watch progress**: what you have watched is shown on the progress bar, and the course page shows a small progress bar for each recording: the parts you watched on this device and where Echo360 says you stopped last time.
 - **Floating window**: pop the whole player out into a small window that stays on top while you code or write.
+- **English or Chinese**: the interface follows the browser's language (Chinese for any `zh` setting, in simplified characters); change it in ⋮ → Language.
 - **Export and backup**: notes, bookmarks and tags as Markdown (with links back to the moment and, with a slide PDF, the slide pictures), for one recording or the whole course. Back up and restore everything that only lives in your browser.
 - **No interruptions**: Echo360's video access is renewed in the background, so long sessions do not stop for a reload.
 - **Resume**: playback continues where you stopped, across devices (uses Echo360's own record).

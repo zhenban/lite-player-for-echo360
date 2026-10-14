@@ -186,6 +186,9 @@ const RENEW_REFUSAL_MS = 30000;        // a refusal this soon after a renewal is
 const CONTROLS_HIDE_MS = 2500;         // controls hide after this long without the pointer moving
 const DOUBLE_CLICK_MS = 200;           // a click is single once no second one follows within this
 const DRAG_SEEK_MS = 200;              // seeking at most this often while dragging the progress bar
+// A reload the player makes itself (language change, expired session) comes back at the
+// position it left, if the page is back within this long (a page load takes seconds).
+const RELOAD_RESUME_MS = 60000;
 const RESUME_END_SEC = 10;             // a resume point this close to the end starts over instead (nothing left to watch)
 
 // ---- menus and buttons (32-ui-kit.js, 48-speed.js, 49-volume.js, 55-notes.js) ----

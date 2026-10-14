@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.0
+New:
+- **Chinese interface.** The player follows the browser's language: with any Chinese setting (zh-CN, zh-TW, zh-HK…) it is in simplified Chinese, otherwise in English. Choose a language yourself in ⋮ → Language; the page reloads and playback continues where it was. Dates in the discussion follow the same language. Diagnostics stay in English so they can be shared in issues.
+
+Fixes:
+- After "Reload" on the session-expired message, playback continued from Echo360's own saved position, which can be minutes behind, instead of where you were. It now continues from where you were.
+- Short messages at the bottom of the picture ("Resumed at…") wrapped after half the width of the player; on a phone they broke over two lines. The PDF toolbar could be cut off in a narrow window for the same reason.
+
 ## 0.18.0
 New:
 - **Bookmark button is a toggle.** While a bookmark is within 5 seconds of the playing moment, the bookmark button shows as on (filled). Pressing it again removes that bookmark (with Undo, which brings it back with its tags), instead of adding another bookmark at the same moment. B and the ⋮ menu item work the same way.

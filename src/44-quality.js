@@ -70,7 +70,7 @@ class QualityController {
       if (pos < 0) continue;
       const stream = playingAt.get(pos);
       const playing = stream && stream.height ? tr('qualityNow', { q: stream.height + 'p' }) : '';
-      if (x.dual) items.push({ kind: 'group', label: tr(role === 'screen' ? 'qualityScreen' : 'qualityCamera') + (playing ? ': ' + playing : '') });
+      if (x.dual) items.push({ kind: 'group', label: tr(role === 'screen' ? 'qualityScreen' : 'qualityCamera') + (playing ? tr('sepLabel') + playing : '') });
       else if (playing) items.push({ kind: 'group', label: playing });
       const heights = (this.levelsByRole[role] || []).slice().sort((a, b) => b - a);
       const opts = [['auto', tr('qualityAutoBest')]].concat(heights.map((hh) => [hh, hh + 'p']));

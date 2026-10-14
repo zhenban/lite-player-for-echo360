@@ -42,7 +42,7 @@ class LitePlayer {
     this.lesson = lesson;
     this.opts = opts;
     // A feature that fails is announced once (playback goes on).
-    featureErrors.notify = (name) => { if (!this.destroyed && this.root) this.toast(tr('featureFailed', { name })); };
+    featureErrors.notify = (name) => { if (!this.destroyed && this.root) this.toast(tr('featureFailed', { name: featureName(name) })); };
     this.d.add(() => { featureErrors.notify = null; });
     this.prefs = sanitizePrefs(store.get('prefs', null));
     this.played = new PlayedRanges();
@@ -152,6 +152,7 @@ class LitePlayer {
   buildDom() {
     const host = document.createElement('div');
     host.id = 'lite-player-for-echo360';
+    host.lang = uiLocale();
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>' + PLAYER_CSS + '</style>' + playerTemplate();
     this.host = host;
@@ -198,6 +199,12 @@ class LitePlayer {
   pickStart() {
     const link = this.linkTime();
     if (link != null) return link;
+    // Back from a reload the player made (reloadHere): where it was, once.
+    const back = store.get('reloadAt', null);
+    if (back) {
+      store.set('reloadAt', null);
+      if (back.id === this.lesson.id && typeof back.t === 'number' && back.t >= 0 && Math.abs(Date.now() - back.at) < RELOAD_RESUME_MS) return back.t;
+    }
     const dur = this.lesson.duration;
     let t0 = this.lesson.resumeAt;
     if (t0 == null) {
@@ -392,7 +399,7 @@ class LitePlayer {
     const now = this.layout;
     const to = tr({ side: 'layoutToSide', pip: 'layoutToPip', single: 'layoutToSingle' }[this.nextLayout()]);
     b.innerHTML = svg(now === 'side' ? 'layoutSide' : now === 'pip' ? 'layoutPip' : 'layoutSingle');
-    b.setAttribute('aria-label', tr('layoutNow', { layout: tr(layoutKey(now)) }) + '. ' + to);
+    b.setAttribute('aria-label', tr('layoutNow', { layout: tr(layoutKey(now)) }) + tr('sepSentence') + to);
     b.dataset.tip = to;
     this.menus.refresh();
   }
@@ -401,6 +408,24 @@ class LitePlayer {
     this.prefs.theme = theme;
     this.app.dataset.theme = theme;
     this.savePrefs();
+  }
+
+  // The interface language is decided when the page loads: a change is saved (with the
+  // position) and the page reloads.
+  setLang(lang) {
+    if (lang === this.prefs.lang) return;
+    this.prefs.lang = lang;
+    clearTimeout(this.prefsTimer);
+    store.set('prefs', this.prefs);
+    this.reloadHere();
+  }
+
+  // Reloads the page and comes back where playback is now. (Echo360's own last position,
+  // which pickStart prefers, follows only what was played, not a seek.)
+  reloadHere() {
+    store.set('reloadAt', { id: this.lesson.id, t: this.clock.position(), at: Date.now() });
+    this.savePosition();
+    location.reload();
   }
 
   setLayout(layout) {
@@ -454,7 +479,7 @@ class LitePlayer {
   showAuthError() {
     const login = this.session.failed && this.session.failed.login;
     this.showError(tr('authExpiredTitle'), tr(login ? 'authLoginExpiredText' : 'authExpiredText'),
-      [[tr('reload'), () => { this.savePosition(); location.reload(); }, true], [tr('useOriginal'), () => this.opts.onFallback('auth')]]);
+      [[tr('reload'), () => this.reloadHere(), true], [tr('useOriginal'), () => this.opts.onFallback('auth')]]);
   }
 
   onFollowerFatal() {
@@ -498,7 +523,7 @@ class LitePlayer {
       cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
-      pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t),
+      pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
       values: this.menuValues = { quality: () => this.quality.value(), audio: () => '', silence: () => '' },
@@ -1047,7 +1072,7 @@ class LitePlayer {
     const what = [x.polls && tr('extraPolls'), x.slides && tr('extraSlides'), x.audioDescription && tr('extraAudioDescription')].filter(Boolean);
     const box = this.$('.pextras');
     box.hidden = !what.length;
-    if (what.length) box.querySelector('.msg').textContent = tr('extrasNotice', { what: what.join(', ') });
+    if (what.length) box.querySelector('.msg').textContent = tr('extrasNotice', { what: what.join(tr('sepList')) });
   }
 
   bindPanelResize() {

@@ -205,3 +205,29 @@ test('copy picture takes what the user is looking at: the PDF page when the PDF 
     pg.w.close();
   }
 });
+
+test('a reload the player makes (language, expired session) comes back where playback was, not at Echo360\'s older position', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  try {
+    p.lesson.resumeAt = 4139;           // Echo360's last position: only follows playing
+    p.clock.position = () => 1800;      // the user moved here (paused)
+    let reloads = 0;
+    pg.w.location.reload = () => { reloads++; };
+    p.reloadHere();
+    assert.equal(reloads, 1);
+    assert.equal(p.pickStart(), 1800, 'back where it was');
+    assert.equal(p.pickStart(), 4139, 'only once: a later load uses the usual position');
+    // Another recording, or much later: not used.
+    p.clock.position = () => 900;
+    p.reloadHere();
+    const raw = JSON.parse(pg.w.localStorage.getItem('lite-player-for-echo360:reloadAt'));
+    pg.w.localStorage.setItem('lite-player-for-echo360:reloadAt', JSON.stringify({ ...raw, at: raw.at - 10 * 60000 }));
+    assert.equal(p.pickStart(), 4139);
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});

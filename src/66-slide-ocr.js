@@ -126,10 +126,10 @@ function ocrLanguage(pageTexts) {
   return Object.keys(TESS_LANGS).find((l) => l !== 'eng' && TESS_LANGS[l].scripts[0] === top) || 'eng';
 }
 
-// The name of a language for messages ("Chinese (Simplified)"), in the page's language.
+// The name of a language for messages ("Chinese (Simplified)"), in the interface language.
 function languageName(lang) {
   const tag = (TESS_LANGS[lang] || TESS_LANGS.eng).tag;
-  try { return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(tag) || tag; } catch (e) { return tag; }
+  try { return new Intl.DisplayNames([uiLocale()], { type: 'language' }).of(tag) || tag; } catch (e) { return tag; }
 }
 
 const OCR_FAILED = -3;         // a sample whose keyframe could not be read
@@ -190,7 +190,8 @@ class SlideTextReader {
       if (this.ac.signal.aborted) return;
       log.warn('slide text:', e && e.message ? e.message : e);
       this.state = 'unavailable';
-      this.error = String((e && e.message) || e);
+      // Shown in the slides tab: the reason in words where it is known.
+      this.error = (e && e.userText) || tr('readerFailed', { msg: String((e && e.message) || e) });
       this.onChange();
     });
   }
@@ -204,8 +205,8 @@ class SlideTextReader {
 
   async run() {
     const signal = this.ac.signal;
-    if (!HlsVideoReader.supported()) throw new Error('WebCodecs not available');
-    if (saveDataOn()) throw new Error('Data Saver is on');
+    if (!HlsVideoReader.supported()) throw Object.assign(new Error('WebCodecs not available'), { userText: tr('readerNoWebCodecs') });
+    if (saveDataOn()) throw Object.assign(new Error('Data Saver is on'), { userText: tr('readerSaveData') });
     this.state = 'loading';
     this.onChange();
     const url = this.source.v || this.source.av;

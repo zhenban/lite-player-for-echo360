@@ -156,7 +156,7 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
   /* MenuBar.fitBar measures the bar with the slider open, so opening it never overflows. */
   .row.measure .vol input { width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
 }
-.volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); padding: var(--sp2) var(--sp4); border-radius: var(--r2);
+.volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); white-space: nowrap; padding: var(--sp2) var(--sp4); border-radius: var(--r2);
   background: var(--overlay); color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none;
   opacity: 0; transition: opacity var(--t) var(--ease); }
 .volosd.on { opacity: 1; transition: none; }
@@ -232,7 +232,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .rpages { position: absolute; inset: 0; }
 .pstage .rpage { position: absolute; left: 50%; top: 50%; width: auto; height: auto; max-width: 100%; max-height: 100%; transform: translate(-50%, -50%); }
 .pbar { position: absolute; left: 50%; top: 60px; z-index: 3; display: flex; align-items: center; gap: var(--sp1); padding: 2px var(--sp1); border-radius: var(--r3);
-  max-width: calc(100% - 16px); overflow: hidden; transform: translateX(-50%); background: var(--overlay); font-size: 12px; white-space: nowrap;
+  width: max-content; max-width: calc(100% - 16px); overflow: hidden; transform: translateX(-50%); background: var(--overlay); font-size: 12px; white-space: nowrap;
   transition: opacity var(--t) var(--ease); }
 .pfollow { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .idle .pbar { opacity: 0; pointer-events: none; }
@@ -305,7 +305,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .sessionhint i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .9s linear infinite; }
 .toast { position: absolute; z-index: 6; left: 50%; bottom: 100px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp3);
   padding: var(--sp2) var(--sp2) var(--sp2) var(--sp4); border-radius: var(--r3); background: var(--overlay); font-size: 13px; box-shadow: var(--shadow);
-  max-width: calc(100% - 24px); }
+  width: max-content; max-width: calc(100% - 24px); }
 .toast button { flex: none; color: var(--accent); font-weight: 600; padding: 6px 10px; border-radius: var(--r2); }
 .toast button:hover { background: var(--fill); }
 .skipsil { position: absolute; z-index: 5; right: var(--sp4); bottom: 100px; height: 36px; padding: 0 var(--sp4); border-radius: var(--r2); background: var(--overlay);
@@ -433,7 +433,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 /* Only the matched characters are marked (a background on the whole text, a block here,
    fell on its last lines whatever line the match was on). */
 .trow .tx mark { background: var(--hl); color: inherit; border-radius: 2px; }
-.tback { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); height: 32px; padding: 0 14px; border-radius: var(--r2);
+.tback { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); white-space: nowrap; height: 32px; padding: 0 14px; border-radius: var(--r2);
   background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); }
 .pextras { margin: 0 var(--sp3) var(--sp2); padding: var(--sp2) 10px; border-radius: var(--r2); background: var(--warn-bg); font-size: 12px; line-height: 1.45; }
 .pextras button { margin-top: var(--sp1); }

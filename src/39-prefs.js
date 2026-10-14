@@ -24,6 +24,7 @@ function prefDefaults() {
     pdfMain: false, pdfFirst: false,
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
+    lang: 'auto',
   };
 }
 
@@ -70,6 +71,8 @@ function sanitizePrefs(raw) {
     pdfFirst: bool(r.pdfFirst, d.pdfFirst),
     quality: { screen: height(quality.screen), camera: height(quality.camera) },
     theme: oneOf(r.theme, THEMES, d.theme),
+    // 'auto' or a language code; one without a table means English (uiLang).
+    lang: typeof r.lang === 'string' && /^(auto|[a-z]{2})$/.test(r.lang) ? r.lang : d.lang,
   };
 }
 

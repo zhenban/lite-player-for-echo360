@@ -159,7 +159,7 @@ class DiscussionPane {
   }
 
   renderComment(c, long) {
-    const who = c.mine ? tr('you') + (c.nameHidden ? ' (' + tr('anonymous') + ')' : '') : (c.author || tr('anonymous'));
+    const who = c.mine ? tr(c.nameHidden ? 'youAnonymous' : 'you') : (c.author || tr('anonymous'));
     const badges = [];
     if (c.instructor) badges.push(el('span.badge.inst', { text: tr('instructor') }));
     if (c.ta) badges.push(el('span.badge.inst', { text: tr('ta') }));
@@ -269,7 +269,7 @@ class DiscussionPane {
     return this.threads.filter((q) => q.time != null).map((q) => ({
       time: q.time,
       kind: 'comment',
-      label: tr('markerComment') + ': ' + (q.body.length > 80 ? q.body.slice(0, 77) + '…' : q.body),
+      label: tr('markerComment') + tr('sepLabel') + (q.body.length > 80 ? q.body.slice(0, 77) + '…' : q.body),
     }));
   }
 
@@ -282,7 +282,7 @@ function formatDate(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   try {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric' });
   } catch (e) {
     return iso.slice(0, 10);
   }

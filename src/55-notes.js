@@ -364,12 +364,12 @@ class NotesPane {
   markers() {
     return this.items.filter((x) => x.time != null).map((x) => {
       const tags = x.type === 'flag' ? [] : this.tags.of(x.id);
-      const base = x.type === 'note' ? tr('markerNote') + ': ' + x.text : x.type === 'bookmark' ? tr('markerBookmark') : tr('markerFlag');
+      const base = x.type === 'note' ? tr('markerNote') + tr('sepLabel') + x.text : x.type === 'bookmark' ? tr('markerBookmark') : tr('markerFlag');
       return {
         time: x.time,
         kind: x.type,
         color: tags.length ? tags[0].color : null,
-        label: tags.length ? base + ' [' + tags.map((g) => g.name).join(', ') + ']' : base,
+        label: tags.length ? base + ' [' + tags.map((g) => g.name).join(tr('sepList')) + ']' : base,
       };
     });
   }

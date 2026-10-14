@@ -89,7 +89,7 @@ class KeyboardShortcuts {
       const list = box.querySelector('.khlist');
       list.textContent = '';
       for (const [keys, label] of KEY_HELP) {
-        list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k }))), el('div', { text: tr(label) }));
+        list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k === 'Space' ? tr('kbdSpace') : k }))), el('div', { text: tr(label) }));
       }
     }
     // Focus goes back to where it was (the ⋮ button when opened from its menu).

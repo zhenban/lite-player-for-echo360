@@ -18,12 +18,17 @@
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
 //         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
-//         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t) }
+//         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t), setLang(l) }
 // ===================================================================================
 
 // Control-bar buttons (data-bar) that move into the ⋮ menu when the bar is too narrow,
 // the first to go first. They come back in the opposite order when there is room.
 const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark'];
+
+// A language choice as shown in the menu: "Match browser", or the language in itself.
+function langLabel(l) {
+  return l === 'auto' ? tr('langAuto') : LANG_NAMES[l];
+}
 
 class MenuBar {
   constructor(deps, disposer) {
@@ -118,6 +123,7 @@ class MenuBar {
       { kind: 'page', label: tr('layout'), value: () => tr(layoutKey(x.layout())), items: () => this.layoutItems(), hidden: () => !layouts.length },
       { kind: 'page', label: tr('copyCaptionsSpan'), value: () => spanLabel(x.prefs.copySpan), items: () => this.copyItems() },
       { kind: 'page', label: tr('theme'), value: () => tr(themeKey(x.prefs.theme)), items: () => this.themeItems() },
+      { kind: 'page', label: tr('language'), value: () => langLabel(x.prefs.lang), items: () => this.langItems() },
       { kind: 'sep' },
       { kind: 'action', label: tr('popout'), key: 'W', run: () => a.popout(), hidden: () => !a.popout },
       { kind: 'page', label: tr('loopMenu'), value: a.loopLabel, items: () => this.loopItems() },
@@ -125,7 +131,7 @@ class MenuBar {
       { kind: 'action', label: tr('keysMenu'), key: '?', run: () => a.showKeys() },
       { kind: 'page', label: tr('storageMenu'), items: () => this.storageItems() },
       { kind: 'action', label: tr('useOriginal'), run: () => a.original() },
-      { kind: 'foot', text: 'Lite Player for Echo360 ' + VERSION },
+      { kind: 'foot', text: tr('appVersion', { version: VERSION }) },
     ];
   }
 
@@ -168,6 +174,14 @@ class MenuBar {
     return [
       ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => x.setTheme(t) })),
       { kind: 'text', text: () => tr('themeNote') },
+    ];
+  }
+
+  langItems() {
+    const x = this.x;
+    return [
+      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => x.setLang(l) })),
+      { kind: 'text', text: () => tr('langNote') },
     ];
   }
 
@@ -251,7 +265,7 @@ class MenuBar {
       return;
     }
     const v = f.video;
-    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: 'no picture yet' })); return; }
+    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;

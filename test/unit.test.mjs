@@ -36,7 +36,7 @@ function loadSources(names, overrides) {
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
-      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData']
+      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
   return { ...ctx.__exports, timers, window: ctx.window, setFetch: (fn) => { ctx.__fetch = fn; } };
@@ -1557,6 +1557,57 @@ test('review R10: Tesseract\'s Worker only takes pinned language data with the r
   await assert.rejects(run(good, 'https://elsewhere.example/eng.traineddata.gz'), /not a pinned/);
 });
 
+test('language tables: the same keys and the same placeholders as English', () => {
+  const m = loadSources(['00-util', '01-i18n', '01-lang']);
+  const en = m.STRINGS.en;
+  const holes = (x) => [...x.matchAll(/\{(\w+)\}/g)].map((h) => h[1]).sort().join(',');
+  const langs = Object.keys(m.STRINGS).filter((l) => l !== 'en');
+  assert.equal(JSON.stringify(langs), JSON.stringify(m.UI_LANGS.filter((l) => l !== 'auto' && l !== 'en')), 'every table is offered, every offer has a table');
+  for (const l of langs) {
+    const t = m.STRINGS[l];
+    assert.equal(JSON.stringify(Object.keys(t).sort()), JSON.stringify(Object.keys(en).sort()), l + ': keys');
+    for (const k of Object.keys(en)) {
+      assert.equal(holes(t[k]), holes(en[k]), l + '.' + k + ': placeholders');
+      assert.ok(t[k].trim(), l + '.' + k + ': empty');
+    }
+  }
+});
+
+test('language: the setting first, else the browser (any zh is Chinese), else English', () => {
+  const lang = (prefs, nav) => {
+    const m = loadSources(['00-util', '01-i18n', '01-lang'], {
+      navigator: { language: nav },
+      localStorage: { getItem: (k) => (k === 'lite-player-for-echo360:prefs' && prefs ? JSON.stringify(prefs) : null), setItem() {} },
+    });
+    return JSON.parse(JSON.stringify([m.uiLang(), m.uiLocale(), m.tr('play')]));
+  };
+  assert.deepEqual(lang(null, 'zh-CN'), ['zh', 'zh-CN', '\u64ad\u653e']);
+  assert.deepEqual(lang(null, 'zh-TW')[0], 'zh');
+  assert.deepEqual(lang(null, 'en-AU'), ['en', 'en', 'Play']);
+  assert.deepEqual(lang({ lang: 'en' }, 'zh-CN')[0], 'en', 'the user\'s choice wins');
+  assert.deepEqual(lang({ lang: 'zh' }, 'en-US')[0], 'zh');
+  assert.deepEqual(lang({ lang: 'auto' }, 'zh-HK')[0], 'zh');
+  assert.deepEqual(lang({ lang: 'fr' }, 'fr-FR')[0], 'en', 'no table: English');
+  // A key missing from a table falls back to English.
+  const m = loadSources(['00-util', '01-i18n', '01-lang'], { navigator: { language: 'zh' } });
+  delete m.STRINGS.zh.play;
+  assert.equal(m.tr('play'), 'Play');
+});
+
+test('every feature that can fail has a name in the interface language', () => {
+  const m = loadSources(['00-util', '01-i18n', '01-lang'], { navigator: { language: 'zh-CN' } });
+  const ids = new Set(['player']);
+  for (const f of readdirSync(join(root, 'src')).filter((x) => x.endsWith('.js'))) {
+    const text = readFileSync(join(root, 'src', f), 'utf8');
+    for (const [, id] of text.matchAll(/(?:\.feature|featureGuard|reportFeatureError)\('([^']+)'/g)) ids.add(id.replace(/ \(display\)$/, ''));
+  }
+  assert.ok(ids.size > 10);
+  for (const id of ids) {
+    assert.ok(m.FEATURE_NAMES[id], 'no name for ' + id);
+    assert.notEqual(m.featureName(id), id, id + ' is shown in Chinese');
+  }
+});
+
 test('levelling is on by default; only an "off" chosen since then is kept', () => {
   const m = loadSources(['00-util', '39-prefs', '53-captions', '54-sidebar', '62-silence']);
   const level = (raw) => m.sanitizePrefs(raw).audio.level;
@@ -1586,4 +1637,31 @@ test('review R1: a tag colour from a backup or from storage can only be a plain 
   const store = new m.TagStore({ sectionId: 's', mediaId: null });
   await store.load();
   assert.match(store.tags[0].color, /^#[0-9a-f]{6}$/i);
+});
+
+test('a box centred with left 50% sizes to its content, so text does not wrap at half the width', () => {
+  // An absolute box with left: 50% only gets the space from there to the right edge, so a
+  // toast wrapped after half the stage (Chinese broke "继续" in two on a phone).
+  const css = readFileSync(join(root, 'src', '30-ui-assets.js'), 'utf8');
+  // Boxes that hold no wrapping text: an image page and an icon.
+  const noText = new Set(['.pstage .rpage', '.center']);
+  const bad = [];
+  for (const [, sel, body] of css.matchAll(/^([^\n{}]+?)\s*\{([^}]*)\}/gm)) {
+    if (!/\bleft:\s*50%/.test(body) || !/translate(X)?\(-50%/.test(body) || noText.has(sel.trim())) continue;
+    const fits = /\bwidth:\s*(max-content|\d+px)/.test(body);
+    const clips = /overflow:\s*hidden/.test(body);
+    if (clips ? !fits : !(fits || /white-space:\s*nowrap/.test(body))) bad.push(sel.trim());
+  }
+  assert.deepEqual(bad, []);
+});
+
+test('interface text joins its parts with the language\'s punctuation, not literal ". ", ": " or ", "', () => {
+  // The layout button read "布局：并排. 切换到画中画". Logs and diagnostics stay in English;
+  // 67-slide-text builds Worker source code.
+  const english = /^(00-util|01-.*|67-slide-text|86-diagnostics|90-main)\.js$/;
+  const glued = /(?<!')\+\s*'(\. |: |, )'|'(\. |: |, )'\s*\+|join\('(\. |: |, )'\)/;
+  const bad = readdirSync(join(root, 'src')).filter((f) => f.endsWith('.js') && !english.test(f))
+    .flatMap((f) => readFileSync(join(root, 'src', f), 'utf8').split('\n').map((l, i) => [f + ':' + (i + 1), l]))
+    .filter(([, l]) => glued.test(l)).map(([at]) => at);
+  assert.deepEqual(bad, []);
 });

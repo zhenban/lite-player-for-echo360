@@ -1,6 +1,9 @@
 // ===================================================================================
-// User-facing strings. English only for now; other languages are added in the release
-// milestone by adding a table here and choosing it from navigator.language.
+// User-facing strings: the English table here, other languages in their own files
+// (01-lang-zh.js; the only files that may hold non-Latin text). The language is the
+// user's choice in the settings menu (prefs.lang), else the browser's: Chinese for any
+// "zh" language, English otherwise. A key missing from a table falls back to English.
+// Diagnostics stay in English (they are read by the developer).
 // ===================================================================================
 
 const STRINGS = {
@@ -120,6 +123,7 @@ const STRINGS = {
     unsavePost: 'Remove from saved',
     anonymous: 'Anonymous',
     you: 'You',
+    youAnonymous: 'You (anonymous)',
     instructor: 'Instructor',
     ta: 'Teaching assistant',
     noPosts: 'No posts yet.',
@@ -153,7 +157,6 @@ const STRINGS = {
     qualityCamera: 'Camera',
     qualityNow: 'Playing {q}',
     slides: 'Slides',
-    slidesKey: 'Slides (Shift+\u2190 / Shift+\u2192: previous / next)',
     slideN: 'Slide {n}',
     slidesFinding: 'Finding slide changes: {pct}%',
     slidesRough: 'Approximate times from preview pictures. Finding exact changes: {pct}%',
@@ -312,7 +315,7 @@ const STRINGS = {
     backupRestore: 'Restore from a backup…',
     backupMade: 'Backup saved ({n} items)',
     backupRestored: 'Restored {n} items. Reloading…',
-    backupInvalid: 'This is not an Lite Player for Echo360 backup file',
+    backupInvalid: 'This is not a Lite Player for Echo360 backup file',
     mdRecorded: 'Recorded {date}',
     mdOpen: 'Open in Echo360',
     mdNothing: 'No notes or bookmarks.',
@@ -349,8 +352,34 @@ const STRINGS = {
     themeDark: 'Dark',
     themeLight: 'Light',
     themeNote: 'The light theme changes the side panel, menus and dialogs. The picture and its controls stay dark.',
+    language: 'Language',
+    langAuto: 'Match browser',
+    langNote: 'The page reloads to change the language; playback continues where it was.',
+    // Punctuation used to join translated parts (Chinese uses full-width forms).
+    sepSentence: '. ',
+    sepLabel: ': ',
+    sepList: ', ',
+    kbdSpace: 'Space',
+    appVersion: 'Lite Player for Echo360 {version}',
+    noPictureYet: 'no picture yet',
+    readerNoWebCodecs: 'This browser cannot read the video to follow the slides (it needs WebCodecs). You can still page through the PDF.',
+    readerSaveData: 'Following the slides is off while the browser\'s Data Saver is on. You can still page through the PDF.',
+    readerFailed: 'Following the slides stopped ({msg}). You can still page through the PDF.',
+    // Feature names in featureFailed (diagnostics keep the English ids of FEATURE_NAMES).
+    featurePlayer: 'the player',
+    featureLoop: 'the A-B loop',
+    featureDiscussion: 'the discussion',
+    featurePopout: 'the floating window',
+    featureAudio: 'the audio tools',
+    featureCaptions: 'captions',
+    featureNotesDiscussion: 'notes and discussion',
+    featureSilence: 'silence detection',
+    featureSlideChapters: 'slide chapters',
+    featureSlideReader: 'the slide reader',
+    featureNotes: 'notes',
+    featureSession: 'session renewal',
+    featureZoom: 'zoom',
     layoutPdfNote: 'With the PDF view open, the layout button switches between side by side and picture in picture.',
-    overflowGroup: 'From the control bar',
     captionsPage: 'Captions',
     silencePage: 'Skip silence',
     sizeS: 'Small',
@@ -369,11 +398,46 @@ const STRINGS = {
   },
 };
 
-// English only for now; a planned release chooses English or Chinese from the browser's language.
-const LANG = 'en';
+// The languages offered, each named in itself ("auto": the browser's).
+const UI_LANGS = ['auto', 'en', 'zh'];
+const LANG_NAMES = { en: 'English', zh: '\u4e2d\u6587' };
+
+// The language of the interface, decided once per page (changing it reloads the page).
+let uiLangCache = null;
+function uiLang() {
+  if (uiLangCache) return uiLangCache;
+  const p = store.get('prefs', null);
+  const chosen = p && typeof p === 'object' ? p.lang : null;
+  let lang = chosen === 'en' || chosen === 'zh' ? chosen : null;
+  if (!lang) {
+    let nav = '';
+    try { nav = String(navigator.language || ''); } catch (e) { /* no navigator */ }
+    lang = /^zh\b/i.test(nav) ? 'zh' : 'en';
+  }
+  uiLangCache = STRINGS[lang] ? lang : 'en';
+  return uiLangCache;
+}
+
+// The BCP 47 tag of the interface language (for lang attributes and Intl).
+function uiLocale() {
+  return uiLang() === 'zh' ? 'zh-CN' : 'en';
+}
+
+// English ids of the features (as in featureGuard / Disposer.feature) -> their names.
+const FEATURE_NAMES = {
+  player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
+  'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
+  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'slide reader': 'featureSlideReader',
+  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
+};
+function featureName(id) {
+  const k = FEATURE_NAMES[String(id).replace(/ \(display\)$/, '')];
+  return k ? tr(k) : String(id);
+}
 
 function tr(key, vars) {
-  let s = (STRINGS[LANG] && STRINGS[LANG][key]) || STRINGS.en[key] || key;
+  const table = STRINGS[uiLang()];
+  let s = (table && table[key]) || STRINGS.en[key] || key;
   if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   return s;
 }

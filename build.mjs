@@ -10,8 +10,10 @@ import vm from 'node:vm';
 const root = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(root, 'src');
 
-// Source code stays English-only; translated UI strings will live in their own table.
+// Source code stays English-only; translated UI strings live in their own files
+// (01-lang-<code>.js), the only ones allowed to hold CJK text.
 const CJK = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+const LANG_FILE = /^01-lang-[a-z]+\.js$/;
 
 // The whole userscript as one string (the tests use it too, to run the player in a
 // simulated page). Returns null after reporting what is wrong.
@@ -22,7 +24,7 @@ export function assemble() {
   const parts = files.map((f) => {
     const text = readFileSync(join(srcDir, f), 'utf8');
     text.split('\n').forEach((line, i) => {
-      if (CJK.test(line)) { console.error(`${f}:${i + 1}: CJK characters in source`); failed = true; }
+      if (!LANG_FILE.test(f) && CJK.test(line)) { console.error(`${f}:${i + 1}: CJK characters in source`); failed = true; }
     });
     return `// ---- ${f} ----\n${text.trimEnd()}\n`;
   });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.18.0
+// @version      0.19.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.18.0';
+  const VERSION = '0.19.0';
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -260,8 +260,11 @@ class FrameTask {
 
 // ---- 01-i18n.js ----
 // ===================================================================================
-// User-facing strings. English only for now; other languages are added in the release
-// milestone by adding a table here and choosing it from navigator.language.
+// User-facing strings: the English table here, other languages in their own files
+// (01-lang-zh.js; the only files that may hold non-Latin text). The language is the
+// user's choice in the settings menu (prefs.lang), else the browser's: Chinese for any
+// "zh" language, English otherwise. A key missing from a table falls back to English.
+// Diagnostics stay in English (they are read by the developer).
 // ===================================================================================
 
 const STRINGS = {
@@ -381,6 +384,7 @@ const STRINGS = {
     unsavePost: 'Remove from saved',
     anonymous: 'Anonymous',
     you: 'You',
+    youAnonymous: 'You (anonymous)',
     instructor: 'Instructor',
     ta: 'Teaching assistant',
     noPosts: 'No posts yet.',
@@ -414,7 +418,6 @@ const STRINGS = {
     qualityCamera: 'Camera',
     qualityNow: 'Playing {q}',
     slides: 'Slides',
-    slidesKey: 'Slides (Shift+\u2190 / Shift+\u2192: previous / next)',
     slideN: 'Slide {n}',
     slidesFinding: 'Finding slide changes: {pct}%',
     slidesRough: 'Approximate times from preview pictures. Finding exact changes: {pct}%',
@@ -573,7 +576,7 @@ const STRINGS = {
     backupRestore: 'Restore from a backup…',
     backupMade: 'Backup saved ({n} items)',
     backupRestored: 'Restored {n} items. Reloading…',
-    backupInvalid: 'This is not an Lite Player for Echo360 backup file',
+    backupInvalid: 'This is not a Lite Player for Echo360 backup file',
     mdRecorded: 'Recorded {date}',
     mdOpen: 'Open in Echo360',
     mdNothing: 'No notes or bookmarks.',
@@ -610,8 +613,34 @@ const STRINGS = {
     themeDark: 'Dark',
     themeLight: 'Light',
     themeNote: 'The light theme changes the side panel, menus and dialogs. The picture and its controls stay dark.',
+    language: 'Language',
+    langAuto: 'Match browser',
+    langNote: 'The page reloads to change the language; playback continues where it was.',
+    // Punctuation used to join translated parts (Chinese uses full-width forms).
+    sepSentence: '. ',
+    sepLabel: ': ',
+    sepList: ', ',
+    kbdSpace: 'Space',
+    appVersion: 'Lite Player for Echo360 {version}',
+    noPictureYet: 'no picture yet',
+    readerNoWebCodecs: 'This browser cannot read the video to follow the slides (it needs WebCodecs). You can still page through the PDF.',
+    readerSaveData: 'Following the slides is off while the browser\'s Data Saver is on. You can still page through the PDF.',
+    readerFailed: 'Following the slides stopped ({msg}). You can still page through the PDF.',
+    // Feature names in featureFailed (diagnostics keep the English ids of FEATURE_NAMES).
+    featurePlayer: 'the player',
+    featureLoop: 'the A-B loop',
+    featureDiscussion: 'the discussion',
+    featurePopout: 'the floating window',
+    featureAudio: 'the audio tools',
+    featureCaptions: 'captions',
+    featureNotesDiscussion: 'notes and discussion',
+    featureSilence: 'silence detection',
+    featureSlideChapters: 'slide chapters',
+    featureSlideReader: 'the slide reader',
+    featureNotes: 'notes',
+    featureSession: 'session renewal',
+    featureZoom: 'zoom',
     layoutPdfNote: 'With the PDF view open, the layout button switches between side by side and picture in picture.',
-    overflowGroup: 'From the control bar',
     captionsPage: 'Captions',
     silencePage: 'Skip silence',
     sizeS: 'Small',
@@ -630,14 +659,444 @@ const STRINGS = {
   },
 };
 
-// English only for now; a planned release chooses English or Chinese from the browser's language.
-const LANG = 'en';
+// The languages offered, each named in itself ("auto": the browser's).
+const UI_LANGS = ['auto', 'en', 'zh'];
+const LANG_NAMES = { en: 'English', zh: '\u4e2d\u6587' };
+
+// The language of the interface, decided once per page (changing it reloads the page).
+let uiLangCache = null;
+function uiLang() {
+  if (uiLangCache) return uiLangCache;
+  const p = store.get('prefs', null);
+  const chosen = p && typeof p === 'object' ? p.lang : null;
+  let lang = chosen === 'en' || chosen === 'zh' ? chosen : null;
+  if (!lang) {
+    let nav = '';
+    try { nav = String(navigator.language || ''); } catch (e) { /* no navigator */ }
+    lang = /^zh\b/i.test(nav) ? 'zh' : 'en';
+  }
+  uiLangCache = STRINGS[lang] ? lang : 'en';
+  return uiLangCache;
+}
+
+// The BCP 47 tag of the interface language (for lang attributes and Intl).
+function uiLocale() {
+  return uiLang() === 'zh' ? 'zh-CN' : 'en';
+}
+
+// English ids of the features (as in featureGuard / Disposer.feature) -> their names.
+const FEATURE_NAMES = {
+  player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
+  'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
+  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'slide reader': 'featureSlideReader',
+  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
+};
+function featureName(id) {
+  const k = FEATURE_NAMES[String(id).replace(/ \(display\)$/, '')];
+  return k ? tr(k) : String(id);
+}
 
 function tr(key, vars) {
-  let s = (STRINGS[LANG] && STRINGS[LANG][key]) || STRINGS.en[key] || key;
+  const table = STRINGS[uiLang()];
+  let s = (table && table[key]) || STRINGS.en[key] || key;
   if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   return s;
 }
+
+// ---- 01-lang-zh.js ----
+// ===================================================================================
+// Chinese (simplified) strings, keyed as the English table in 01-i18n.js. The glossary and
+// style rules are in dev/i18n/STRINGS-zh.md. This and the other language files are the
+// only sources allowed to hold CJK text (build.mjs).
+// ===================================================================================
+
+STRINGS.zh = {
+  back: '返回课程',
+  seek: '播放位置',
+  play: '播放',
+  playKey: '播放（空格）',
+  pause: '暂停',
+  pauseKey: '暂停（空格）',
+  rewind: '后退 10 秒',
+  rewindKey: '后退 10 秒（J）',
+  forward: '前进 10 秒',
+  forwardKey: '前进 10 秒（L）',
+  mute: '静音',
+  muteKey: '静音（M）',
+  unmute: '取消静音',
+  unmuteKey: '取消静音（M）',
+  volume: '音量',
+  volumeLevel: '音量 {pct}%',
+  muted: '已静音',
+  swapViews: '交换画面',
+  swapViewsKey: '交换画面（S）',
+  layout: '布局',
+  layoutNow: '布局：{layout}',
+  layoutToSide: '切换到并排',
+  layoutToPip: '切换到画中画',
+  layoutToSingle: '切换到单画面',
+  layoutSide: '并排',
+  layoutPip: '画中画',
+  layoutSingle: '单画面',
+  resizeViews: '拖动调整两个画面的大小',
+  pipHint: '拖动可移动，点击交换画面',
+  resizePip: '拖动调整大小',
+  secondViewLost: '第二个画面加载失败，已隐藏。',
+  captions: '字幕',
+  captionsKey: '字幕（C）',
+  captionsLoading: '字幕加载中',
+  captionsNone: '这个录像没有字幕',
+  showCaptions: '显示字幕',
+  hideCaptionsPaused: '暂停时隐藏',
+  copyFrame: '复制画面',
+  copyFrameKey: '复制画面（P）',
+  copyCaptions: '复制文字',
+  copyCaptionsKey: '复制文字（A）',
+  copyCaptionsSpan: '复制文字的长度',
+  copyCaptionsSpanDesc: '“复制文字”复制刚才讲的内容（整句），附带课名和时间。',
+  copySpanValue: '最近 {time}',
+  copiedFrame: '已复制画面（{w} × {h}）',
+  copiedPage: '已把 {file} 第 {n} 页复制为图片',
+  copiedCaptions: '已复制转录 {from}–{to}',
+  copyFailed: '复制失败（{msg}）',
+  copyNoCaptions: '这个录像没有可复制的转录。',
+  pausedHint: '已暂停',
+  captionSize: '字号',
+  on: '开',
+  off: '关',
+  transcript: '转录',
+  transcriptKey: '转录（T）',
+  closePanel: '关闭',
+  resizePanel: '拖动调整宽度',
+  searchTranscript: '搜索转录',
+  prevMatch: '上一个（Shift+Enter）',
+  nextMatch: '下一个（Enter）',
+  searchCount: '找到 {n} 处',
+  searchPos: '{i} / {n}',
+  backToCurrent: '回到当前位置',
+  notes: '笔记',
+  discussion: '讨论',
+  sidebarTabs: '侧栏',
+  addNotePlaceholder: '在 {time} 写一条私人笔记',
+  addNote: '添加笔记',
+  notesPrivate: '笔记和书签只有你自己能看到。老师能看到你的“没听懂”标记。标签只有你能看到，只存在本设备上。',
+  filterAll: '全部',
+  filterNotes: '笔记',
+  filterBookmarks: '书签',
+  filterFlags: '没听懂',
+  noNotes: '还没有内容。可以写笔记、加书签（B），或标记没听懂的地方（U）。',
+  bookmark: '书签',
+  bookmarkKey: '给这里加书签（B）',
+  bookmarkedAt: '已在 {time} 加书签',
+  removeBookmark: '删除书签',
+  removeBookmarkKey: '删除这里的书签（B）',
+  bookmarkRemoved: '已删除 {time} 的书签',
+  showFile: '显示 {name}',
+  pdfFileNext: '{name}：切换到 {next}',
+  undo: '撤销',
+  flag: '没听懂',
+  flagRemoveLabel: '取消 {time} 的“没听懂”',
+  flagVisible: '老师可见',
+  flagConfirm: '把 {time} 标记为没听懂？老师会看到。',
+  flagConfirmAction: '标记',
+  flagConfirmButton: '确认：向老师标记 {time}',
+  flagAdded: '已把 {time} 标记为没听懂',
+  flagRemoved: '已取消 {time} 的标记',
+  edit: '编辑',
+  save: '保存',
+  cancel: '取消',
+  delete: '删除',
+  confirmDelete: '确定删除？',
+  remove: '移除',
+  saveFailed: '保存失败：{error}',
+  loadFailed: '加载失败：{error}',
+  publicWarning: '帖子和回复，老师和同学都能看到。',
+  postPlaceholder: '对这节课提问或发表评论',
+  linkTime: '关联到 {time}',
+  hideName: '隐藏我的名字',
+  postPublic: '发布',
+  replyPublic: '回复',
+  replyPlaceholder: '写回复',
+  replies: '{n} 条回复',
+  oneReply: '1 条回复',
+  hideReplies: '收起回复',
+  like: '赞',
+  unlike: '取消赞',
+  savePost: '收藏（只有你能看到）',
+  unsavePost: '取消收藏',
+  anonymous: '匿名',
+  you: '你',
+  youAnonymous: '你（匿名）',
+  instructor: '老师',
+  ta: '助教',
+  noPosts: '还没有帖子。',
+  hiddenPosts: '老师隐藏了 {n} 个帖子。',
+  attachment: '有附件',
+  attachmentOpen: '有附件：切换到原播放器才能打开',
+  refresh: '刷新',
+  sortNewest: '最新的在前',
+  sortVideoTime: '按视频时间',
+  charsLeft: '还能输入 {n} 字',
+  tooLong: '超出 {n} 字',
+  extrasNotice: '这个录像有{what}，只有原播放器能显示。',
+  extraPolls: '投票',
+  extraSlides: '幻灯片',
+  extraAudioDescription: '口述影像音轨',
+  markerNote: '笔记',
+  markerBookmark: '书签',
+  markerFlag: '没听懂',
+  markerComment: '帖子',
+  audio: '音频',
+  audioLevel: '音量均衡',
+  audioLevelDesc: '把小声的讲话调大，把大声的部分压住。适合老师没戴麦克风的录像。',
+  audioVoice: '人声增强',
+  audioVoiceDesc: '去掉空调和风扇的低频嗡嗡声，让讲话更清楚。',
+  audioMono: '单声道',
+  audioMonoDesc: '两个声道合并到两侧播放（适合声音只在一边的录像）。',
+  quality: '画质',
+  qualityAuto: '自动',
+  qualityAutoBest: '自动（网络允许的最高画质）',
+  qualityScreen: '屏幕',
+  qualityCamera: '摄像头',
+  qualityNow: '正在播放 {q}',
+  slides: '幻灯片',
+  slideN: '幻灯片 {n}',
+  slidesFinding: '正在查找幻灯片切换：{pct}%',
+  slidesRough: '时间是根据预览图估计的。正在查找准确的切换位置：{pct}%',
+  slidesFound: '从屏幕画面中自动找到 {n} 页幻灯片。',
+  slidesNone: '没有在这个录像里自动找到幻灯片切换。',
+  slidesSaveData: '浏览器开着省流量模式，不查找幻灯片章节。',
+  screenView: '屏幕画面：',
+  viewN: '画面 {n}',
+  screenUse: '在画面 {n} 里找幻灯片',
+  screenFound: '自动找到',
+  screenGuessed: '推测：如果幻灯片不对，请选另一个画面',
+  screenChosen: '你选的',
+  screenAuto: '自动',
+  addSlides: '添加幻灯片 PDF…',
+  addMoreSlides: '再添加一个 PDF…',
+  slidesLocal: '添加老师的幻灯片 PDF，可以跟着讲课翻页：讲到哪一页就显示哪一页。文件只存在本设备上。',
+  removeFile: '移除 {name}',
+  deckLoading: '正在打开幻灯片文件…',
+  deckReading: '正在识别屏幕上的幻灯片：{pct}%',
+  deckWaiting: '正在查找屏幕画面…',
+  deckLangLoading: '正在下载{lang}文字识别数据（{mb} MB，只需一次）…',
+  deckError: '无法读取幻灯片文件（{msg}）。',
+  deckSaveFailed: '无法把 {name} 存到本设备（{msg}）。磁盘满了吗？',
+  prevPage: '上一页',
+  nextPage: '下一页',
+  pageOfN: '第 {n} 页，共 {total} 页',
+  following: '正在跟随讲课',
+  followingUnsure: '正在跟随讲课（这里没认出页码，显示上一次找到的页）',
+  followingStale: '正在跟随讲课：已经有一段时间没认出当前页',
+  pageNotRecognised: '没认出当前页',
+  followingShort: '跟随中',
+  followingUnsureShort: '跟随中（上一次找到的页）',
+  followingStaleShort: '没认出页码',
+  backToLectureShort: '回到讲课位置',
+  pdfMainOpen: '在视频旁边显示 PDF',
+  pdfMainClose: '关闭 PDF 视图',
+  pdfSwap: '交换 PDF 和视频',
+  backToLecture: '回到正在讲的那一页',
+  shownAt: '出现在',
+  notFoundInRecording: '录像里没有找到。',
+  wrongPage: '页码不对？',
+  useThisPage: '当前这段显示第 {n} 页',
+  markNotSlide: '当前这段不是幻灯片',
+  undoCorrection: '撤销我在这里的更正',
+  showChapters: '显示 {n} 个章节',
+  hideChapters: '隐藏章节',
+  dropSlides: '把幻灯片 PDF 拖到这里。文件只存在本设备上。',
+  dropNotPdf: '只能添加 PDF 文件作为幻灯片。',
+  silence: '无声段',
+  silenceAuto: '自动跳过无声段',
+  silenceAutoDesc: '跳过较长的停顿（课间休息、小组讨论）。关闭时会出现一个按钮，由你决定是否跳过。',
+  silenceMin: '标记的最短无声段',
+  silenceSensitivity: '灵敏度',
+  low: '低',
+  normal: '中',
+  high: '高',
+  silenceFromTranscript: '根据转录：{n} 处无声段，共 {time}。',
+  silenceFound: '{n} 处无声段，共 {time}。',
+  silenceNone: '没有 {min} 或更长的无声段。',
+  silenceAnalysing: '正在分析音频：已完成 {pct}%。',
+  silenceWaiting: '正在查找无声段…',
+  silenceUnavailable: '这个录像不能检测无声段。',
+  silenceSaveData: '开着省流量模式时不检测无声段。',
+  silenceTip: '无声段，{time}',
+  blankTip: '黑屏且无声，{time}',
+  blackTip: '黑屏，{time}',
+  skipBlank: '跳过空白部分（{time}）',
+  skippedBlank: '已跳过 {time} 黑屏和无声段',
+  contentEnded: '这节课已经讲完（后面是黑屏和无声）。',
+  contentEndSkip: '跳到结尾',
+  contentEndStop: '停在这里',
+  skipSilence: '跳过无声段（{time}）',
+  skippedSilence: '已跳过 {time} 无声段',
+  audioNoWebAudio: '这个浏览器不支持音频处理。',
+  audioNativeHls: '音频处理需要 Media Source Extensions，这个浏览器播放这个视频时没有使用它。',
+  speed: '播放速度',
+  speedKey: '播放速度（[ 和 ]）',
+  speedNow: '播放速度：{rate}',
+  fullscreen: '全屏',
+  fullscreenKey: '全屏（F）',
+  exitFullscreen: '退出全屏',
+  exitFullscreenKey: '退出全屏（F）',
+  resumedAt: '已从 {time} 继续',
+  startOver: '从头开始',
+  authExpiredTitle: '播放权限已过期',
+  authExpiredText: 'Echo360 的视频访问权限已过期，无法续期。刷新页面后会从当前位置继续。',
+  authLoginExpiredText: '你的 Echo360 登录已过期。刷新页面重新登录，播放会从当前位置继续。',
+  sessionRenewing: '正在刷新会话…',
+  featureFailed: '{name}出错了，暂时关闭。播放不受影响。',
+  tagExam: '考试',
+  tagAssignment: '作业',
+  tagConfused: '没懂',
+  tagsPrivate: '标签只有你能看到：只存在本设备上，不会发送给 Echo360。同一门课程的所有录像共用这些标签。',
+  tagsFor: '标签',
+  newTag: '新建标签…',
+  addTag: '添加标签',
+  addTagShort: '+ 标签',
+  tagColor: '更改颜色',
+  tagName: '标签名',
+  manageTags: '管理标签…',
+  filterTags: '按标签筛选',
+  allTags: '全部标签',
+  untagged: '无标签',
+  done: '完成',
+  keysTitle: '快捷键',
+  keyPlay: '播放 / 暂停',
+  keySeek5: '后退 / 前进 5 秒',
+  keySeek10: '后退 / 前进 10 秒',
+  keyVolume: '音量',
+  keyMute: '静音',
+  keyFullscreen: '全屏',
+  keySwap: '交换画面',
+  keySpeed: '减速 / 加速',
+  keyCaptions: '字幕',
+  keyTranscript: '转录',
+  keyBookmark: '给此刻加书签，或删除这里的书签',
+  keyTag: '给这里的笔记或书签加标签（没有的话先加书签）',
+  keyFlag: '没听懂（老师可见；会先确认）',
+  keySlide: '上一页 / 下一页幻灯片',
+  keyCopyFrame: '复制画面',
+  keyCopyCaptions: '复制文字',
+  keyZoom: '放大 / 缩小（主画面；也可以在任一画面上滚动滚轮，拖动可移动）',
+  keyZoomReset: '恢复完整画面（或双击）',
+  keyLoop: '从这里开始循环 / 在这里结束循环（也可以用设置菜单，或右键点进度条）',
+  keyLoopClear: '结束循环',
+  keyHelp: '这个列表',
+  moreMenu: '设置和更多',
+  cachesMeasuring: '本设备上的分析结果：正在计算…',
+  cachesSize: '本设备上的分析结果：{mb} MB（{n} 个）',
+  cachesUnknown: '本设备上的分析结果：未知',
+  cachesClear: '清除',
+  cachesCleared: '已清除 {n} 个结果，需要时会重新生成',
+  cachesInfo: '每个录像的幻灯片章节、无声段和幻灯片文字，存下来下次就能直接用。不包括你的笔记、标签和幻灯片文件。60 天没用的会自动删除。',
+  diagMenu: '复制诊断信息…',
+  storageMenu: '存储和诊断',
+  diagTitle: '诊断信息',
+  diagInfo: '用于报告问题：版本、各功能的状态和最近的警告。不含登录信息，网址和邮箱地址已隐去；分享前请先看一遍。下面就是会被复制的全部内容：',
+  diagCopy: '复制',
+  diagCopied: '已复制诊断信息',
+  keyExport: '导出笔记和书签、备份',
+  exportNotes: '导出笔记和备份',
+  exportMenu: '导出…',
+  exportInfo: '把笔记和书签（带时间和标签）导出为 Markdown（可用于 Obsidian 等笔记软件）。每个时间都能链接回录像里的那一刻。不会包含视频和视频地址。',
+  exportPictures: '附上每条笔记时显示的幻灯片页（图片，打包成 zip）',
+  exportPicturesNoPdf: '幻灯片图片需要幻灯片 PDF（在“幻灯片”页添加）',
+  exportLecture: '导出这个录像',
+  exportCourse: '导出整门课程',
+  exportCourseProgress: '正在读取第 {k} 个，共 {n} 个…',
+  exportedLecture: '已导出 {n} 条笔记和书签（{p} 张幻灯片图片）',
+  exportedCourse: '已导出 {n} 个有笔记的录像',
+  exportedNothing: '这门课程还没有笔记或书签',
+  exportFailed: '导出失败（{msg}）',
+  backupInfo: '标签、幻灯片文件和更正、观看记录和设置只存在这个浏览器里。备份文件可以把它们带到另一个浏览器（或在清除浏览器数据后恢复）。',
+  backupPdfs: '包含 PDF 文件（文件更大）',
+  backupMake: '下载备份',
+  backupRestore: '从备份恢复…',
+  backupMade: '已保存备份（{n} 项）',
+  backupRestored: '已恢复 {n} 项，正在刷新…',
+  backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
+  mdRecorded: '录制于 {date}',
+  mdOpen: '在 Echo360 中打开',
+  mdNothing: '没有笔记或书签。',
+  mdNoTime: '（无时间）',
+  mdFooter: '{date} 从 Echo360 轻量播放器导出。标签是你在本地的私人标签。',
+  keyPopout: '悬浮窗（在其他窗口上方继续播放）',
+  popout: '悬浮窗',
+  popoutHere: '正在悬浮窗中播放。',
+  popoutBack: '回到这个页面',
+  popoutFailed: '无法打开悬浮窗（{msg}）',
+  listWatched: '已看 {pct}%',
+  listWatchedTitle: '在本设备上看了 {pct}%',
+  listLastAt: '上次停在 {time}',
+  listLastAtTitle: '上次停在 {time}（Echo360，任意设备）',
+  lastStopped: '你上次停在这里（Echo360）',
+  loopStart: '循环起点（可拖动）',
+  loopEnd: '循环终点（可拖动）',
+  loopClear: '结束循环',
+  loopFromHere: '从这里开始循环',
+  loopToHere: '在这里结束循环',
+  loopMenu: '循环播放一段',
+  loopNone: '未循环',
+  loopStartSet: '循环从 {time} 开始；到终点时按 O',
+  loopSet: '正在循环 {from}–{to}',
+  loopCleared: '已结束循环',
+  loopOutside: '在循环 {from}–{to} 之外',
+  keyEscape: '关闭菜单',
+  keysMenu: '快捷键',
+  reload: '刷新',
+  useOriginal: '切换到原播放器',
+  menuBack: '返回',
+  theme: '主题',
+  themeSystem: '跟随系统',
+  themeDark: '深色',
+  themeLight: '浅色',
+  themeNote: '浅色主题只改变侧栏、菜单和对话框，画面和画面上的控件保持深色。',
+  language: '语言',
+  langAuto: '跟随浏览器',
+  langNote: '切换语言后页面会重新加载，播放从原来的位置继续。',
+  sepSentence: '。',
+  sepLabel: '：',
+  sepList: '、',
+  kbdSpace: '空格',
+  appVersion: 'Echo360 轻量播放器 {version}',
+  noPictureYet: '还没有画面',
+  readerNoWebCodecs: '这个浏览器不能读取视频来跟读幻灯片（需要 WebCodecs）。PDF 仍可手动翻页。',
+  readerSaveData: '浏览器开着省流量模式，幻灯片跟读已关闭。PDF 仍可手动翻页。',
+  readerFailed: '幻灯片跟读停止了（{msg}）。PDF 仍可手动翻页。',
+  featurePlayer: '播放器',
+  featureLoop: 'A-B 循环',
+  featureDiscussion: '讨论',
+  featurePopout: '悬浮窗',
+  featureAudio: '音频处理',
+  featureCaptions: '字幕',
+  featureNotesDiscussion: '笔记和讨论',
+  featureSilence: '无声段检测',
+  featureSlideChapters: '幻灯片章节',
+  featureSlideReader: '幻灯片跟读',
+  featureNotes: '笔记',
+  featureSession: '会话续期',
+  featureZoom: '缩放',
+  layoutPdfNote: '打开 PDF 视图时，布局按钮在并排和画中画之间切换。',
+  captionsPage: '字幕',
+  silencePage: '跳过无声段',
+  sizeS: '小',
+  sizeM: '中',
+  sizeL: '大',
+  sizeXL: '特大',
+  seconds: '{n} 秒',
+  minute: '1 分钟',
+  minutes: '{n} 分钟',
+  playbackFailedTitle: '播放失败',
+  playbackFailedText: '视频无法加载（{detail}）。可以重试，或切换到原播放器。',
+  retry: '重试',
+  close: '关闭',
+  errorNotice: 'Echo360 轻量播放器遇到意外错误，已切换到原播放器（CPU 修复已开启）。',
+  fallbackNotice: 'Echo360 轻量播放器无法接管这个页面，正在使用原播放器（CPU 修复已开启）。',
+};
 
 // ---- 02-tuning.js ----
 // ===================================================================================
@@ -828,6 +1287,9 @@ const RENEW_REFUSAL_MS = 30000;        // a refusal this soon after a renewal is
 const CONTROLS_HIDE_MS = 2500;         // controls hide after this long without the pointer moving
 const DOUBLE_CLICK_MS = 200;           // a click is single once no second one follows within this
 const DRAG_SEEK_MS = 200;              // seeking at most this often while dragging the progress bar
+// A reload the player makes itself (language change, expired session) comes back at the
+// position it left, if the page is back within this long (a page load takes seconds).
+const RELOAD_RESUME_MS = 60000;
 const RESUME_END_SEC = 10;             // a resume point this close to the end starts over instead (nothing left to watch)
 
 // ---- menus and buttons (32-ui-kit.js, 48-speed.js, 49-volume.js, 55-notes.js) ----
@@ -2048,7 +2510,7 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
   /* MenuBar.fitBar measures the bar with the slider open, so opening it never overflows. */
   .row.measure .vol input { width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
 }
-.volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); padding: var(--sp2) var(--sp4); border-radius: var(--r2);
+.volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); white-space: nowrap; padding: var(--sp2) var(--sp4); border-radius: var(--r2);
   background: var(--overlay); color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none;
   opacity: 0; transition: opacity var(--t) var(--ease); }
 .volosd.on { opacity: 1; transition: none; }
@@ -2124,7 +2586,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .rpages { position: absolute; inset: 0; }
 .pstage .rpage { position: absolute; left: 50%; top: 50%; width: auto; height: auto; max-width: 100%; max-height: 100%; transform: translate(-50%, -50%); }
 .pbar { position: absolute; left: 50%; top: 60px; z-index: 3; display: flex; align-items: center; gap: var(--sp1); padding: 2px var(--sp1); border-radius: var(--r3);
-  max-width: calc(100% - 16px); overflow: hidden; transform: translateX(-50%); background: var(--overlay); font-size: 12px; white-space: nowrap;
+  width: max-content; max-width: calc(100% - 16px); overflow: hidden; transform: translateX(-50%); background: var(--overlay); font-size: 12px; white-space: nowrap;
   transition: opacity var(--t) var(--ease); }
 .pfollow { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .idle .pbar { opacity: 0; pointer-events: none; }
@@ -2197,7 +2659,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .sessionhint i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .9s linear infinite; }
 .toast { position: absolute; z-index: 6; left: 50%; bottom: 100px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp3);
   padding: var(--sp2) var(--sp2) var(--sp2) var(--sp4); border-radius: var(--r3); background: var(--overlay); font-size: 13px; box-shadow: var(--shadow);
-  max-width: calc(100% - 24px); }
+  width: max-content; max-width: calc(100% - 24px); }
 .toast button { flex: none; color: var(--accent); font-weight: 600; padding: 6px 10px; border-radius: var(--r2); }
 .toast button:hover { background: var(--fill); }
 .skipsil { position: absolute; z-index: 5; right: var(--sp4); bottom: 100px; height: 36px; padding: 0 var(--sp4); border-radius: var(--r2); background: var(--overlay);
@@ -2325,7 +2787,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 /* Only the matched characters are marked (a background on the whole text, a block here,
    fell on its last lines whatever line the match was on). */
 .trow .tx mark { background: var(--hl); color: inherit; border-radius: 2px; }
-.tback { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); height: 32px; padding: 0 14px; border-radius: var(--r2);
+.tback { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); white-space: nowrap; height: 32px; padding: 0 14px; border-radius: var(--r2);
   background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); }
 .pextras { margin: 0 var(--sp3) var(--sp2); padding: var(--sp2) 10px; border-radius: var(--r2); background: var(--warn-bg); font-size: 12px; line-height: 1.45; }
 .pextras button { margin-top: var(--sp1); }
@@ -3409,6 +3871,7 @@ function prefDefaults() {
     pdfMain: false, pdfFirst: false,
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
+    lang: 'auto',
   };
 }
 
@@ -3455,6 +3918,8 @@ function sanitizePrefs(raw) {
     pdfFirst: bool(r.pdfFirst, d.pdfFirst),
     quality: { screen: height(quality.screen), camera: height(quality.camera) },
     theme: oneOf(r.theme, THEMES, d.theme),
+    // 'auto' or a language code; one without a table means English (uiLang).
+    lang: typeof r.lang === 'string' && /^(auto|[a-z]{2})$/.test(r.lang) ? r.lang : d.lang,
   };
 }
 
@@ -3517,7 +3982,7 @@ class LitePlayer {
     this.lesson = lesson;
     this.opts = opts;
     // A feature that fails is announced once (playback goes on).
-    featureErrors.notify = (name) => { if (!this.destroyed && this.root) this.toast(tr('featureFailed', { name })); };
+    featureErrors.notify = (name) => { if (!this.destroyed && this.root) this.toast(tr('featureFailed', { name: featureName(name) })); };
     this.d.add(() => { featureErrors.notify = null; });
     this.prefs = sanitizePrefs(store.get('prefs', null));
     this.played = new PlayedRanges();
@@ -3627,6 +4092,7 @@ class LitePlayer {
   buildDom() {
     const host = document.createElement('div');
     host.id = 'lite-player-for-echo360';
+    host.lang = uiLocale();
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>' + PLAYER_CSS + '</style>' + playerTemplate();
     this.host = host;
@@ -3673,6 +4139,12 @@ class LitePlayer {
   pickStart() {
     const link = this.linkTime();
     if (link != null) return link;
+    // Back from a reload the player made (reloadHere): where it was, once.
+    const back = store.get('reloadAt', null);
+    if (back) {
+      store.set('reloadAt', null);
+      if (back.id === this.lesson.id && typeof back.t === 'number' && back.t >= 0 && Math.abs(Date.now() - back.at) < RELOAD_RESUME_MS) return back.t;
+    }
     const dur = this.lesson.duration;
     let t0 = this.lesson.resumeAt;
     if (t0 == null) {
@@ -3867,7 +4339,7 @@ class LitePlayer {
     const now = this.layout;
     const to = tr({ side: 'layoutToSide', pip: 'layoutToPip', single: 'layoutToSingle' }[this.nextLayout()]);
     b.innerHTML = svg(now === 'side' ? 'layoutSide' : now === 'pip' ? 'layoutPip' : 'layoutSingle');
-    b.setAttribute('aria-label', tr('layoutNow', { layout: tr(layoutKey(now)) }) + '. ' + to);
+    b.setAttribute('aria-label', tr('layoutNow', { layout: tr(layoutKey(now)) }) + tr('sepSentence') + to);
     b.dataset.tip = to;
     this.menus.refresh();
   }
@@ -3876,6 +4348,24 @@ class LitePlayer {
     this.prefs.theme = theme;
     this.app.dataset.theme = theme;
     this.savePrefs();
+  }
+
+  // The interface language is decided when the page loads: a change is saved (with the
+  // position) and the page reloads.
+  setLang(lang) {
+    if (lang === this.prefs.lang) return;
+    this.prefs.lang = lang;
+    clearTimeout(this.prefsTimer);
+    store.set('prefs', this.prefs);
+    this.reloadHere();
+  }
+
+  // Reloads the page and comes back where playback is now. (Echo360's own last position,
+  // which pickStart prefers, follows only what was played, not a seek.)
+  reloadHere() {
+    store.set('reloadAt', { id: this.lesson.id, t: this.clock.position(), at: Date.now() });
+    this.savePosition();
+    location.reload();
   }
 
   setLayout(layout) {
@@ -3929,7 +4419,7 @@ class LitePlayer {
   showAuthError() {
     const login = this.session.failed && this.session.failed.login;
     this.showError(tr('authExpiredTitle'), tr(login ? 'authLoginExpiredText' : 'authExpiredText'),
-      [[tr('reload'), () => { this.savePosition(); location.reload(); }, true], [tr('useOriginal'), () => this.opts.onFallback('auth')]]);
+      [[tr('reload'), () => this.reloadHere(), true], [tr('useOriginal'), () => this.opts.onFallback('auth')]]);
   }
 
   onFollowerFatal() {
@@ -3973,7 +4463,7 @@ class LitePlayer {
       cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
-      pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t),
+      pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
       values: this.menuValues = { quality: () => this.quality.value(), audio: () => '', silence: () => '' },
@@ -4522,7 +5012,7 @@ class LitePlayer {
     const what = [x.polls && tr('extraPolls'), x.slides && tr('extraSlides'), x.audioDescription && tr('extraAudioDescription')].filter(Boolean);
     const box = this.$('.pextras');
     box.hidden = !what.length;
-    if (what.length) box.querySelector('.msg').textContent = tr('extrasNotice', { what: what.join(', ') });
+    if (what.length) box.querySelector('.msg').textContent = tr('extrasNotice', { what: what.join(tr('sepList')) });
   }
 
   bindPanelResize() {
@@ -4864,7 +5354,7 @@ class KeyboardShortcuts {
       const list = box.querySelector('.khlist');
       list.textContent = '';
       for (const [keys, label] of KEY_HELP) {
-        list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k }))), el('div', { text: tr(label) }));
+        list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k === 'Space' ? tr('kbdSpace') : k }))), el('div', { text: tr(label) }));
       }
     }
     // Focus goes back to where it was (the ⋮ button when opened from its menu).
@@ -5075,7 +5565,7 @@ class QualityController {
       if (pos < 0) continue;
       const stream = playingAt.get(pos);
       const playing = stream && stream.height ? tr('qualityNow', { q: stream.height + 'p' }) : '';
-      if (x.dual) items.push({ kind: 'group', label: tr(role === 'screen' ? 'qualityScreen' : 'qualityCamera') + (playing ? ': ' + playing : '') });
+      if (x.dual) items.push({ kind: 'group', label: tr(role === 'screen' ? 'qualityScreen' : 'qualityCamera') + (playing ? tr('sepLabel') + playing : '') });
       else if (playing) items.push({ kind: 'group', label: playing });
       const heights = (this.levelsByRole[role] || []).slice().sort((a, b) => b - a);
       const opts = [['auto', tr('qualityAutoBest')]].concat(heights.map((hh) => [hh, hh + 'p']));
@@ -5114,12 +5604,17 @@ class QualityController {
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
 //         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
-//         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t) }
+//         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t), setLang(l) }
 // ===================================================================================
 
 // Control-bar buttons (data-bar) that move into the ⋮ menu when the bar is too narrow,
 // the first to go first. They come back in the opposite order when there is room.
 const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark'];
+
+// A language choice as shown in the menu: "Match browser", or the language in itself.
+function langLabel(l) {
+  return l === 'auto' ? tr('langAuto') : LANG_NAMES[l];
+}
 
 class MenuBar {
   constructor(deps, disposer) {
@@ -5214,6 +5709,7 @@ class MenuBar {
       { kind: 'page', label: tr('layout'), value: () => tr(layoutKey(x.layout())), items: () => this.layoutItems(), hidden: () => !layouts.length },
       { kind: 'page', label: tr('copyCaptionsSpan'), value: () => spanLabel(x.prefs.copySpan), items: () => this.copyItems() },
       { kind: 'page', label: tr('theme'), value: () => tr(themeKey(x.prefs.theme)), items: () => this.themeItems() },
+      { kind: 'page', label: tr('language'), value: () => langLabel(x.prefs.lang), items: () => this.langItems() },
       { kind: 'sep' },
       { kind: 'action', label: tr('popout'), key: 'W', run: () => a.popout(), hidden: () => !a.popout },
       { kind: 'page', label: tr('loopMenu'), value: a.loopLabel, items: () => this.loopItems() },
@@ -5221,7 +5717,7 @@ class MenuBar {
       { kind: 'action', label: tr('keysMenu'), key: '?', run: () => a.showKeys() },
       { kind: 'page', label: tr('storageMenu'), items: () => this.storageItems() },
       { kind: 'action', label: tr('useOriginal'), run: () => a.original() },
-      { kind: 'foot', text: 'Lite Player for Echo360 ' + VERSION },
+      { kind: 'foot', text: tr('appVersion', { version: VERSION }) },
     ];
   }
 
@@ -5264,6 +5760,14 @@ class MenuBar {
     return [
       ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => x.setTheme(t) })),
       { kind: 'text', text: () => tr('themeNote') },
+    ];
+  }
+
+  langItems() {
+    const x = this.x;
+    return [
+      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => x.setLang(l) })),
+      { kind: 'text', text: () => tr('langNote') },
     ];
   }
 
@@ -5347,7 +5851,7 @@ class MenuBar {
       return;
     }
     const v = f.video;
-    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: 'no picture yet' })); return; }
+    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;
@@ -7039,12 +7543,12 @@ class NotesPane {
   markers() {
     return this.items.filter((x) => x.time != null).map((x) => {
       const tags = x.type === 'flag' ? [] : this.tags.of(x.id);
-      const base = x.type === 'note' ? tr('markerNote') + ': ' + x.text : x.type === 'bookmark' ? tr('markerBookmark') : tr('markerFlag');
+      const base = x.type === 'note' ? tr('markerNote') + tr('sepLabel') + x.text : x.type === 'bookmark' ? tr('markerBookmark') : tr('markerFlag');
       return {
         time: x.time,
         kind: x.type,
         color: tags.length ? tags[0].color : null,
-        label: tags.length ? base + ' [' + tags.map((g) => g.name).join(', ') + ']' : base,
+        label: tags.length ? base + ' [' + tags.map((g) => g.name).join(tr('sepList')) + ']' : base,
       };
     });
   }
@@ -7526,7 +8030,7 @@ class DiscussionPane {
   }
 
   renderComment(c, long) {
-    const who = c.mine ? tr('you') + (c.nameHidden ? ' (' + tr('anonymous') + ')' : '') : (c.author || tr('anonymous'));
+    const who = c.mine ? tr(c.nameHidden ? 'youAnonymous' : 'you') : (c.author || tr('anonymous'));
     const badges = [];
     if (c.instructor) badges.push(el('span.badge.inst', { text: tr('instructor') }));
     if (c.ta) badges.push(el('span.badge.inst', { text: tr('ta') }));
@@ -7636,7 +8140,7 @@ class DiscussionPane {
     return this.threads.filter((q) => q.time != null).map((q) => ({
       time: q.time,
       kind: 'comment',
-      label: tr('markerComment') + ': ' + (q.body.length > 80 ? q.body.slice(0, 77) + '…' : q.body),
+      label: tr('markerComment') + tr('sepLabel') + (q.body.length > 80 ? q.body.slice(0, 77) + '…' : q.body),
     }));
   }
 
@@ -7649,7 +8153,7 @@ function formatDate(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   try {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric' });
   } catch (e) {
     return iso.slice(0, 10);
   }
@@ -10157,10 +10661,10 @@ function ocrLanguage(pageTexts) {
   return Object.keys(TESS_LANGS).find((l) => l !== 'eng' && TESS_LANGS[l].scripts[0] === top) || 'eng';
 }
 
-// The name of a language for messages ("Chinese (Simplified)"), in the page's language.
+// The name of a language for messages ("Chinese (Simplified)"), in the interface language.
 function languageName(lang) {
   const tag = (TESS_LANGS[lang] || TESS_LANGS.eng).tag;
-  try { return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(tag) || tag; } catch (e) { return tag; }
+  try { return new Intl.DisplayNames([uiLocale()], { type: 'language' }).of(tag) || tag; } catch (e) { return tag; }
 }
 
 const OCR_FAILED = -3;         // a sample whose keyframe could not be read
@@ -10221,7 +10725,8 @@ class SlideTextReader {
       if (this.ac.signal.aborted) return;
       log.warn('slide text:', e && e.message ? e.message : e);
       this.state = 'unavailable';
-      this.error = String((e && e.message) || e);
+      // Shown in the slides tab: the reason in words where it is known.
+      this.error = (e && e.userText) || tr('readerFailed', { msg: String((e && e.message) || e) });
       this.onChange();
     });
   }
@@ -10235,8 +10740,8 @@ class SlideTextReader {
 
   async run() {
     const signal = this.ac.signal;
-    if (!HlsVideoReader.supported()) throw new Error('WebCodecs not available');
-    if (saveDataOn()) throw new Error('Data Saver is on');
+    if (!HlsVideoReader.supported()) throw Object.assign(new Error('WebCodecs not available'), { userText: tr('readerNoWebCodecs') });
+    if (saveDataOn()) throw Object.assign(new Error('Data Saver is on'), { userText: tr('readerSaveData') });
     this.state = 'loading';
     this.onChange();
     const url = this.source.v || this.source.av;
