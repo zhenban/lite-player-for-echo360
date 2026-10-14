@@ -92,7 +92,13 @@ class NotesPane {
 
   updatePlaceholder() {
     const at = fmtTime(this.p.video.currentTime, this.p.duration() >= 3600);
-    this.textarea.placeholder = tr('addNotePlaceholder', { time: at });
+    const text = tr('addNotePlaceholder', { time: at });
+    if (this.textarea.placeholder !== text) this.textarea.placeholder = text;
+  }
+
+  // The playing moment changed (play or seek): the empty composer says where a note goes.
+  update() {
+    if (this.visible) this.updatePlaceholder();
   }
 
   show(on) {

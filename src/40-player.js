@@ -647,6 +647,8 @@ class LitePlayer {
       if (this.silence) this.silence.tick(ct);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
+      if (this.notes && this.notesReady) this.notes.update();
+      if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
     on('seeked', onTime);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.20.0
+// @version      0.20.1
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.20.0';
+  const VERSION = '0.20.1';
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -4660,6 +4660,8 @@ class LitePlayer {
       if (this.silence) this.silence.tick(ct);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
+      if (this.notes && this.notesReady) this.notes.update();
+      if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
     on('seeked', onTime);
@@ -7424,7 +7426,13 @@ class NotesPane {
 
   updatePlaceholder() {
     const at = fmtTime(this.p.video.currentTime, this.p.duration() >= 3600);
-    this.textarea.placeholder = tr('addNotePlaceholder', { time: at });
+    const text = tr('addNotePlaceholder', { time: at });
+    if (this.textarea.placeholder !== text) this.textarea.placeholder = text;
+  }
+
+  // The playing moment changed (play or seek): the empty composer says where a note goes.
+  update() {
+    if (this.visible) this.updatePlaceholder();
   }
 
   show(on) {
@@ -8113,7 +8121,13 @@ class DiscussionPane {
   }
 
   updateLinkLabel() {
-    this.linkLabel.textContent = tr('linkTime', { time: fmtTime(this.p.video.currentTime, this.p.duration() >= 3600) });
+    const text = tr('linkTime', { time: fmtTime(this.p.video.currentTime, this.p.duration() >= 3600) });
+    if (this.linkLabel.textContent !== text) this.linkLabel.textContent = text;
+  }
+
+  // The playing moment changed (play or seek): "Link to" names the moment a post links to.
+  update() {
+    if (this.visible) this.updateLinkLabel();
   }
 
   updateCounter(area, counter, button) {

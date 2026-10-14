@@ -89,7 +89,13 @@ class DiscussionPane {
   }
 
   updateLinkLabel() {
-    this.linkLabel.textContent = tr('linkTime', { time: fmtTime(this.p.video.currentTime, this.p.duration() >= 3600) });
+    const text = tr('linkTime', { time: fmtTime(this.p.video.currentTime, this.p.duration() >= 3600) });
+    if (this.linkLabel.textContent !== text) this.linkLabel.textContent = text;
+  }
+
+  // The playing moment changed (play or seek): "Link to" names the moment a post links to.
+  update() {
+    if (this.visible) this.updateLinkLabel();
   }
 
   updateCounter(area, counter, button) {

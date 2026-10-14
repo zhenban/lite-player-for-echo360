@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.20.1
+Fix: with the Notes or Discussion tab open, the note box ("Write a private note at…") and "Link to…" kept the time from when the tab was opened, while the note or post went to the time playing when you sent it. They now follow playback and seeking.
+
 ## 0.20.0
 When something goes wrong with the network or Echo360:
 - **Offline**: a label says "No connection. Playback continues when you are back online." When the connection is back, loading starts again at once, and a playback that gave up while offline is retried by itself.

@@ -282,3 +282,36 @@ test('a side-panel load that fails for now keeps its tab with "Retry"; one the l
     w.close();
   }
 });
+
+test('the open Notes and Discussion tabs say the playing moment, not the moment they were opened', async () => {
+  const pg = page();
+  const w = pg.w;
+  const json = (body) => new w.Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  w.fetch = async (url) => {
+    if (String(url).includes('/notes/content')) return json({ status: 'ok', data: [] });
+    if (String(url).includes('/questions')) return json({ questions: [] });
+    throw new Error('offline in tests');
+  };
+  pg.start();
+  const p = pg.player();
+  try {
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(p.notesReady);
+    p.sidebar.open('notes');
+    const box = p.root.querySelector('.pane[data-pane=notes] textarea');
+    assert.match(box.placeholder, /0:00/);
+    Object.defineProperty(p.video, 'currentTime', { configurable: true, get: () => 125, set() {} });
+    p.video.dispatchEvent(new w.Event('seeked'));
+    assert.match(box.placeholder, /2:05/, 'a seek while the tab is open moves the time');
+    p.sidebar.open('discussion');
+    const link = p.root.querySelector('.pane[data-pane=discussion] label.check');
+    assert.match(link.textContent, /2:05/);
+    Object.defineProperty(p.video, 'currentTime', { configurable: true, get: () => 200, set() {} });
+    p.video.dispatchEvent(new w.Event('timeupdate'));
+    assert.match(link.textContent, /3:20/, 'playing on moves "Link to" with it');
+  } finally {
+    p.destroy();
+    await w.happyDOM.abort();
+    w.close();
+  }
+});
