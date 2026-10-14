@@ -33,18 +33,14 @@ function loadPdfJs() {
   return pdfjsPromise;
 }
 
-// pdf.js's worker for one controller: a module worker from a blob that imports the pinned
-// worker script (a worker URL from another origin cannot be used directly). Ended by its owner.
-function makePdfWorker(lib) {
-  const url = URL.createObjectURL(new Blob(['import "' + platform.libUrl(PDFJS_DIR + 'pdf.worker.min.mjs') + '";'], { type: 'text/javascript' }));
-  const port = new Worker(url, { type: 'module' });
-  URL.revokeObjectURL(url);
-  return { port, pdf: new lib.PDFWorker({ port }) };
+// pdf.js's worker for one controller: a module worker from the checked worker script (a
+// worker URL from another origin cannot be used directly). Ended by its owner.
+function pdfWorkerUrl() {
+  return platform.libBlobUrl(PDFJS_DIR + 'pdf.worker.min.mjs');
 }
-
-async function sha256Hex(buf) {
-  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
-  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
+function makePdfWorker(lib, url) {
+  const port = new Worker(url, { type: 'module' });
+  return { port, pdf: new lib.PDFWorker({ port }) };
 }
 
 // The page's title: the largest text in the top PAGE_TITLE_TOP of the page.
@@ -56,11 +52,26 @@ function pageTitle(items, pageHeight) {
     .map((it) => it.str.trim()).join(' ').replace(/\s+/g, ' ').slice(0, 120);
 }
 
+// A page's key is this prefix (its file) and the page number.
+function pageKeyPrefix(fileHash) {
+  return fileHash.slice(0, 12) + ':';
+}
+function pageKeyFile(key) {
+  return key.slice(0, key.indexOf(':') + 1);
+}
+
+// Page drawn `width` pixels wide, or smaller when that would pass the size limits for one
+// page (the picture is shown scaled to its place either way).
 function renderPdfPage(page, width) {
-  const vp = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
+  const base = page.getViewport({ scale: 1 });
+  const bw = base.width;
+  const bh = base.height;
+  if (!(bw > 0 && bh > 0 && Number.isFinite(bw) && Number.isFinite(bh))) throw new Error('bad page size');
+  const scale = Math.min(width / bw, PAGE_RENDER_MAX_SIDE / bw, PAGE_RENDER_MAX_SIDE / bh, Math.sqrt(PAGE_RENDER_MAX_PX / (bw * bh)));
+  const vp = page.getViewport({ scale });
   const c = document.createElement('canvas');
-  c.width = Math.round(width);
-  c.height = Math.round(vp.height);
+  c.width = Math.max(1, Math.floor(bw * scale));
+  c.height = Math.max(1, Math.floor(bh * scale));
   return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => c);
 }
 
@@ -124,7 +135,7 @@ class SlideDeckController {
     this.state = 'empty';     // empty | loading | reading | ready | error
     this.error = '';
     this.job = null;
-    this.rendered = new Map(); // page index -> canvas (newest size), least recently used first
+    this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
     this.pdfWorker = null;     // pdf.js worker (makePdfWorker), owned here
     this.d.add(() => this.closeDocs());
   }
@@ -155,18 +166,36 @@ class SlideDeckController {
     await this.reload();
   }
 
-  saveRecord() {
-    if (this.lesson.mediaId) idbCache.put(this.key, { files: this.files, fixes: this.fixes });
+  // op({ files, fixes }) changes the record in place: applied here now, then to the stored
+  // record in one transaction. Another tab may have changed it meanwhile (added a file, made
+  // a correction), so this tab's copy is never written back whole; if the stored files
+  // differ afterwards, this tab takes them over.
+  changeRecord(op) {
+    op(this);
+    if (!this.lesson.mediaId) return Promise.resolve();
+    return idbCache.update(this.key, (rec) => {
+      const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
+      op(st);
+      return { files: st.files, fixes: st.fixes };
+    }).then((rec) => {
+      if (!rec || this.ac.signal.aborted) return;
+      this.fixes = rec.fixes;
+      if (JSON.stringify(rec.files) !== JSON.stringify(this.files)) {
+        this.files = rec.files;
+        this.reload();
+      }
+    }).catch((e) => log.warn('slide files:', e));
   }
 
   // Adds PDF files (from a drop or a file picker). Returns how many were PDFs.
   async addFiles(fileList) {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
+    const added = [];
     for (const f of pdfs) {
       const buf = await f.arrayBuffer();
       const hash = await sha256Hex(buf);
-      if (this.files.some((x) => x.hash === hash)) continue;
+      if (this.files.some((x) => x.hash === hash) || added.some((x) => x.hash === hash)) continue;
       // The file must really be stored (a full disk would otherwise lose it silently on
       // the next visit); the reference list changes in one transaction (another tab may
       // add or remove the same file at the same time).
@@ -180,18 +209,19 @@ class SlideDeckController {
         this.onChange();
         throw e;
       }
-      this.files.push({ hash, name: f.name });
+      added.push({ hash, name: f.name });
     }
-    this.saveRecord();
+    await this.changeRecord((st) => { for (const a of added) if (!st.files.some((x) => x.hash === a.hash)) st.files.push(a); });
     await this.reload();
     return pdfs.length;
   }
 
   async removeFile(hash) {
-    this.files = this.files.filter((f) => f.hash !== hash);
-    const prefix = hash.slice(0, 12) + ':';
-    this.fixes = this.fixes.filter((x) => !String(x.page).startsWith(prefix));
-    this.saveRecord();
+    const prefix = pageKeyPrefix(hash);
+    await this.changeRecord((st) => {
+      st.files = st.files.filter((f) => f.hash !== hash);
+      st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
+    });
     // The file itself is deleted when no other recording uses it.
     // In one transaction: drop this recording from the file's users and, if it was the
     // last one, the file itself (no other tab can add itself in between).
@@ -231,6 +261,8 @@ class SlideDeckController {
       const gone = () => this.job !== job || this.ac.signal.aborted;
       const lib = await loadPdfJs();
       if (gone()) return;
+      const workerUrl = await pdfWorkerUrl();
+      if (gone()) return;
       const pages = [];
       for (const f of this.files) {
         const blob = await idbCache.get('deckfile:' + f.hash);
@@ -238,7 +270,7 @@ class SlideDeckController {
         if (!blob) continue;
         const data = new Uint8Array(await blob.arrayBuffer());
         if (gone()) return;
-        if (!this.pdfWorker) this.pdfWorker = makePdfWorker(lib);
+        if (!this.pdfWorker) this.pdfWorker = makePdfWorker(lib, workerUrl);
         const task = lib.getDocument({ data, worker: this.pdfWorker.pdf });
         const doc = await task.promise;
         if (gone()) { task.destroy().catch(() => {}); return; }
@@ -248,7 +280,7 @@ class SlideDeckController {
           const tc = await page.getTextContent();
           const [x0, y0, x1, y1] = page.view;
           pages.push({
-            key: f.hash.slice(0, 12) + ':' + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
+            key: pageKeyPrefix(f.hash) + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
             title: pageTitle(tc.items, y1 - y0),
             text: tc.items.map((x) => x.str).join(' ').replace(/\s+/g, ' ').trim(),
           });
@@ -325,7 +357,7 @@ class SlideDeckController {
     if (this.deciding) { this.again = this.again || now; return; }
     if (!now && performance.now() - this.decidedAt < FOLLOW_UPDATE_MS) return;
     this.decidedAt = performance.now();
-    const fileOf = this.pages.map((p) => this.files.findIndex((f) => p.key.startsWith(f.hash.slice(0, 12))));
+    const fileOf = this.pages.map((p) => this.files.findIndex((f) => p.key.startsWith(pageKeyPrefix(f.hash))));
     const input = {
       pageTexts: this.pages.map((p) => p.text),
       fileOf,
@@ -371,26 +403,28 @@ class SlideDeckController {
   // Kept by the page's key (file and page number), not its index: an index means another
   // page once the files change, and a render still running for a removed file must not be
   // kept for whatever page has its index now.
-  async render(i, width) {
+  // once: a one-off size (a copy): drawn but not kept, so the page on screen stays cached.
+  async render(i, width, once) {
     const w = Math.round(width);
     const pg = this.pages[i];
     if (!pg) throw new Error('no page ' + i);
     const hit = this.rendered.get(pg.key);
-    if (hit && hit.width === w) {
+    // By the width asked for: a page drawn smaller (renderPdfPage) is still the one asked for.
+    if (hit && hit.w === w) {
       this.rendered.delete(pg.key);
       this.rendered.set(pg.key, hit);
-      return hit;
+      return hit.c;
     }
     const page = await pg.doc.getPage(pg.num);
     const c = await renderPdfPage(page, width);
     // The files changed meanwhile: the picture is not kept (the caller checks whether it
     // still wants it).
-    if (!this.pages.includes(pg)) return c;
+    if (once || !this.pages.includes(pg)) return c;
     this.rendered.delete(pg.key);
-    this.rendered.set(pg.key, c);
+    this.rendered.set(pg.key, { c, w });
     let px = 0;
-    for (const x of this.rendered.values()) px += x.width * x.height;
-    for (const [k, x] of this.rendered) {
+    for (const { c: x } of this.rendered.values()) px += x.width * x.height;
+    for (const [k, { c: x }] of this.rendered) {
       if (px <= DECK_RENDER_BUDGET || k === pg.key) break;
       px -= x.width * x.height;
       x.width = 0; // releases the canvas memory now
@@ -475,14 +509,13 @@ class SlideDeckController {
   // slide) or null (back to automatic).
   correct(t, value) {
     if (value === null) {
-      this.fixes = this.fixes.filter((x) => !(x.a <= t && t < x.b));
+      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
     } else {
       const part = this.correctionPart(t) || this.partAt(t);
       if (!part) return;
-      this.fixes = this.fixes.filter((x) => x.b <= part.a || x.a >= part.b);
-      this.fixes.push({ a: part.a, b: part.b, page: value === 'none' ? 'none' : this.pages[value].key });
+      const fix = { a: part.a, b: part.b, page: value === 'none' ? 'none' : this.pages[value].key };
+      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => x.b <= part.a || x.a >= part.b).concat(fix); });
     }
-    this.saveRecord();
     this.decide(true);
     this.onChange();
   }

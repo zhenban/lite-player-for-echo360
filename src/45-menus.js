@@ -13,11 +13,11 @@
 // diagnostics, the original player). Parts give their own pages (deps.pages).
 //
 // deps: { $, root, pops (Popovers), stage, video, prefs, savePrefs(), cc (CaptionsView),
-//         cues() ([] until loaded), screenVideo(), title, duration(), toast(msg),
+//         cues() ([] until loaded), focusView() (see LitePlayer), title, duration(), toast(msg),
 //         layouts() (offered: [] none), layout(), setLayout(l), swap(), pdfMode(),
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
-//         actions: { bookmark(e), popout() or null, loopA(), loopB(), loopClear(),
+//         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
 //         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t) }
 // ===================================================================================
 
@@ -94,7 +94,7 @@ class MenuBar {
     const x = this.x;
     const btn = (k) => x.root.querySelector('.row [data-bar=' + k + ']');
     const item = {
-      bookmark: { kind: 'action', label: tr('bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
+      bookmark: { kind: 'action', label: tr(x.actions.bookmarkHere() ? 'removeBookmark' : 'bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
       copyPicture: { kind: 'action', label: tr('copyFrame'), key: 'P', run: () => this.copyFrame() },
       copyText: { kind: 'action', label: tr('copyCaptions'), key: 'A', run: () => this.copyCaptions(), reason: () => unavailableReason(btn('copyText')) },
     };
@@ -237,9 +237,20 @@ class MenuBar {
   // ---- copying (picture, what was said) ----
 
   // Copies the current picture at the video's own resolution. Must run from a user action.
+  // Copies the picture the user is looking at: the larger one shown, a video frame or the
+  // PDF page (drawn PDF_COPY_WIDTH wide).
   copyFrame() {
     const x = this.x;
-    const v = x.screenVideo();
+    const f = x.focusView();
+    if (f.page) {
+      const pg = f.page;
+      const shot = pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png')));
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': shot })])
+        .then(() => x.toast(tr('copiedPage', { n: pg.num, file: pg.file })))
+        .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+      return;
+    }
+    const v = f.video;
     if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: 'no picture yet' })); return; }
     const c = document.createElement('canvas');
     c.width = v.videoWidth;

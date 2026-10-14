@@ -144,3 +144,64 @@ test('touch release keeps controls visible so a second tap can pause; mouse leav
     w.close();
   }
 });
+
+test('review R2: the U key passes its key event on, so removing a mark is a user action', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  const got = [];
+  p.notesReady = true;
+  p.notes = { canFlag: true, flagByKey: (e) => { got.push(e); return true; } };
+  try {
+    pg.w.document.body.dispatchEvent(new pg.w.KeyboardEvent('keydown', { key: 'u', bubbles: true, composed: true, cancelable: true }));
+    assert.equal(got.length, 1);
+    assert.equal(got[0] && got[0].key, 'u', 'the key event reaches the write');
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});
+
+test('copy picture takes what the user is looking at: the PDF page when the PDF view is the larger picture', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  try {
+    const rendered = [];
+    const canvas = { toBlob: (cb) => cb(new pg.w.Blob(['png'])) };
+    const deck = { pages: [{ key: 'aaaaaaaaaaaa:3', num: 3, file: 'week1.pdf' }], files: [{ hash: 'a'.repeat(64), name: 'week1.pdf' }], render: async (i, w, once) => { rendered.push([i, w, once]); return canvas; } };
+    p.deck = deck;
+    p.reader = { deck, currentView: () => 0, label: () => 'Page 3 of 9' };
+    p.prefs.pdfMain = true;
+    const pdf = p.root.querySelector('.pdfview');
+    const size = (e, w, h) => { Object.defineProperty(e, 'clientWidth', { value: w, configurable: true }); Object.defineProperty(e, 'clientHeight', { value: h, configurable: true }); };
+    // The PDF large, the video small (picture in picture, or a wide PDF side).
+    pdf.dataset.slot = 'primary';
+    p.video.dataset.slot = 'secondary';
+    p.fvideo.dataset.slot = 'off';
+    size(pdf, 900, 500);
+    size(p.video, 300, 170);
+    const f = p.focusView();
+    assert.equal(f.page && f.page.num, 3);
+    await f.page.render(1920);
+    assert.deepEqual(rendered[0], [0, 1920, true], 'a one-off size, not kept in place of the page on screen');
+    // Swapped: the video is the larger picture.
+    pdf.dataset.slot = 'secondary';
+    p.video.dataset.slot = 'primary';
+    size(pdf, 300, 170);
+    size(p.video, 900, 500);
+    assert.equal(p.focusView().video, p.video);
+    // Side by side with the divider moved: the larger side wins even in the second place.
+    size(pdf, 800, 450);
+    size(p.video, 400, 225);
+    assert.ok(p.focusView().page);
+    // No PDF view open: a video.
+    p.prefs.pdfMain = false;
+    assert.ok(p.focusView().video);
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});

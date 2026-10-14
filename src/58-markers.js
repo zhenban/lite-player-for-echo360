@@ -26,7 +26,7 @@ class MarkersLayer {
       if (m.time < 0 || m.time > this.dur) continue;
       const i = document.createElement('i');
       i.className = 'mk mk-' + m.kind;
-      if (m.color) i.style.background = m.color;
+      if (m.color) i.style.backgroundColor = plainColor(m.color, TAG_FALLBACK_COLOR);
       i.style.left = ((m.time / this.dur) * 100).toFixed(3) + '%';
       frag.appendChild(i);
     }

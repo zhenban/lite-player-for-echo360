@@ -46,6 +46,7 @@ class NotesPane {
     this.dirty = true;
     if (this.visible) this.render();
     this.p.updateMarkers();
+    this.p.renderBookmarkButton();
   }
 
   build() {
@@ -106,8 +107,8 @@ class NotesPane {
 
   fail(e) {
     log.warn('write failed', e);
-    this.showError(tr('saveFailed', { error: e.message || e }));
-    this.p.toast(tr('saveFailed', { error: e.message || e }));
+    this.showError(tr('saveFailed', { error: errorText(e) }));
+    this.p.toast(tr('saveFailed', { error: errorText(e) }));
   }
 
   renderTagFilter() {
@@ -236,19 +237,43 @@ class NotesPane {
   count(type) { return this.items.filter((x) => x.type === type).length; }
 
   // Resolves to the new bookmark, or null if it could not be added (or another write was
-  // still on its way).
-  addBookmark(e) {
+  // still on its way). at: its time (default: now); tagIds: tags to put on it (undo).
+  addBookmark(e, at, tagIds) {
     return this.once(async () => {
-      const time = this.p.video.currentTime;
+      const time = at == null ? this.p.video.currentTime : at;
       try {
         const note = await this.api.addNote(e, { bookmark: true, time, num: this.count('bookmark') + 1 });
         this.items.push(note);
         this.sort();
+        for (const id of tagIds || []) if (this.tags.byId(id)) this.tags.toggle(note.id, id);
         this.changed();
         this.p.toast(tr('bookmarkedAt', { time: fmtTime(time) }), tr('undo'), (ev) => this.remove(ev, note));
         return note;
       } catch (err) { this.fail(err); return null; }
     }).then((x) => x || null);
+  }
+
+  // The bookmark "here": the nearest one within BOOKMARK_NEAR_SEC of time t, else null.
+  bookmarkNear(t) {
+    let best = null;
+    for (const x of this.items) {
+      if (x.type !== 'bookmark' || x.time == null || Math.abs(x.time - t) > BOOKMARK_NEAR_SEC) continue;
+      if (!best || Math.abs(x.time - t) < Math.abs(best.time - t)) best = x;
+    }
+    return best;
+  }
+
+  // The bookmark button, B and the menu item: bookmarks this moment, or removes the
+  // bookmark here (Undo puts it back, with its tags).
+  toggleBookmark(e) {
+    const near = this.bookmarkNear(this.p.video.currentTime);
+    if (!near) return this.addBookmark(e);
+    return this.once(async () => {
+      const tagIds = this.tags.of(near.id).map((x) => x.id);
+      if (!(await this.removeNow(e, near))) return null;
+      this.p.toast(tr('bookmarkRemoved', { time: fmtTime(near.time) }), tr('undo'), (ev) => this.addBookmark(ev, near.time, tagIds));
+      return null;
+    }).then(() => null);
   }
 
   flagAt(time) {
@@ -322,6 +347,7 @@ class NotesPane {
     return this.once(() => this.removeNow(e, item));
   }
 
+  // True when removed.
   async removeNow(e, item) {
     try {
       if (item.type === 'flag') await this.api.removeFlag(e, item);
@@ -331,7 +357,8 @@ class NotesPane {
       this.showError('');
       this.changed();
       this.p.renderFlagButton();
-    } catch (err) { this.fail(err); }
+      return true;
+    } catch (err) { this.fail(err); return false; }
   }
 
   markers() {

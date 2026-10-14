@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,11 +32,11 @@ function loadSources(names, overrides) {
   // As in a page: window is the global object (page scripts set window.Echo, read Echo).
   if (ctx.window === 'global') ctx.window = ctx;
   vm.createContext(ctx);
-  const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
+  const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
-      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract']
+      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
   return { ...ctx.__exports, timers, window: ctx.window, setFetch: (fn) => { ctx.__fetch = fn; } };
@@ -751,6 +752,22 @@ test('fragment parsing finds the keyframe bytes and sample times', () => {
   assert.equal(f.samples[2].offset, moofLen + 8 + 1020);
 });
 
+test('review R7: a tiny fragment that claims billions of samples is refused at once', () => {
+  const m = slidesMod();
+  const frag = (count, flags) => {
+    const moof = box('moof', box('mfhd', u32(0, 1)), box('traf', box('tfhd', u32(0x020000, 1)), box('trun', u32(flags, count))));
+    const ab = moof.buffer.slice(moof.byteOffset, moof.byteOffset + moof.length);
+    return ab;
+  };
+  const t0 = Date.now();
+  assert.throws(() => m.parseFragment(frag(0xffffffff, 0), 0), /sample/);
+  assert.ok(Date.now() - t0 < 100, 'refused without walking the samples');
+  // Per-sample fields that are not in the box: refused too.
+  assert.throws(() => m.parseFragment(frag(1000, 0x300), 0), /sample/);
+  // An ordinary count with default fields is still read.
+  assert.equal(m.parseFragment(frag(300, 0), 0).samples.length, 300);
+});
+
 test('keyframe reading: a header larger than the first request, a tiny static segment, no guessed sizes', async () => {
   const decoded = [];
   const m = loadSources(['00-util', '61-media-io', '62-silence', '64-slides'], {
@@ -1390,6 +1407,25 @@ test('B8: diagnostics mask every address and long id', () => {
   assert.equal(s.includes('1eced04d-17e2'), false);
 });
 
+test('review R5: what a server error says (a name, a note) stays out of diagnostics but is shown on screen', async () => {
+  const m = loadSources(['00-util', '10-adapter', '11-echo360-api', '86-diagnostics']);
+  const api = Object.create(m.Echo360Api.prototype);
+  const said = 'Note by alice@example.invalid rejected: My medical appointment';
+  m.setFetch(async () => ({ ok: false, status: 400, json: async () => ({ status: 'ko', message: said }) }));
+  let err = null;
+  await m.Echo360Api.prototype.request.call(Object.assign(api, { l: {} }), 'POST', '/x', {}).catch((e) => { err = e; });
+  assert.ok(err, 'the request failed');
+  m.eventLog.length = 0;
+  m.log.warn('write failed', err);
+  const text = m.eventLog.map((e) => m.maskUrls(e.text)).join('\n');
+  assert.equal(text.includes('alice'), false, text);
+  assert.equal(text.includes('medical'), false, text);
+  assert.match(text, /HTTP 400/);
+  assert.equal(m.errorText(err), said, 'the user still sees why');
+  // Addresses that reach the log another way are masked too.
+  assert.equal(m.maskUrls('failed for bob.smith@uni.example.edu.au, retry').includes('bob'), false);
+});
+
 test('D1: uniform pictures, skippable stretches and where the content ends', () => {
   const m = loadSources(['00-util', '61-media-io', '62-silence', '64-slides']);
   const flat = pic(12, []);
@@ -1476,6 +1512,51 @@ test('platform: settings, backups and libraries go through whatever platform is 
   assert.ok(asked.every((p) => /^[@a-z][\w.@/-]+\.m?js$/.test(p) && !p.includes('//')), asked.join(' '));
 });
 
+test('review R10: a library file whose bytes differ from the pinned hash is refused, not run', async () => {
+  const m = loadSources(['00-util', '66-slide-ocr', '68-slide-deck'], { crypto: globalThis.crypto });
+  const path = m.PDFJS_DIR + 'pdf.min.mjs';
+  const good = new TextEncoder().encode('export const ok = 1;');
+  m.LIB_SHA256[path] = createHash('sha256').update(good).digest('hex');
+  const asked = [];
+  m.setFetch(async (url, opts) => { asked.push([url, opts && opts.credentials]); return new Response(new TextEncoder().encode('export const evil = 1;')); });
+  await assert.rejects(m.platform.libBlobUrl(path), /changed on the CDN/);
+  await assert.rejects(m.platform.importLib(path), /changed on the CDN/, 'importLib checks too');
+  assert.equal(asked[0][0], 'https://cdn.jsdelivr.net/npm/' + path);
+  assert.equal(asked[0][1], 'omit', 'no cookies to the CDN');
+  // A failure is not remembered: the right bytes later are accepted.
+  m.setFetch(async () => new Response(good));
+  const url = await m.platform.libBlobUrl(path);
+  assert.match(url, /^blob:/);
+  assert.equal(await (await fetch(url)).text(), 'export const ok = 1;');
+  assert.equal(await m.platform.libBlobUrl(path), url, 'made once');
+  await assert.rejects(m.platform.libBlobUrl('left-pad@1.0.0/index.js'), /not a pinned/);
+});
+
+test('review R10: every library file the player loads is pinned', () => {
+  const m = loadSources(['00-util', '66-slide-ocr', '68-slide-deck']);
+  const used = [m.PDFJS_DIR + 'pdf.min.mjs', m.PDFJS_DIR + 'pdf.worker.min.mjs', ...Object.values(m.TESS_FILES)];
+  for (const lang of Object.keys(m.TESS_LANGS)) used.push(m.TESS_LANG_DIR(lang) + '/' + lang + '.traineddata.gz');
+  for (const p of used) assert.match(m.LIB_SHA256[p] || '', /^[0-9a-f]{64}$/, p);
+  assert.equal(Object.keys(m.tessPinnedData()).length, Object.keys(m.TESS_LANGS).length);
+});
+
+test('review R10: Tesseract\'s Worker only takes pinned language data with the right bytes', async () => {
+  const m = loadSources(['00-util', '66-slide-ocr']);
+  const good = new Uint8Array([31, 139, 1, 2, 3]);
+  const pinned = { 'https://cdn.example/eng.traineddata.gz': createHash('sha256').update(good).digest('hex') };
+  const run = async (body, url) => {
+    // The guard's source runs in a fresh global, as it does in the Worker.
+    const self = { fetch: async () => new Response(body), crypto: globalThis.crypto };
+    const ctx = vm.createContext({ self, crypto: globalThis.crypto, Response });
+    vm.runInContext('(' + m.tessWorkerGuard + ')(' + JSON.stringify(pinned) + ');', ctx);
+    return self.fetch(url);
+  };
+  const r = await run(good, 'https://cdn.example/eng.traineddata.gz');
+  assert.deepEqual([...new Uint8Array(await r.arrayBuffer())], [...good]);
+  await assert.rejects(run(new Uint8Array([31, 139, 9]), 'https://cdn.example/eng.traineddata.gz'), /changed on the CDN/);
+  await assert.rejects(run(good, 'https://elsewhere.example/eng.traineddata.gz'), /not a pinned/);
+});
+
 test('levelling is on by default; only an "off" chosen since then is kept', () => {
   const m = loadSources(['00-util', '39-prefs', '53-captions', '54-sidebar', '62-silence']);
   const level = (raw) => m.sanitizePrefs(raw).audio.level;
@@ -1484,4 +1565,25 @@ test('levelling is on by default; only an "off" chosen since then is kept', () =
   assert.equal(level({ audio: { level: false, levelChosen: true } }), false, 'turned off by the user');
   assert.equal(level({ audio: { level: true, levelChosen: true } }), true);
   assert.equal(m.sanitizePrefs({ audio: { level: false, voice: true } }).audio.voice, true, 'other audio settings kept');
+});
+
+test('review R1: a tag colour from a backup or from storage can only be a plain colour', async () => {
+  const evil = 'red; position:fixed; inset:0; background-image:url(https://attacker.invalid/pixel)';
+  const local = new Map();
+  const db = new Map();
+  const m = loadSources(['00-util', '01-i18n', '39-prefs', '40-player', '53-captions', '54-sidebar', '61-media-io', '62-silence', '11-echo360-api', '10-adapter', '56-tags', '85-export'], {
+    localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
+  });
+  const ctxIdb = { get: async (k) => db.get(k), put: async (k, v) => { db.set(k, v); }, putMany: async (es) => { for (const [k, v] of es) db.set(k, v); }, del: async (k) => { db.delete(k); }, keys: async () => [...db.keys()] };
+  await m.restoreBackup({ app: 'lite-player-for-echo360', v: 1, local: {}, db: { 'tags:s': { tags: [{ id: 'a', name: 'A', color: evil, extra: 'x' }, { id: 'b', name: 'B', color: '#6ea8ff' }] } } }, ctxIdb);
+  const tags = db.get('tags:s').tags;
+  assert.deepEqual(tags.map((t) => t.name), ['A', 'B'], 'the tags themselves are kept');
+  assert.match(tags[0].color, /^#[0-9a-f]{6}$/i, 'the bad colour is replaced');
+  assert.equal(tags[1].color, '#6ea8ff');
+  assert.equal('extra' in tags[0], false, 'only known fields');
+  // A list stored before this fix is cleaned when it is read.
+  Object.assign(m.idbCache, { get: async (k) => (k === 'tags:s' ? { tags: [{ id: 'a', name: 'A', color: evil }] } : null), update: async () => null });
+  const store = new m.TagStore({ sectionId: 's', mediaId: null });
+  await store.load();
+  assert.match(store.tags[0].color, /^#[0-9a-f]{6}$/i);
 });

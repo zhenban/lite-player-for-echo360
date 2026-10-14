@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.18.0
+New:
+- **Bookmark button is a toggle.** While a bookmark is within 5 seconds of the playing moment, the bookmark button shows as on (filled). Pressing it again removes that bookmark (with Undo, which brings it back with its tags), instead of adding another bookmark at the same moment. B and the ⋮ menu item work the same way.
+- **Switching between slide PDFs.** With two or more PDFs, click a file name in the Slides tab to show that file; it opens at the page you last looked at in it. In the PDF view, the file name next to the page number switches to the next file. Like paging by hand, this pauses following the lecture until "back to the lecture".
+- **Copy picture copies what you are looking at.** When the PDF view is the larger picture, "copy picture" (P) copies the PDF page instead of a video frame. With two videos, it copies the larger one.
+
+Security and fixes (from an outside code review):
+- pdf.js and Tesseract (the slide reader), its engine and its language data are now checked against fixed SHA-256 hashes before they run or are used. A file that changed on the CDN is refused instead of run.
+- A tag colour from a restored backup can only be a plain colour. Before, a crafted backup could inject styles.
+- Reading a damaged or hostile video segment, or a PDF with a huge page, no longer uses unbounded memory.
+- A reply could be sent twice by pressing send again while the list was refreshing.
+- U removes a "didn't understand" mark again (broken in 0.17.0).
+- With the keyboard focus on a button, link, tab or the side panel, Space, Enter and the arrow keys act on that control instead of the player. After a mouse click, Space still plays and pauses.
+- Two tabs of the same recording no longer overwrite each other's slide files or page corrections.
+- Diagnostics no longer keep what Echo360's error replies say (which could repeat a note or a name), and email addresses in them are hidden.
+- Touch: the remove (✕) button next to a slide file is now 44 px.
+
 ## 0.17.1
 - **Volume**: the control bar now shows only the speaker; a press mutes or unmutes, and the icon shows muted, low or high. With a mouse, the slider opens to the right while the pointer is over the speaker (or the keyboard focus is on it) and closes when it leaves; the time beside it slides along instead of jumping. Scrolling over the speaker changes the volume one step per notch. On touch screens there is no slider (use the device's volume keys).
 - Changing the volume with the arrow keys or the wheel shows the level on the picture ("Volume 70%") for about a second.

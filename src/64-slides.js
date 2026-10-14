@@ -114,6 +114,9 @@ function parseFragment(buf, segmentOffset) {
   if (rf & 0x1) { offset = base + dv.getInt32(p); p += 4; }
   let firstFlags = null;
   if (rf & 0x4) { firstFlags = dv.getUint32(p); p += 4; }
+  // Each listed field takes four bytes per sample: the count must fit in the box.
+  const fieldBytes = 4 * [0x100, 0x200, 0x400, 0x800].filter((f) => rf & f).length;
+  if (count > MP4_MAX_SAMPLES || count * fieldBytes > trun.end - p) throw new Error('bad sample count: ' + count);
   const samples = [];
   for (let i = 0; i < count; i++) {
     let dur = defDur;

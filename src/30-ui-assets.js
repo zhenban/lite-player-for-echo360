@@ -240,6 +240,8 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .pbar .btn svg { width: 20px; height: 20px; }
 .pbar .btn:disabled { color: var(--text-3); background: none; cursor: default; }
 .plabel { padding: 0 var(--sp1); font-variant-numeric: tabular-nums; }
+.pfile { max-width: 160px; overflow: hidden; text-overflow: ellipsis; padding: 3px 10px; border-radius: var(--r2); background: var(--fill); font-size: 12px; }
+.pfile:hover { background: var(--fill-2); }
 .pfollow .rback { padding: 3px 10px; font-size: 12px; }
 .pfollow .rfollowing { color: var(--text-2); padding: 0 6px; }
 .l-pip .pdfview[data-slot=secondary] .pbar { display: none; }
@@ -540,10 +542,14 @@ select.input option { background: var(--s1); color: var(--text); }
 .sfiles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sfile { display: inline-flex; align-items: center; gap: var(--sp1); max-width: 100%; padding: 3px var(--sp1) 3px 10px; border-radius: var(--r2); background: var(--fill); font-size: 12px; }
 .sfname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+button.sfname { padding: 0; font-size: inherit; text-align: left; }
+button.sfname:hover { text-decoration: underline; }
+.sfile:has(> .sfname[aria-pressed=true]) { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .sfremove { width: 22px; height: 22px; border-radius: var(--r1); font-size: 11px; color: var(--text-2); }
 .sfremove:hover { background: var(--fill-2); color: var(--text); }
 .sfadd { padding: var(--sp1) 10px; border-radius: var(--r2); font-size: 12px; color: var(--accent); }
 .sfadd:hover { background: var(--accent-soft); }
+@media (pointer: coarse) { button.sfname, .pfile { min-height: 44px; } .sfremove { width: 44px; height: 44px; } }
 .sdmsg { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
 
 /* ---- narrow windows ---- */
@@ -582,6 +588,7 @@ function playerTemplate() {
         <button class="btn pprev" aria-label="${tr('prevPage')}" data-tip="${tr('prevPage')}">${svg('back')}</button>
         <span class="plabel"></span>
         <button class="btn pnext" aria-label="${tr('nextPage')}" data-tip="${tr('nextPage')}">${svg('next')}</button>
+        <button class="pfile" hidden></button>
         <span class="pfollow"></span>
         <button class="btn pswap" aria-label="${tr('pdfSwap')}" data-tip="${tr('pdfSwap')}">${svg('swap')}</button>
         <button class="btn pdfclose" aria-label="${tr('pdfMainClose')}" data-tip="${tr('pdfMainClose')}">${svg('close')}</button>
@@ -624,7 +631,7 @@ function playerTemplate() {
       <div class="spacer"></div>
       <button class="speed" aria-haspopup="dialog" aria-expanded="false" aria-label="${tr('speed')}" data-tip="${tr('speedKey')}">1×</button>
       <button class="btn ccbtn" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
-      <button class="btn bmbtn" data-bar="bookmark" hidden aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
+      <button class="btn bmbtn" data-bar="bookmark" hidden aria-pressed="false" aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
       <button class="btn framebtn" data-bar="copyPicture" aria-label="${tr('copyFrame')}" data-tip="${tr('copyFrameKey')}">${svg('copyPicture')}</button>
       <button class="btn textbtn" data-bar="copyText" aria-label="${tr('copyCaptions')}" data-tip="${tr('copyCaptionsKey')}">${svg('copyText')}</button>
       <button class="btn layout" aria-label="${tr('layout')}">${svg('layoutSide')}</button>

@@ -16,11 +16,20 @@
 // sent. Public = visible to the instructor or the class (discussion, likes, saves, flags).
 // ===================================================================================
 
+// The message is only the status, which is what logs and diagnostics keep. The server's
+// own text can repeat what was sent (a note, a name), so it is kept apart and shown only
+// on screen (errorText).
 class ApiError extends Error {
-  constructor(status, message) {
-    super(message || ('HTTP ' + status));
+  constructor(status, serverText) {
+    super('HTTP ' + status);
     this.status = status;
+    this.serverText = typeof serverText === 'string' ? serverText.slice(0, 200) : '';
   }
+}
+
+// What to tell the user about a failed request or operation.
+function errorText(e) {
+  return (e && (e.serverText || e.message)) || String(e);
 }
 
 // Same thumbnail choice as the original player: first thumbnail set, the last image taken

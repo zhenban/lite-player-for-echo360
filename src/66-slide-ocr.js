@@ -23,15 +23,22 @@
 // For later features (on-device speech recognition may reuse the keyframes and text):
 //   reader.times[i], reader.texts, reader.at[i].
 // Language: chosen from the slide files' text (ocrLanguage); English data is about 3 MB,
-// other languages 0.6 to 2.7 MB; each is downloaded when first needed (Tesseract.js then
-// keeps it in the browser's storage), and the slides tab says which and how large while
-// it loads.
+// other languages 0.6 to 2.7 MB; each is downloaded when first needed (the browser's HTTP
+// cache keeps it), and the slides tab says which and how large while it loads.
+//
+// Every file is checked against its SHA-256 (04-libs.js) before it is used: the library,
+// its Worker and the engine through platform.libBlobUrl, the language data inside the
+// Worker (tessWorkerGuard). Tesseract.js's own storage of language data is not used: what
+// it kept would be read back without a check.
 // ===================================================================================
 
 const TESS_FILES = {
   lib: 'tesseract.js@7.0.0/dist/tesseract.esm.min.js',
   worker: 'tesseract.js@7.0.0/dist/worker.min.js',
-  core: 'tesseract.js-core@7.0.0',
+  // The LSTM engine (OEM 1, the only one used), with WebAssembly SIMD where the browser has
+  // it. Named here rather than chosen by Tesseract.js, so that the file run is a pinned one.
+  core: 'tesseract.js-core@7.0.0/tesseract-core-lstm.wasm.js',
+  coreSimd: 'tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js',
 };
 // Language data (pinned npm packages, 4.0.0_best_int): the scripts each one reads (the
 // non-Latin ones read Latin letters too, for the English terms on such slides), the size
@@ -50,7 +57,38 @@ const TESS_LANGS = {
   tha: { scripts: ['Thai', 'Latin'], bytes: 896631, tag: 'th' },
   hin: { scripts: ['Devanagari', 'Latin'], bytes: 1389692, tag: 'hi' },
 };
-const TESS_LANG_PATH = (lang) => platform.libUrl('@tesseract.js-data/' + lang + '@1.0.0/4.0.0_best_int');
+const TESS_LANG_DIR = (lang) => '@tesseract.js-data/' + lang + '@1.0.0/4.0.0_best_int';
+
+// The smallest module using a SIMD instruction (i8x16.splat): valid only where the browser
+// runs WebAssembly SIMD. The same test Tesseract.js makes (wasm-feature-detect).
+const WASM_SIMD_PROBE = [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11];
+function wasmSimd() {
+  try { return WebAssembly.validate(new Uint8Array(WASM_SIMD_PROBE)); } catch (e) { return false; }
+}
+
+// Runs first in Tesseract.js's Worker, before its own code: the Worker's only downloads are
+// language data, and each must be a pinned file (url -> SHA-256) with the right bytes.
+// Anything else fails there, before the engine reads it.
+function tessWorkerGuard(pinned) {
+  const real = self.fetch.bind(self);
+  self.fetch = async (url, opts) => {
+    const want = pinned[String(url)];
+    if (!want) throw new Error('not a pinned file: ' + url);
+    const r = await real(url, opts);
+    if (!r.ok) return r;
+    const buf = await r.arrayBuffer();
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    if (Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('') !== want) throw new Error('language data changed on the CDN, not used: ' + url);
+    return new Response(buf, { status: r.status, statusText: r.statusText, headers: r.headers });
+  };
+}
+
+// The pinned language data, by the address the Worker asks for.
+function tessPinnedData() {
+  const out = {};
+  for (const [path, hash] of Object.entries(LIB_SHA256)) if (path.endsWith('.traineddata.gz')) out[platform.libUrl(path)] = hash;
+  return out;
+}
 
 // Characters written differently in simplified and traditional Chinese (common ones, in
 // matching order), to tell the two apart.
@@ -286,11 +324,27 @@ class SlideTextReader {
     if (this.ac.signal.aborted) throw new Error('aborted');
     if (!this.engine) {
       const signal = this.ac.signal;
-      this.engine = loadTesseract().then((T) => T.createWorker(this.lang, 1, {
-        workerPath: platform.libUrl(TESS_FILES.worker),
-        corePath: platform.libUrl(TESS_FILES.core),
-        langPath: TESS_LANG_PATH(this.lang),
-      })).then((w) => {
+      // The engine is given as one file ("...#.js": Tesseract.js uses a path ending in "js"
+      // as it is, instead of choosing a file next to it).
+      // The language data is checked here first, although the Worker downloads it again
+      // (from the HTTP cache) and checks it too: Tesseract.js's createWorker never settles
+      // when loading a language fails, so a failure must come before it. errorHandler turns
+      // its later errors into a rejection instead of an exception thrown in the page.
+      let failed;
+      const failure = new Promise((res, rej) => { failed = rej; });
+      failure.catch(() => {});
+      this.engine = Promise.all([
+        loadTesseract(),
+        platform.libBlobUrl(TESS_FILES.worker, '(' + tessWorkerGuard + ')(' + JSON.stringify(tessPinnedData()) + ');\n'),
+        platform.libBlobUrl(wasmSimd() ? TESS_FILES.coreSimd : TESS_FILES.core),
+        platform.libBytes(TESS_LANG_DIR(this.lang) + '/' + this.lang + '.traineddata.gz'),
+      ]).then(([T, workerPath, core]) => Promise.race([failure, T.createWorker(this.lang, 1, {
+        workerPath,
+        corePath: core + '#core.js',
+        langPath: platform.libUrl(TESS_LANG_DIR(this.lang)),
+        cacheMethod: 'none',
+        errorHandler: (e) => { log.warn('text reader:', String(e).slice(0, 200)); failed(new Error(String(e))); },
+      })])).then((w) => {
         if (signal.aborted) { w.terminate(); throw new Error('aborted'); }
         this.engineReady = true;
         this.onChange();

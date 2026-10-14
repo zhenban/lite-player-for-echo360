@@ -332,6 +332,16 @@ class LitePlayer {
     const i = rd ? rd.currentView() : -1;
     if (!deck || i < 0) return;
     this.$('.plabel').textContent = rd.label();
+    // With several files: the file's name, a button to the next file.
+    const fb = this.$('.pfile');
+    const shown = rd.shownFile();
+    const next = rd.nextFile();
+    fb.hidden = !next;
+    if (next && shown) {
+      fb.textContent = shown.name.replace(/\.pdf$/i, '');
+      fb.dataset.tip = tr('showFile', { name: next.name });
+      fb.setAttribute('aria-label', tr('pdfFileNext', { name: shown.name, next: next.name }));
+    }
     this.$('.pprev').disabled = i <= 0;
     this.$('.pnext').disabled = i >= deck.pages.length - 1;
     const box = this.$('.pfollow');
@@ -339,12 +349,20 @@ class LitePlayer {
     box.append(rd.followElement(true));
   }
 
-  // The element showing the screen view if it is playing, else the main view.
-  screenVideo() {
-    const pos = this.slides && this.slides.screenIndex != null ? this.sources.findIndex((s) => s.index === this.slides.screenIndex) : -1;
-    if (pos >= 0 && pos === this.clockPos) return this.video;
-    if (pos >= 0 && pos === this.followerPos) return this.fvideo;
-    return this.layout === 'single' || this.clockPos === this.primaryPos ? this.video : this.fvideo;
+  // What the user is looking at, for "copy picture": the larger of the pictures shown (a
+  // video or the PDF view), the main place when they are the same size.
+  // { video } or { page: { num, file, render(width) -> Promise of a canvas } }.
+  focusView() {
+    const slots = [...this.root.querySelectorAll('.views [data-slot=primary]'), ...this.root.querySelectorAll('.views [data-slot=secondary]')];
+    let best = slots[0];
+    for (const e of slots.slice(1)) if (e.clientWidth * e.clientHeight > best.clientWidth * best.clientHeight) best = e;
+    const rd = this.reader;
+    const i = rd && rd.deck ? rd.currentView() : -1;
+    if (best && best.classList.contains('pdfview') && this.pdfMode && i >= 0) {
+      const p = rd.deck.pages[i];
+      return { page: { num: p.num, file: p.file, render: (w) => rd.deck.render(i, w, true) } };
+    }
+    return { video: best && best.tagName === 'VIDEO' ? best : this.video };
   }
 
   // Layouts offered in the settings menu ([]: one picture only).
@@ -477,7 +495,7 @@ class LitePlayer {
     const notesReady = () => !!(this.notes && this.notesReady);
     this.menus = new MenuBar({
       $, root: this.root, pops: this.pops, stage: this.stage, video: this.video, prefs: this.prefs, savePrefs, cc: this.cc, toast,
-      cues: () => this.cues || [], screenVideo: () => this.screenVideo(), title: this.lesson.title, duration: () => this.duration(),
+      cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t),
@@ -485,7 +503,8 @@ class LitePlayer {
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
       values: this.menuValues = { quality: () => this.quality.value(), audio: () => '', silence: () => '' },
       actions: this.menuActions = {
-        bookmark: (e) => { if (notesReady()) this.notes.addBookmark(e); },
+        bookmark: (e) => { if (notesReady()) this.notes.toggleBookmark(e); },
+        bookmarkHere: () => !!this.bookmarkHere,
         popout: PopoutController.supported() ? () => this.popout.toggle() : null,
         loopA: () => this.loop.setA(this.video.currentTime), loopB: () => this.loop.setB(this.video.currentTime),
         loopClear: () => this.loop.clear(), loopLabel: () => (this.loop ? this.loop.label() : tr('loopNone')),
@@ -519,8 +538,8 @@ class LitePlayer {
         if (why) this.toast(why); else this.menus.setCaptions(!this.cc.on);
       },
       transcript: () => (this.sidebar.has('transcript') ? this.sidebar.toggle('transcript') : false),
-      bookmark: (a, e) => (notesReady() ? this.notes.addBookmark(e) : false),
-      flag: () => (notesReady() && this.notes.canFlag ? this.notes.flagByKey() : false),
+      bookmark: (a, e) => (notesReady() ? this.notes.toggleBookmark(e) : false),
+      flag: (a, e) => (notesReady() && this.notes.canFlag ? this.notes.flagByKey(e) : false),
       tag: (a, e) => (notesReady() ? this.notes.tagHere(e) : false),
       copyFrame: () => this.menus.copyFrame(),
       copyCaptions: () => this.menus.copyCaptions(),
@@ -581,6 +600,7 @@ class LitePlayer {
       this.transcript.update(ct);
       const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
       if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
+      this.renderBookmarkButton();
       if (this.silence) this.silence.tick(ct);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
@@ -713,7 +733,7 @@ class LitePlayer {
     d.listen(window, 'resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(guard(() => { this.quality.apply(); this.redrawPdf(); }), 500); });
     for (const chip of this.all('.top [data-open]')) d.listen(chip, 'click', () => this.sidebar.toggle(chip.dataset.open));
     d.listen($('.panelclose'), 'click', () => this.sidebar.close());
-    d.listen($('.bmbtn'), 'click', (e) => { if (this.notes) this.notes.addBookmark(e); });
+    d.listen($('.bmbtn'), 'click', (e) => { if (this.notes && this.notesReady) this.notes.toggleBookmark(e); });
     d.listen($('.pextras button'), 'click', () => this.opts.onFallback('extras'));
     this.bindPanelResize();
     this.loop = new ABLoop({
@@ -886,6 +906,7 @@ class LitePlayer {
     const bar = (sel, fn) => this.d.listen(this.$(sel), 'click', (e) => { e.stopPropagation(); fn(); });
     bar('.pprev', () => this.reader.turn(-1));
     bar('.pnext', () => this.reader.turn(1));
+    bar('.pfile', () => { const f = this.reader.nextFile(); if (f) this.reader.showFile(f.hash); });
     bar('.pswap', () => this.swapPdf());
     bar('.pdfclose', () => this.setPdfMain(false));
     // Dropping PDF files anywhere on the player adds them.
@@ -981,6 +1002,7 @@ class LitePlayer {
       this.menus.fitBar();
       this.menuActions.exportNotes = () => this.notes.openExport();
       this.renderFlagButton();
+      this.renderBookmarkButton();
       this.registerTab('notes', this.notes);
     });
     this.discussion = new DiscussionPane(this, this.$('.pane[data-pane=discussion]'), api, this.d.feature('discussion'));
@@ -1002,6 +1024,20 @@ class LitePlayer {
   }
 
   // The "Didn't understand" button in the Notes tab follows the part playing.
+  // The bookmark button is on while a bookmark is near the playing moment (a press then
+  // removes it). Changes the button only when that changes.
+  renderBookmarkButton() {
+    if (!this.notes || !this.notesReady) return;
+    const here = !!this.notes.bookmarkNear(this.video.currentTime);
+    if (here === this.bookmarkHere) return;
+    this.bookmarkHere = here;
+    const b = this.$('.bmbtn');
+    setPressed(b, here);
+    b.innerHTML = svg(here ? 'bookmarkOn' : 'bookmark');
+    b.dataset.tip = tr(here ? 'removeBookmarkKey' : 'bookmarkKey');
+    this.menus.refresh();
+  }
+
   renderFlagButton() {
     if (this.notes && this.notesReady) this.notes.renderFlagRow();
   }

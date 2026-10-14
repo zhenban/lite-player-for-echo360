@@ -16,12 +16,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
+      # The tag comes in through the environment, never pasted into the script, and must
+      # look like vX.Y.Z before anything uses it.
       - name: Which tag
-        run: echo "TAG=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v4
+        env:
+          WANTED: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$WANTED" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $WANTED"; exit 1; }
+          echo "TAG=$WANTED" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm

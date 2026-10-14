@@ -9,7 +9,7 @@ import { Window } from 'happy-dom';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
-const names = 'Disposer,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,'
+const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,'
   + 'setPdfLib: (lib) => { pdfjsPromise = Promise.resolve(lib); }';
 
 // The sources in a page of their own; nothing reaches the network.
@@ -86,6 +86,37 @@ test('audit 3: a shorter PDF while browsing a later page: the reader stays on a 
   assert.equal(r.currentView(), 0);
 }));
 
+test('two PDFs: a file name shows that file, at the page last seen in it, and pauses following', async () => withPage(async (w, m) => {
+  const A = 'a'.repeat(64);
+  const B = 'b'.repeat(64);
+  const pg = (hash, n, file) => ({ key: hash.slice(0, 12) + ':' + n, num: n, ar: 0.5625, file });
+  const deck = {
+    pages: [pg(A, 1, 'week1.pdf'), pg(A, 2, 'week1.pdf'), pg(A, 3, 'week1.pdf'), pg(B, 1, 'lab.pdf'), pg(B, 2, 'lab.pdf')],
+    files: [{ hash: A, name: 'week1.pdf' }, { hash: B, name: 'lab.pdf' }],
+    sampleAt: () => 0, unrecognisedFor: () => 0, pageAt: () => 1, render: async () => w.document.createElement('canvas'),
+  };
+  const r = new m.SlideReader({ deck, video: { currentTime: 0 } });
+  r.addTarget('main', w.document.createElement('div'));
+  r.targets.get('main').active = true;
+  r.update(0, true);
+  assert.equal(r.currentView(), 1);
+  assert.equal(r.shownFile().name, 'week1.pdf');
+  assert.equal(r.label(), 'Page 2 of 3', 'counted in its own file');
+  assert.equal(r.nextFile().name, 'lab.pdf');
+  r.showFile(B);
+  assert.equal(r.currentView(), 3, 'first page of a file not seen yet');
+  assert.equal(r.follow, false, 'following pauses, as when paging by hand');
+  assert.equal(r.label(), 'Page 1 of 2');
+  r.turn(1);
+  r.showFile(A);
+  assert.equal(r.currentView(), 1, 'back at the page last seen there');
+  r.showFile(B);
+  assert.equal(r.currentView(), 4);
+  assert.equal(r.nextFile().name, 'week1.pdf', 'the next file wraps round');
+  r.resumeFollow();
+  assert.equal(r.currentView(), 1);
+}));
+
 test('audit 4: a reply that fails keeps the draft and the error after the list reloads', async () => withPage(async (w, m) => {
   const q = { id: 'q', body: 'question', author: 'author', replies: [] };
   const api = { discussions: async () => ({ threads: [q], hiddenCount: 0 }) };
@@ -122,6 +153,55 @@ test('audit 4b: a note being edited survives a redraw of the list', async () => 
   area.dispatchEvent(new w.Event('input'));
   notes.render();   // e.g. a tag was added to another note
   assert.equal(pane.querySelector('.card[data-id="n1"] textarea').value, 'half-typed change');
+  d.dispose();
+}));
+
+test('bookmark here: a second press near a bookmark removes it instead of adding another; undo puts it back with its tags', async () => withPage(async (w, m) => {
+  const d = new m.Disposer();
+  const pane = w.document.createElement('div');
+  const toasts = [];
+  const tagMap = { b1: ['t1'] };
+  const tags = {
+    tags: [{ id: 't1', name: 'exam', color: '#f00' }], byId: (id) => (id === 't1' ? tags.tags[0] : null),
+    of: (id) => tags.tags.filter((x) => (tagMap[id] || []).includes(x.id)), forget: (id) => { delete tagMap[id]; },
+    toggle: (id, tag) => { (tagMap[id] = tagMap[id] || []).push(tag); },
+  };
+  let renders = 0;
+  const p = { video: { currentTime: 100 }, duration: () => 600, updateMarkers() {}, tags, lesson: {}, sidebar: { has: () => false },
+    toast: (msg, action, fn) => toasts.push({ msg, fn }), renderFlagButton() {}, renderBookmarkButton() { renders++; } };
+  let n = 1;
+  const writes = [];
+  const api = {
+    addNote: async (e, o) => { writes.push(['add', o.time]); return { id: 'b' + ++n, type: 'bookmark', time: o.time, createdAt: '' }; },
+    deleteNote: async (e, item) => { writes.push(['delete', item.id]); },
+  };
+  const notes = new m.NotesPane(p, pane, api, false, d);
+  notes.tags = tags;
+  notes.items = [{ id: 'b1', type: 'bookmark', time: 97, createdAt: '' }];
+  const ev = { isTrusted: true };
+  // 3 s after a bookmark: "here", so the press removes it.
+  assert.equal(notes.bookmarkNear(100).id, 'b1');
+  await notes.toggleBookmark(ev);
+  assert.deepEqual(writes, [['delete', 'b1']]);
+  assert.equal(notes.items.length, 0);
+  assert.ok(renders > 0, 'the button is redrawn');
+  assert.match(toasts[0].msg, /1:37/);
+  // Undo: back at its own time (not now), with its tag.
+  await toasts[0].fn(ev);
+  assert.deepEqual(writes[1], ['add', 97]);
+  const back = notes.items[0];
+  assert.deepEqual(tagMap[back.id], ['t1']);
+  // Paused, pressing again and again: one bookmark, then none, never a pile at one time.
+  notes.items = [];
+  writes.length = 0;
+  await notes.toggleBookmark(ev);
+  await notes.toggleBookmark(ev);
+  await notes.toggleBookmark(ev);
+  assert.deepEqual(writes.map((x) => x[0]), ['add', 'delete', 'add']);
+  assert.equal(notes.items.filter((x) => x.type === 'bookmark').length, 1);
+  // Further than BOOKMARK_NEAR_SEC away: a new bookmark.
+  p.video.currentTime = 100 + 5.5;
+  assert.equal(notes.bookmarkNear(p.video.currentTime), null);
   d.dispose();
 }));
 
@@ -221,6 +301,24 @@ test('audit 9: a render still running for a removed PDF is not kept for the new 
   const got = await deck.render(0, 400);
   assert.notEqual(got, oldCanvas);
   assert.equal(newReads, 1);
+  d.dispose();
+}));
+
+test('review R8: a huge or broken PDF page is drawn within the size limits, and cached by the width asked for', async () => withPage(async (w, m) => {
+  const d = new m.Disposer();
+  const deck = new m.SlideDeckController({ lesson: { mediaId: 'test' }, video: {}, disposer: d });
+  const page = (pw, ph) => ({ getViewport: ({ scale }) => ({ width: pw * scale, height: ph * scale }), render: () => ({ promise: Promise.resolve() }) });
+  let reads = 0;
+  // A page 1 pt wide and 100 000 pt tall: 4096 wide would be a 409 600 000 pixel canvas.
+  deck.pages = [{ key: 'tall:1', num: 1, doc: { getPage: async () => { reads++; return page(1, 100000); } } }];
+  const c = await deck.render(0, 4096);
+  assert.ok(c.width >= 1 && c.height <= 8192 && c.width * c.height <= 16e6, c.width + 'x' + c.height);
+  assert.equal(await deck.render(0, 4096), c, 'the smaller picture is reused');
+  assert.equal(reads, 1);
+  for (const [pw, ph] of [[0, 100], [NaN, 100], [100, Infinity]]) {
+    deck.pages = [{ key: 'bad:' + pw + ph, num: 1, doc: { getPage: async () => page(pw, ph) } }];
+    await assert.rejects(deck.render(0, 800), /page size/);
+  }
   d.dispose();
 }));
 
@@ -541,4 +639,87 @@ test('volume slider: shown only for a mouse or the keyboard, never on touch scre
   assert.ok(at > 0);
   assert.ok(css.lastIndexOf('@media (hover: hover)', at) > css.lastIndexOf('}\n}', at), 'the open state is inside (hover: hover)');
   assert.match(css, /\.vol input \{ width: 0;[^}]*visibility: hidden/);
+}));
+
+test('review R9: a reply that was sent cannot be sent again while the list reloads', async () => withPage(async (w, m) => {
+  const q = { id: 'q', body: 'question', author: 'author', replies: [] };
+  let releaseLoad;
+  const sent = [];
+  const api = {
+    discussions: () => new Promise((r) => { releaseLoad = () => r({ threads: [q], hiddenCount: 0 }); }),
+    reply: async (e, id, body) => { sent.push(body.body); },
+  };
+  const d = new m.Disposer();
+  const pane = w.document.createElement('div');
+  const r = new m.DiscussionPane({ video: { currentTime: 1 }, duration: () => 100, updateMarkers() {}, opts: {} }, pane, api, d);
+  r.visible = true;
+  r.threads = [q];
+  r.replyOpen = 'q';
+  r.render();
+  const area = pane.querySelector('.composer.reply textarea');
+  area.value = 'my reply';
+  area.dispatchEvent(new w.Event('input'));
+  const ctrlEnter = () => area.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+  ctrlEnter();
+  for (let i = 0; i < 5 && !releaseLoad; i++) await tick();
+  assert.ok(releaseLoad, 'sent; the list is reloading');
+  ctrlEnter();   // again, before the reload has finished
+  for (let i = 0; i < 5; i++) await tick();
+  assert.deepEqual(sent, ['my reply'], 'sent once');
+  releaseLoad();
+  for (let i = 0; i < 5; i++) await tick();
+  d.dispose();
+}));
+
+test('review R3: a control reached by keyboard keeps its own keys; after a click, Space still plays', async () => withPage(async (w, m) => {
+  const root = w.document.createElement('div');
+  root.innerHTML = '<button class="mute"></button><div class="divider" role="separator" tabindex="0"></div><div class="panel"><div class="tlist" tabindex="0"></div></div>'
+    + '<div class="keyhelp" hidden><button class="khclose"></button><div class="khlist"></div></div>';
+  w.document.body.append(root);
+  const d = new m.Disposer();
+  const calls = [];
+  new m.KeyboardShortcuts({ $: (s) => root.querySelector(s), isDestroyed: () => false, wake() {},
+    actions: { togglePlay: () => calls.push('play'), seekBy: () => calls.push('seek'), volumeBy: () => calls.push('volume') } }, d);
+  // happy-dom has no keyboard-focus state: say which elements were reached by keyboard.
+  const keyboardFocus = (elem, on) => { const real = elem.matches.bind(elem); elem.matches = (s) => (s === ':focus-visible' ? on : real(s)); };
+  const key = (target, k) => {
+    const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, composed: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  const mute = root.querySelector('.mute');
+  keyboardFocus(mute, true);
+  assert.equal(key(mute, ' '), false, 'Space presses the focused button');
+  assert.deepEqual(calls, []);
+  const divider = root.querySelector('.divider');
+  keyboardFocus(divider, true);
+  key(divider, 'ArrowRight');
+  assert.deepEqual(calls, [], 'arrows resize, not seek');
+  const list = root.querySelector('.tlist');
+  keyboardFocus(list, true);
+  key(list, 'ArrowDown');
+  assert.deepEqual(calls, [], 'arrows scroll the list, not the volume');
+  keyboardFocus(mute, false);   // clicked with the mouse
+  assert.equal(key(mute, ' '), true);
+  assert.deepEqual(calls, ['play'], 'Space plays after a click');
+  key(w.document.body, 'ArrowRight');
+  assert.deepEqual(calls, ['play', 'seek']);
+  d.dispose();
+}));
+
+test('review R4: two tabs adding PDFs (or corrections) to one recording keep both', async () => withPage(async (w, m) => {
+  const db = new Map();
+  m.idbCache.update = async (k, fn) => { const v = fn(db.get(k)); db.set(k, v); return v; };
+  const tab = () => ({ lesson: { mediaId: 'm' }, key: 'deck:m', files: [], fixes: [], ac: { signal: { aborted: false } }, reloads: 0, reload() { this.reloads++; } });
+  const a = tab();
+  const b = tab();   // opened before A added anything
+  const change = (t, op) => m.SlideDeckController.prototype.changeRecord.call(t, op);
+  await change(a, (st) => { st.files.push({ hash: 'ha', name: 'A.pdf' }); });
+  await change(b, (st) => { st.files.push({ hash: 'hb', name: 'B.pdf' }); });
+  assert.equal(JSON.stringify(db.get('deck:m').files.map((f) => f.name)), '["A.pdf","B.pdf"]', 'both stay attached');
+  assert.equal(JSON.stringify(b.files.map((f) => f.name)), '["A.pdf","B.pdf"]', 'tab B shows the file from A too');
+  assert.equal(b.reloads, 1);
+  await change(a, (st) => { st.fixes = st.fixes.concat({ a: 0, b: 10, page: 'none' }); });
+  await change(b, (st) => { st.fixes = st.fixes.concat({ a: 20, b: 30, page: 'none' }); });
+  assert.equal(db.get('deck:m').fixes.length, 2, 'both corrections kept');
 }));

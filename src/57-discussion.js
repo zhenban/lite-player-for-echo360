@@ -42,7 +42,7 @@ class DiscussionPane {
     } catch (e) {
       if (seq !== this.loadSeq) return false;
       log.info('discussions unavailable:', e.message);
-      if (this.loadedAt) this.showError(tr('loadFailed', { error: e.message }));
+      if (this.loadedAt) this.showError(tr('loadFailed', { error: errorText(e) }));
       return false;
     }
   }
@@ -115,7 +115,7 @@ class DiscussionPane {
 
   fail(e) {
     log.warn('discussion write failed', e);
-    this.showError(tr('saveFailed', { error: e.message || e }));
+    this.showError(tr('saveFailed', { error: errorText(e) }));
   }
 
   sorted() {
@@ -205,7 +205,13 @@ class DiscussionPane {
       const body = area.value.trim();
       if (this.busy || !body || body.length > MAX_POST_LENGTH) return;
       send.disabled = true;
-      this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => { this.replyOpen = null; this.replyDrafts.delete(q.id); });
+      this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => {
+        // Sent: the composer goes at once (not after the reload), with its text.
+        area.value = '';
+        this.replyOpen = null;
+        this.replyDrafts.delete(q.id);
+        this.render();
+      });
     };
     area.addEventListener('input', guard(() => { draft.text = area.value; this.updateCounter(area, counter, send); }));
     area.addEventListener('keydown', guard((e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(e); } }));
@@ -232,28 +238,30 @@ class DiscussionPane {
   }
 
   // Runs one write, then reloads the list so it shows what the server stored. One write
-  // at a time for the whole tab: a second Ctrl+Enter (or a click while the first request
-  // is on its way) does nothing, whatever state the buttons are in, so a post can never
-  // be published twice.
+  // at a time for the whole tab, until the reload has finished too: a second Ctrl+Enter
+  // (or a click) while the request is on its way, or while the old composer is still shown
+  // after it succeeded, does nothing, so a post can never be published twice.
   async write(e, fn, onSuccess) {
     if (this.busy) return false;
     this.busy = true;
     let ok = false;
     try {
-      await fn();
-      ok = true;
-      if (onSuccess) onSuccess();
-      this.showError('');
-    } catch (err) {
-      this.fail(err);
+      try {
+        await fn();
+        ok = true;
+        if (onSuccess) onSuccess();
+        this.showError('');
+      } catch (err) {
+        this.fail(err);
+      }
+      // The list is loaded again either way (what was saved, or what is there now); a write
+      // that failed keeps saying so afterwards (a successful load clears load errors).
+      const failed = ok ? '' : this.errorEl.textContent;
+      await this.load();
+      if (failed) this.showError(failed);
     } finally {
       this.busy = false;
     }
-    // The list is loaded again either way (what was saved, or what is there now); a write
-    // that failed keeps saying so afterwards (a successful load clears load errors).
-    const failed = ok ? '' : this.errorEl.textContent;
-    await this.load();
-    if (failed) this.showError(failed);
     return ok;
   }
 

@@ -35,6 +35,8 @@ Quality reference: the calm, precise feel of YouTube's player, IINA and the Appl
   - Touch: no slider; a press only mutes or unmutes (devices have hardware volume keys).
   - When the volume changes by the arrow keys (up and down) or the wheel, the picture shows the level briefly (for example "Volume 70%") and fades out after about a second.
 - Captions: one press turns captions on or off; disabled with a reason when the recording has none. Caption options live in the settings menu.
+- Bookmark: a toggle for "a bookmark here". It is on (filled icon, pressed) while a bookmark is within 5 s of the playing moment, and a press then removes that bookmark (with Undo) instead of adding another one at nearly the same time. The B key and the ⋮ menu item do the same.
+- Copy picture: copies what the user is looking at, the larger picture shown (the main place when both are the same size). When that is the PDF view, it copies the PDF page, not a video frame.
 - Layout: the icon shows the current layout; the tooltip says what the next press switches to; direct choice is in the settings menu. Define how the cycle changes when the PDF view is open.
 - "Flag for instructor" is visible to the instructor: it does not live in the bottom bar; it lives in the Notes tab, is labelled as instructor-visible and asks for confirmation.
 

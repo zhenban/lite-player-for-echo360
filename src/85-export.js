@@ -149,7 +149,7 @@ class Exporter {
         if (i < 0 || pics.has(i)) continue;
         const pg = deck.pages[i];
         const name = base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png';
-        const c = await deck.render(i, 1600);
+        const c = await deck.render(i, 1600, true);
         const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
         files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
         pics.set(i, name);
@@ -268,8 +268,12 @@ async function restoreBackup(data, db = idbCache) {
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       val = new Blob([bytes], { type: v.type || 'application/octet-stream' });
     }
-    const shape = BACKUP_DB_SHAPES[k.split(':')[0]];
-    if (shape && shape(val)) entries.push([k, val]);
+    const kind = k.split(':')[0];
+    const shape = BACKUP_DB_SHAPES[kind];
+    if (!shape || !shape(val)) continue;
+    // Tags keep only their known fields, with a plain colour (review R1).
+    if (kind === 'tags') val = { tags: val.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) };
+    entries.push([k, val]);
   }
   await db.putMany(entries);
   let n = entries.length;

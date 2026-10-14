@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.17.1
+// @version      0.18.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.17.1';
+  const VERSION = '0.18.0';
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -63,6 +63,18 @@ function parseIsoDuration(s) {
   const m = /^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/.exec(s || '');
   if (!m) return NaN;
   return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+}
+
+// A colour that is safe to put in a style: only "#rgb" or "#rrggbb" (stored or restored
+// values could otherwise carry other CSS declarations or url() requests); else fallback.
+const TAG_FALLBACK_COLOR = '#94a3b8';   // grey of the tag palette (56-tags.js)
+function plainColor(c, fallback) {
+  return typeof c === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : fallback;
+}
+
+async function sha256Hex(buf) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function clamp(v, lo, hi) {
@@ -299,6 +311,7 @@ const STRINGS = {
     copyCaptionsSpanDesc: 'Copy text copies what was said just before, in whole sentences, with the lecture name and times.',
     copySpanValue: 'Last {time}',
     copiedFrame: 'Picture copied ({w} × {h})',
+    copiedPage: 'Copied page {n} of {file} as a picture',
     copiedCaptions: 'Copied {from}–{to} of the transcript',
     copyFailed: 'Could not copy ({msg})',
     copyNoCaptions: 'This recording has no transcript to copy.',
@@ -330,6 +343,11 @@ const STRINGS = {
     bookmark: 'Bookmark',
     bookmarkKey: 'Bookmark this moment (B)',
     bookmarkedAt: 'Bookmarked at {time}',
+    removeBookmark: 'Remove bookmark',
+    removeBookmarkKey: 'Remove the bookmark here (B)',
+    bookmarkRemoved: 'Removed the bookmark at {time}',
+    showFile: 'Show {name}',
+    pdfFileNext: '{name}: show {next}',
     undo: 'Undo',
     flag: 'Didn\'t understand',
     flagRemoveLabel: 'Remove "Didn\'t understand" at {time}',
@@ -512,7 +530,7 @@ const STRINGS = {
     keySpeed: 'Slower / faster',
     keyCaptions: 'Captions',
     keyTranscript: 'Transcript',
-    keyBookmark: 'Bookmark',
+    keyBookmark: 'Bookmark this moment, or remove the bookmark here',
     keyTag: 'Tag the note or bookmark here (bookmarks this moment if there is none)',
     keyFlag: 'Didn\'t understand (visible to your instructor; asks first)',
     keySlide: 'Previous / next slide',
@@ -533,7 +551,7 @@ const STRINGS = {
     diagMenu: 'Copy diagnostics…',
     storageMenu: 'Storage and diagnostics',
     diagTitle: 'Diagnostics',
-    diagInfo: 'For a bug report: versions, the state of each feature and recent warnings. No sign-in data, addresses, names, notes or posts. This is exactly what will be copied:',
+    diagInfo: 'For a bug report: versions, the state of each feature and recent warnings. Sign-in data is left out and web and email addresses are hidden; read it before you share it. This is exactly what will be copied:',
     diagCopy: 'Copy',
     diagCopied: 'Diagnostics copied',
     keyExport: 'Export notes and bookmarks, backup',
@@ -651,6 +669,10 @@ const BG_START_DELAY_MS = 5000;        // before an analysis starts its download
 const CHAPTER_STEP_SEC = 10;
 const CHAPTER_PACE_MS = [300, 120];    // between keyframes (about 20 KB each)
 const CHAPTER_REFINE_PACE_MS = [1000, 300];   // between refinements (a whole segment each)
+// Most samples one media fragment may list. A 10 s segment at 60 fps has 600; a server
+// that claims more is refused before anything is allocated for it (a safety bound, not
+// a measurement: ten times a minute of 60 fps video in one fragment).
+const MP4_MAX_SAMPLES = 36000;
 // Frames are compared as brightness pictures this size: one pixel is a 2 x 2 block at
 // 360p, 8 x 8 at 720p, so a changed line of slide text changes several pixels.
 const THUMB_W = 160;
@@ -728,7 +750,15 @@ const SLIDE_MOVES = {
 const FOLLOW_MIN_SEC = 1.5 * CHAPTER_STEP_SEC;
 const FOLLOW_STALE_SEC = 120;          // after this long without a recognised page, the reader says so (a product choice)
 const FOLLOW_UPDATE_MS = 15000;        // while reading, pages are decided again at most this often (each run takes 0.1-1 s)
+// "Copy picture" on the PDF view: the page drawn this wide (a full HD screen's width:
+// sharp when pasted into notes, a few hundred KB as PNG).
+const PDF_COPY_WIDTH = 1920;
 const DECK_RENDER_BUDGET = 40e6;       // rendered pages kept, in pixels (about 160 MB at 4 bytes a pixel)
+// One rendered page at most: a page far taller or wider than a slide (a poster, a long
+// scroll) is drawn smaller rather than as one huge canvas. 8192 px is within every
+// browser's canvas limit; 16 M pixels is 64 MB, two 4096-wide 16:9 pages.
+const PAGE_RENDER_MAX_SIDE = 8192;
+const PAGE_RENDER_MAX_PX = 16e6;
 const PAGE_TITLE_TOP = 0.4;            // a page's title is the largest text in this top share of the page
 const PAGE_AR_DEFAULT = 9 / 16;        // height / width of a page not opened yet (slides are mostly 16:9)
 
@@ -806,6 +836,10 @@ const POP_MARGIN = 8;                  // px kept free at the edges of the playe
 const SHEET_BELOW = 600;               // player narrower than this (px, a phone held upright): popovers are bottom sheets
 const TIP_DELAY_MS = 500;              // hover time before a tooltip shows (a passing mouse shows none)
 const SPEED_SNAP = 0.06;               // a speed this close to a stop takes the stop (so a finger can hit 1.5x)
+// A bookmark this close to the playing moment (either side) is "here": the bookmark button
+// shows it as on, and a press removes it instead of adding another at nearly the same time
+// (a product choice: a bookmark marks a moment, two within seconds of each other are one).
+const BOOKMARK_NEAR_SEC = 5;
 const FLAG_CONFIRM_MS = 4000;          // "Didn't understand": time to press again to confirm
 const VOLUME_STEP = 0.05;              // one arrow key press or wheel step (common players use 5%)
 const VOLUME_WHEEL_PX = 50;            // wheel distance for one volume step; a single event counts at most this much, so
@@ -954,6 +988,38 @@ function windowOf(node) {
 function hiddenFor(node) {
   return !!(node && node.ownerDocument ? node.ownerDocument : document).hidden;
 }
+
+// ---- 04-libs.js ----
+// ===================================================================================
+// The library files loaded when first needed, by npm path, with their SHA-256 (hex).
+// platform.libBlobUrl / importLib refuse a file whose bytes differ, so a changed file on
+// the CDN is never run; Tesseract's language data is checked in its Worker
+// (tessWorkerGuard, 66-slide-ocr.js). hls.js comes through @require instead (meta.txt).
+//
+// Each hash was taken from the CDN and matched against the package on registry.npmjs.org.
+// `npm run check-requires` checks them against the CDN again (CI). A new version of a
+// library means new paths and new hashes here.
+// ===================================================================================
+
+const LIB_SHA256 = {
+  'pdfjs-dist@6.4.299/build/pdf.min.mjs': '57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2',
+  'pdfjs-dist@6.4.299/build/pdf.worker.min.mjs': '9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18',
+  'tesseract.js@7.0.0/dist/tesseract.esm.min.js': '64871d76c75609fd5413b88a8171e2ef40deedd77d5875ba23df104b2d05eb29',
+  'tesseract.js@7.0.0/dist/worker.min.js': '576b7df7e3393e137e51849357c9adb53fe7ac1bb69bfa06cf3d61520f182c6d',
+  'tesseract.js-core@7.0.0/tesseract-core-lstm.wasm.js': 'eef5f8b2f8e20e150680b20adaec4a60babafee3adbe8a94583c81fee46e8680',
+  'tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js': 'c58b46a4c796c0b8afccf77591d5b875b6896b45d402bbce8caa6f5362447b38',
+  '@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz': '45b4cb346724ac1774f1c36f42f182b887bcdb28ebe63e6fff90ac41f3fcff91',
+  '@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int/chi_sim.traineddata.gz': 'b8a23f10c7de500891eb458a8adc9cc58ab7f242f08b7d149f5e9aea4ad5db7c',
+  '@tesseract.js-data/chi_tra@1.0.0/4.0.0_best_int/chi_tra.traineddata.gz': '11fe2610dab05d8a880d02f193ce70203f4c4bbe061b987d5529a2c038a22743',
+  '@tesseract.js-data/jpn@1.0.0/4.0.0_best_int/jpn.traineddata.gz': '2b63ebfbf1484de4a08ce53b29ef98a1c17658a93cbd38acb665d7d316d0be88',
+  '@tesseract.js-data/kor@1.0.0/4.0.0_best_int/kor.traineddata.gz': '78c21276ab14c9bb734d83be1055d9fe5469a4e7e977c51ad385be5737e61126',
+  '@tesseract.js-data/rus@1.0.0/4.0.0_best_int/rus.traineddata.gz': 'f51f5edc992249ff9b70a227b22f242dfa47b2b1bbc7ae0ea74908640c101f6a',
+  '@tesseract.js-data/ell@1.0.0/4.0.0_best_int/ell.traineddata.gz': 'e8a293abb398ec479176c1575aef24e2bacb0611c713f3fa996f97f0cd996fb3',
+  '@tesseract.js-data/ara@1.0.0/4.0.0_best_int/ara.traineddata.gz': 'f4746c44b02342dd5b3d4f0198000f47d7c49f1a229e63e0f436c0592dcd9639',
+  '@tesseract.js-data/heb@1.0.0/4.0.0_best_int/heb.traineddata.gz': '9c70b524200dae77fb25e3567566eee600ccbcae9aeb89722990ccae0e84e805',
+  '@tesseract.js-data/tha@1.0.0/4.0.0_best_int/tha.traineddata.gz': '4550a5505184d1b79cf10416d5b19e643001d95411d5e717954dd26feef3ae74',
+  '@tesseract.js-data/hin@1.0.0/4.0.0_best_int/hin.traineddata.gz': 'f3b6a0d320df38d886178cdd727b90dbf9df3db053adb32bd9cf73f0463cda07',
+};
 
 // ---- 04-types.js ----
 // ===================================================================================
@@ -1133,14 +1199,17 @@ function hiddenFor(node) {
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
 //     an extension reads a snapshot before it starts the player)
 //   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
-//   - libUrl / importLib: the libraries loaded when first needed (pdf.js, Tesseract and
-//     its language data), named by their npm path ('pdfjs-dist@6.4.299/build/...'). A
-//     userscript fetches them from a CDN; an extension ships them (Manifest V3 does not
+//   - libUrl / libBlobUrl / importLib: the libraries loaded when first needed (pdf.js,
+//     Tesseract and its language data), named by their npm path ('pdfjs-dist@6.4.299/
+//     build/...'). A userscript fetches them from a CDN and runs a file only after its
+//     bytes match LIB_SHA256 (04-libs.js); an extension ships them (Manifest V3 does not
 //     allow code from elsewhere).
 //   - Hls: hls.js (the userscript manager loads it through @require)
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
 // ===================================================================================
+
+const libBlobUrls = new Map();   // path -> Promise of a blob URL (platform.libBlobUrl)
 
 const platform = {
   name: 'userscript',
@@ -1159,7 +1228,30 @@ const platform = {
     return indexedDB.open(name, version);
   },
   libUrl(path) { return 'https://cdn.jsdelivr.net/npm/' + path; },
-  importLib(path) { return import(this.libUrl(path)); },
+  // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
+  // (a file that differs is refused). Kept for the page's life: workers are made from it
+  // again, and it is a few files of 0.1 to 4 MB.
+  libBlobUrl(path, prefix) {
+    const key = path + (prefix ? '\n' + prefix : '');
+    let p = libBlobUrls.get(key);
+    if (!p) {
+      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob(prefix ? [prefix, buf] : [buf], { type: 'text/javascript' })));
+      libBlobUrls.set(key, p);
+      p.catch(() => libBlobUrls.delete(key));
+    }
+    return p;
+  },
+  // The bytes of a pinned file, refused unless they match its SHA-256.
+  async libBytes(path) {
+    const want = LIB_SHA256[path];
+    if (!want) throw new Error('not a pinned library file: ' + path);
+    const r = await fetch(this.libUrl(path), { credentials: 'omit' });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + path);
+    const buf = await r.arrayBuffer();
+    if (await sha256Hex(buf) !== want) throw new Error('library file changed on the CDN, not used: ' + path);
+    return buf;
+  },
+  importLib(path) { return this.libBlobUrl(path).then((u) => import(u)); },
   Hls: typeof Hls !== 'undefined' ? Hls : window.Hls,
   save(blob, fileName) {
     const a = document.createElement('a');
@@ -1425,11 +1517,20 @@ const ADAPTERS = [echo360ClassroomAdapter];
 // sent. Public = visible to the instructor or the class (discussion, likes, saves, flags).
 // ===================================================================================
 
+// The message is only the status, which is what logs and diagnostics keep. The server's
+// own text can repeat what was sent (a note, a name), so it is kept apart and shown only
+// on screen (errorText).
 class ApiError extends Error {
-  constructor(status, message) {
-    super(message || ('HTTP ' + status));
+  constructor(status, serverText) {
+    super('HTTP ' + status);
     this.status = status;
+    this.serverText = typeof serverText === 'string' ? serverText.slice(0, 200) : '';
   }
+}
+
+// What to tell the user about a failed request or operation.
+function errorText(e) {
+  return (e && (e.serverText || e.message)) || String(e);
 }
 
 // Same thumbnail choice as the original player: first thumbnail set, the last image taken
@@ -2031,6 +2132,8 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .pbar .btn svg { width: 20px; height: 20px; }
 .pbar .btn:disabled { color: var(--text-3); background: none; cursor: default; }
 .plabel { padding: 0 var(--sp1); font-variant-numeric: tabular-nums; }
+.pfile { max-width: 160px; overflow: hidden; text-overflow: ellipsis; padding: 3px 10px; border-radius: var(--r2); background: var(--fill); font-size: 12px; }
+.pfile:hover { background: var(--fill-2); }
 .pfollow .rback { padding: 3px 10px; font-size: 12px; }
 .pfollow .rfollowing { color: var(--text-2); padding: 0 6px; }
 .l-pip .pdfview[data-slot=secondary] .pbar { display: none; }
@@ -2331,10 +2434,14 @@ select.input option { background: var(--s1); color: var(--text); }
 .sfiles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sfile { display: inline-flex; align-items: center; gap: var(--sp1); max-width: 100%; padding: 3px var(--sp1) 3px 10px; border-radius: var(--r2); background: var(--fill); font-size: 12px; }
 .sfname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+button.sfname { padding: 0; font-size: inherit; text-align: left; }
+button.sfname:hover { text-decoration: underline; }
+.sfile:has(> .sfname[aria-pressed=true]) { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .sfremove { width: 22px; height: 22px; border-radius: var(--r1); font-size: 11px; color: var(--text-2); }
 .sfremove:hover { background: var(--fill-2); color: var(--text); }
 .sfadd { padding: var(--sp1) 10px; border-radius: var(--r2); font-size: 12px; color: var(--accent); }
 .sfadd:hover { background: var(--accent-soft); }
+@media (pointer: coarse) { button.sfname, .pfile { min-height: 44px; } .sfremove { width: 44px; height: 44px; } }
 .sdmsg { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
 
 /* ---- narrow windows ---- */
@@ -2373,6 +2480,7 @@ function playerTemplate() {
         <button class="btn pprev" aria-label="${tr('prevPage')}" data-tip="${tr('prevPage')}">${svg('back')}</button>
         <span class="plabel"></span>
         <button class="btn pnext" aria-label="${tr('nextPage')}" data-tip="${tr('nextPage')}">${svg('next')}</button>
+        <button class="pfile" hidden></button>
         <span class="pfollow"></span>
         <button class="btn pswap" aria-label="${tr('pdfSwap')}" data-tip="${tr('pdfSwap')}">${svg('swap')}</button>
         <button class="btn pdfclose" aria-label="${tr('pdfMainClose')}" data-tip="${tr('pdfMainClose')}">${svg('close')}</button>
@@ -2415,7 +2523,7 @@ function playerTemplate() {
       <div class="spacer"></div>
       <button class="speed" aria-haspopup="dialog" aria-expanded="false" aria-label="${tr('speed')}" data-tip="${tr('speedKey')}">1×</button>
       <button class="btn ccbtn" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
-      <button class="btn bmbtn" data-bar="bookmark" hidden aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
+      <button class="btn bmbtn" data-bar="bookmark" hidden aria-pressed="false" aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
       <button class="btn framebtn" data-bar="copyPicture" aria-label="${tr('copyFrame')}" data-tip="${tr('copyFrameKey')}">${svg('copyPicture')}</button>
       <button class="btn textbtn" data-bar="copyText" aria-label="${tr('copyCaptions')}" data-tip="${tr('copyCaptionsKey')}">${svg('copyText')}</button>
       <button class="btn layout" aria-label="${tr('layout')}">${svg('layoutSide')}</button>
@@ -3699,6 +3807,16 @@ class LitePlayer {
     const i = rd ? rd.currentView() : -1;
     if (!deck || i < 0) return;
     this.$('.plabel').textContent = rd.label();
+    // With several files: the file's name, a button to the next file.
+    const fb = this.$('.pfile');
+    const shown = rd.shownFile();
+    const next = rd.nextFile();
+    fb.hidden = !next;
+    if (next && shown) {
+      fb.textContent = shown.name.replace(/\.pdf$/i, '');
+      fb.dataset.tip = tr('showFile', { name: next.name });
+      fb.setAttribute('aria-label', tr('pdfFileNext', { name: shown.name, next: next.name }));
+    }
     this.$('.pprev').disabled = i <= 0;
     this.$('.pnext').disabled = i >= deck.pages.length - 1;
     const box = this.$('.pfollow');
@@ -3706,12 +3824,20 @@ class LitePlayer {
     box.append(rd.followElement(true));
   }
 
-  // The element showing the screen view if it is playing, else the main view.
-  screenVideo() {
-    const pos = this.slides && this.slides.screenIndex != null ? this.sources.findIndex((s) => s.index === this.slides.screenIndex) : -1;
-    if (pos >= 0 && pos === this.clockPos) return this.video;
-    if (pos >= 0 && pos === this.followerPos) return this.fvideo;
-    return this.layout === 'single' || this.clockPos === this.primaryPos ? this.video : this.fvideo;
+  // What the user is looking at, for "copy picture": the larger of the pictures shown (a
+  // video or the PDF view), the main place when they are the same size.
+  // { video } or { page: { num, file, render(width) -> Promise of a canvas } }.
+  focusView() {
+    const slots = [...this.root.querySelectorAll('.views [data-slot=primary]'), ...this.root.querySelectorAll('.views [data-slot=secondary]')];
+    let best = slots[0];
+    for (const e of slots.slice(1)) if (e.clientWidth * e.clientHeight > best.clientWidth * best.clientHeight) best = e;
+    const rd = this.reader;
+    const i = rd && rd.deck ? rd.currentView() : -1;
+    if (best && best.classList.contains('pdfview') && this.pdfMode && i >= 0) {
+      const p = rd.deck.pages[i];
+      return { page: { num: p.num, file: p.file, render: (w) => rd.deck.render(i, w, true) } };
+    }
+    return { video: best && best.tagName === 'VIDEO' ? best : this.video };
   }
 
   // Layouts offered in the settings menu ([]: one picture only).
@@ -3844,7 +3970,7 @@ class LitePlayer {
     const notesReady = () => !!(this.notes && this.notesReady);
     this.menus = new MenuBar({
       $, root: this.root, pops: this.pops, stage: this.stage, video: this.video, prefs: this.prefs, savePrefs, cc: this.cc, toast,
-      cues: () => this.cues || [], screenVideo: () => this.screenVideo(), title: this.lesson.title, duration: () => this.duration(),
+      cues: () => this.cues || [], focusView: () => this.focusView(), title: this.lesson.title, duration: () => this.duration(),
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t),
@@ -3852,7 +3978,8 @@ class LitePlayer {
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
       values: this.menuValues = { quality: () => this.quality.value(), audio: () => '', silence: () => '' },
       actions: this.menuActions = {
-        bookmark: (e) => { if (notesReady()) this.notes.addBookmark(e); },
+        bookmark: (e) => { if (notesReady()) this.notes.toggleBookmark(e); },
+        bookmarkHere: () => !!this.bookmarkHere,
         popout: PopoutController.supported() ? () => this.popout.toggle() : null,
         loopA: () => this.loop.setA(this.video.currentTime), loopB: () => this.loop.setB(this.video.currentTime),
         loopClear: () => this.loop.clear(), loopLabel: () => (this.loop ? this.loop.label() : tr('loopNone')),
@@ -3886,8 +4013,8 @@ class LitePlayer {
         if (why) this.toast(why); else this.menus.setCaptions(!this.cc.on);
       },
       transcript: () => (this.sidebar.has('transcript') ? this.sidebar.toggle('transcript') : false),
-      bookmark: (a, e) => (notesReady() ? this.notes.addBookmark(e) : false),
-      flag: () => (notesReady() && this.notes.canFlag ? this.notes.flagByKey() : false),
+      bookmark: (a, e) => (notesReady() ? this.notes.toggleBookmark(e) : false),
+      flag: (a, e) => (notesReady() && this.notes.canFlag ? this.notes.flagByKey(e) : false),
       tag: (a, e) => (notesReady() ? this.notes.tagHere(e) : false),
       copyFrame: () => this.menus.copyFrame(),
       copyCaptions: () => this.menus.copyCaptions(),
@@ -3948,6 +4075,7 @@ class LitePlayer {
       this.transcript.update(ct);
       const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
       if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
+      this.renderBookmarkButton();
       if (this.silence) this.silence.tick(ct);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
@@ -4080,7 +4208,7 @@ class LitePlayer {
     d.listen(window, 'resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(guard(() => { this.quality.apply(); this.redrawPdf(); }), 500); });
     for (const chip of this.all('.top [data-open]')) d.listen(chip, 'click', () => this.sidebar.toggle(chip.dataset.open));
     d.listen($('.panelclose'), 'click', () => this.sidebar.close());
-    d.listen($('.bmbtn'), 'click', (e) => { if (this.notes) this.notes.addBookmark(e); });
+    d.listen($('.bmbtn'), 'click', (e) => { if (this.notes && this.notesReady) this.notes.toggleBookmark(e); });
     d.listen($('.pextras button'), 'click', () => this.opts.onFallback('extras'));
     this.bindPanelResize();
     this.loop = new ABLoop({
@@ -4253,6 +4381,7 @@ class LitePlayer {
     const bar = (sel, fn) => this.d.listen(this.$(sel), 'click', (e) => { e.stopPropagation(); fn(); });
     bar('.pprev', () => this.reader.turn(-1));
     bar('.pnext', () => this.reader.turn(1));
+    bar('.pfile', () => { const f = this.reader.nextFile(); if (f) this.reader.showFile(f.hash); });
     bar('.pswap', () => this.swapPdf());
     bar('.pdfclose', () => this.setPdfMain(false));
     // Dropping PDF files anywhere on the player adds them.
@@ -4348,6 +4477,7 @@ class LitePlayer {
       this.menus.fitBar();
       this.menuActions.exportNotes = () => this.notes.openExport();
       this.renderFlagButton();
+      this.renderBookmarkButton();
       this.registerTab('notes', this.notes);
     });
     this.discussion = new DiscussionPane(this, this.$('.pane[data-pane=discussion]'), api, this.d.feature('discussion'));
@@ -4369,6 +4499,20 @@ class LitePlayer {
   }
 
   // The "Didn't understand" button in the Notes tab follows the part playing.
+  // The bookmark button is on while a bookmark is near the playing moment (a press then
+  // removes it). Changes the button only when that changes.
+  renderBookmarkButton() {
+    if (!this.notes || !this.notesReady) return;
+    const here = !!this.notes.bookmarkNear(this.video.currentTime);
+    if (here === this.bookmarkHere) return;
+    this.bookmarkHere = here;
+    const b = this.$('.bmbtn');
+    setPressed(b, here);
+    b.innerHTML = svg(here ? 'bookmarkOn' : 'bookmark');
+    b.dataset.tip = tr(here ? 'removeBookmarkKey' : 'bookmarkKey');
+    this.menus.refresh();
+  }
+
   renderFlagButton() {
     if (this.notes && this.notesReady) this.notes.renderFlagRow();
   }
@@ -4662,6 +4806,18 @@ const KEY_ACTIONS = {
   ']': ['speed', 1], '[': ['speed', -1],
 };
 
+// Whether the focused element `t` handles key k itself (see KeyboardShortcuts.handle).
+function ownsKey(t, k) {
+  if (!t.matches || !keyboardFocused(t)) return false;
+  if (k === ' ' || k === 'Enter') return t.matches('button, [role=button], [role=tab], a[href], summary, input[type=checkbox], input[type=radio]') || !!t.closest('.panel');
+  if (/^Arrow/.test(k)) return t.matches('[role=separator]') || !!t.closest('.panel');
+  return /^(Page(Up|Down)|Home|End)$/.test(k) && !!t.closest('.panel');
+}
+
+function keyboardFocused(t) {
+  try { return t.matches(':focus-visible'); } catch (e) { return false; }
+}
+
 class KeyboardShortcuts {
   // deps: { $, isDestroyed(), actions: { name(arg, event) -> false if not handled }, wake() }
   constructor(deps, disposer) {
@@ -4679,6 +4835,10 @@ class KeyboardShortcuts {
     if (e.ctrlKey || e.metaKey || e.altKey || this.x.isDestroyed()) return;
     const target = e.composedPath()[0];
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) && target.type !== 'range') return;
+    // A control reached by keyboard keeps its own keys: Space presses the focused button,
+    // arrows move the divider or scroll the focused list. After a mouse click (no keyboard
+    // focus) the shortcuts win, so Space still plays rather than pressing the last button.
+    if (target && ownsKey(target, e.key)) return;
     // An open menu or popover handles its own keys (arrows, Enter, [ and ] on the speed
     // track); only Esc goes on to close it.
     if (target && target.closest && target.closest('.pop') && e.key !== 'Escape') return;
@@ -4949,11 +5109,11 @@ class QualityController {
 // diagnostics, the original player). Parts give their own pages (deps.pages).
 //
 // deps: { $, root, pops (Popovers), stage, video, prefs, savePrefs(), cc (CaptionsView),
-//         cues() ([] until loaded), screenVideo(), title, duration(), toast(msg),
+//         cues() ([] until loaded), focusView() (see LitePlayer), title, duration(), toast(msg),
 //         layouts() (offered: [] none), layout(), setLayout(l), swap(), pdfMode(),
 //         pages: { quality(), audio(), silence() } (items, see SettingsMenu),
 //         values: { quality(), audio(), silence() } (shown next to the pages),
-//         actions: { bookmark(e), popout() or null, loopA(), loopB(), loopClear(),
+//         actions: { bookmark(e) (adds or removes the bookmark here), bookmarkHere(), popout() or null, loopA(), loopB(), loopClear(),
 //         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t) }
 // ===================================================================================
 
@@ -5030,7 +5190,7 @@ class MenuBar {
     const x = this.x;
     const btn = (k) => x.root.querySelector('.row [data-bar=' + k + ']');
     const item = {
-      bookmark: { kind: 'action', label: tr('bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
+      bookmark: { kind: 'action', label: tr(x.actions.bookmarkHere() ? 'removeBookmark' : 'bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
       copyPicture: { kind: 'action', label: tr('copyFrame'), key: 'P', run: () => this.copyFrame() },
       copyText: { kind: 'action', label: tr('copyCaptions'), key: 'A', run: () => this.copyCaptions(), reason: () => unavailableReason(btn('copyText')) },
     };
@@ -5173,9 +5333,20 @@ class MenuBar {
   // ---- copying (picture, what was said) ----
 
   // Copies the current picture at the video's own resolution. Must run from a user action.
+  // Copies the picture the user is looking at: the larger one shown, a video frame or the
+  // PDF page (drawn PDF_COPY_WIDTH wide).
   copyFrame() {
     const x = this.x;
-    const v = x.screenVideo();
+    const f = x.focusView();
+    if (f.page) {
+      const pg = f.page;
+      const shot = pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png')));
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': shot })])
+        .then(() => x.toast(tr('copiedPage', { n: pg.num, file: pg.file })))
+        .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+      return;
+    }
+    const v = f.video;
     if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: 'no picture yet' })); return; }
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
@@ -6550,6 +6721,7 @@ class NotesPane {
     this.dirty = true;
     if (this.visible) this.render();
     this.p.updateMarkers();
+    this.p.renderBookmarkButton();
   }
 
   build() {
@@ -6610,8 +6782,8 @@ class NotesPane {
 
   fail(e) {
     log.warn('write failed', e);
-    this.showError(tr('saveFailed', { error: e.message || e }));
-    this.p.toast(tr('saveFailed', { error: e.message || e }));
+    this.showError(tr('saveFailed', { error: errorText(e) }));
+    this.p.toast(tr('saveFailed', { error: errorText(e) }));
   }
 
   renderTagFilter() {
@@ -6740,19 +6912,43 @@ class NotesPane {
   count(type) { return this.items.filter((x) => x.type === type).length; }
 
   // Resolves to the new bookmark, or null if it could not be added (or another write was
-  // still on its way).
-  addBookmark(e) {
+  // still on its way). at: its time (default: now); tagIds: tags to put on it (undo).
+  addBookmark(e, at, tagIds) {
     return this.once(async () => {
-      const time = this.p.video.currentTime;
+      const time = at == null ? this.p.video.currentTime : at;
       try {
         const note = await this.api.addNote(e, { bookmark: true, time, num: this.count('bookmark') + 1 });
         this.items.push(note);
         this.sort();
+        for (const id of tagIds || []) if (this.tags.byId(id)) this.tags.toggle(note.id, id);
         this.changed();
         this.p.toast(tr('bookmarkedAt', { time: fmtTime(time) }), tr('undo'), (ev) => this.remove(ev, note));
         return note;
       } catch (err) { this.fail(err); return null; }
     }).then((x) => x || null);
+  }
+
+  // The bookmark "here": the nearest one within BOOKMARK_NEAR_SEC of time t, else null.
+  bookmarkNear(t) {
+    let best = null;
+    for (const x of this.items) {
+      if (x.type !== 'bookmark' || x.time == null || Math.abs(x.time - t) > BOOKMARK_NEAR_SEC) continue;
+      if (!best || Math.abs(x.time - t) < Math.abs(best.time - t)) best = x;
+    }
+    return best;
+  }
+
+  // The bookmark button, B and the menu item: bookmarks this moment, or removes the
+  // bookmark here (Undo puts it back, with its tags).
+  toggleBookmark(e) {
+    const near = this.bookmarkNear(this.p.video.currentTime);
+    if (!near) return this.addBookmark(e);
+    return this.once(async () => {
+      const tagIds = this.tags.of(near.id).map((x) => x.id);
+      if (!(await this.removeNow(e, near))) return null;
+      this.p.toast(tr('bookmarkRemoved', { time: fmtTime(near.time) }), tr('undo'), (ev) => this.addBookmark(ev, near.time, tagIds));
+      return null;
+    }).then(() => null);
   }
 
   flagAt(time) {
@@ -6826,6 +7022,7 @@ class NotesPane {
     return this.once(() => this.removeNow(e, item));
   }
 
+  // True when removed.
   async removeNow(e, item) {
     try {
       if (item.type === 'flag') await this.api.removeFlag(e, item);
@@ -6835,7 +7032,8 @@ class NotesPane {
       this.showError('');
       this.changed();
       this.p.renderFlagButton();
-    } catch (err) { this.fail(err); }
+      return true;
+    } catch (err) { this.fail(err); return false; }
   }
 
   markers() {
@@ -6951,6 +7149,13 @@ class NotesPane {
 
 const TAG_COLORS = ['#f6c343', '#6ea8ff', '#ff6b6b', '#4fd1a5', '#c084fc', '#fb923c', '#94a3b8', '#f472b6'];
 
+// Tags as stored may come from an old version or a restored backup: known fields only, and
+// a plain colour (anything else would be put into a style attribute).
+function cleanTags(list) {
+  return list.filter((g) => g && typeof g.id === 'string' && typeof g.name === 'string')
+    .map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) }));
+}
+
 // Several tabs can show recordings of the same course (or the same recording) at once, so
 // a change is never saved by writing this page's whole copy back: that would undo what
 // another tab saved meanwhile. Each change is an operation, applied to this page's copy at
@@ -6977,7 +7182,7 @@ class TagStore {
   async load() {
     const rec = await idbCache.get(this.courseKey);
     if (rec && Array.isArray(rec.tags)) {
-      this.tags = rec.tags;
+      this.tags = cleanTags(rec.tags);
     } else {
       // First use in this course: a few suggestions, which the user may delete (kept if
       // another tab has made the list meanwhile).
@@ -6994,12 +7199,12 @@ class TagStore {
   changeTags(op) {
     op(this.tags);
     idbCache.update(this.courseKey, (rec) => {
-      const tags = rec && Array.isArray(rec.tags) ? rec.tags : TagStore.defaults();
+      const tags = rec && Array.isArray(rec.tags) ? cleanTags(rec.tags) : TagStore.defaults();
       op(tags);
       return { tags };
     }).then((rec) => {
       // Redraw only if another tab's changes came along (else nothing new to show).
-      if (rec && Array.isArray(rec.tags) && JSON.stringify(rec.tags) !== JSON.stringify(this.tags)) { this.tags = rec.tags; this.onChange(); }
+      if (rec && Array.isArray(rec.tags) && JSON.stringify(rec.tags) !== JSON.stringify(this.tags)) { this.tags = cleanTags(rec.tags); this.onChange(); }
     }).catch((e) => log.warn('tags:', e));
   }
 
@@ -7090,10 +7295,17 @@ class TagStore {
   }
 }
 
+// A tag's colour dot (one style property, never a whole style attribute).
+function colorDot(color) {
+  const i = el('i');
+  i.style.backgroundColor = plainColor(color, TAG_FALLBACK_COLOR);
+  return i;
+}
+
 // A tag as a small coloured chip.
 function tagChip(tag, onclick) {
   const elem = el(onclick ? 'button.tagchip' : 'span.tagchip', { onclick: onclick || null, title: tag.name },
-    el('i', { style: 'background:' + tag.color }), el('span', { text: tag.name }));
+    colorDot(tag.color), el('span', { text: tag.name }));
   return elem;
 }
 
@@ -7105,7 +7317,7 @@ function tagPicker(tagStore, itemId, onDone) {
     for (const tag of tagStore.tags) {
       const on = tagStore.has(itemId, tag.id);
       box.append(el('button.tagopt' + (on ? '.on' : ''), { 'aria-pressed': String(on), onclick: () => { tagStore.toggle(itemId, tag.id); render(); } },
-        el('i', { style: 'background:' + tag.color }), el('span', { text: tag.name })));
+        colorDot(tag.color), el('span', { text: tag.name })));
     }
     const input = el('input.input.small', { placeholder: tr('newTag'), maxLength: 40, 'aria-label': tr('newTag') });
     input.addEventListener('keydown', (e) => {
@@ -7130,7 +7342,8 @@ function tagManager(tagStore, onClose) {
     box.textContent = '';
     box.append(el('div.pinfo', { text: tr('tagsPrivate') }));
     for (const tag of tagStore.tags) {
-      const swatch = el('button.tagswatch', { title: tr('tagColor'), 'aria-label': tr('tagColor'), style: 'background:' + tag.color });
+      const swatch = el('button.tagswatch', { title: tr('tagColor'), 'aria-label': tr('tagColor') });
+      swatch.style.backgroundColor = plainColor(tag.color, TAG_FALLBACK_COLOR);
       swatch.addEventListener('click', () => {
         const i = TAG_COLORS.indexOf(tag.color);
         tagStore.recolor(tag.id, TAG_COLORS[(i + 1) % TAG_COLORS.length]);
@@ -7196,7 +7409,7 @@ class DiscussionPane {
     } catch (e) {
       if (seq !== this.loadSeq) return false;
       log.info('discussions unavailable:', e.message);
-      if (this.loadedAt) this.showError(tr('loadFailed', { error: e.message }));
+      if (this.loadedAt) this.showError(tr('loadFailed', { error: errorText(e) }));
       return false;
     }
   }
@@ -7269,7 +7482,7 @@ class DiscussionPane {
 
   fail(e) {
     log.warn('discussion write failed', e);
-    this.showError(tr('saveFailed', { error: e.message || e }));
+    this.showError(tr('saveFailed', { error: errorText(e) }));
   }
 
   sorted() {
@@ -7359,7 +7572,13 @@ class DiscussionPane {
       const body = area.value.trim();
       if (this.busy || !body || body.length > MAX_POST_LENGTH) return;
       send.disabled = true;
-      this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => { this.replyOpen = null; this.replyDrafts.delete(q.id); });
+      this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => {
+        // Sent: the composer goes at once (not after the reload), with its text.
+        area.value = '';
+        this.replyOpen = null;
+        this.replyDrafts.delete(q.id);
+        this.render();
+      });
     };
     area.addEventListener('input', guard(() => { draft.text = area.value; this.updateCounter(area, counter, send); }));
     area.addEventListener('keydown', guard((e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(e); } }));
@@ -7386,28 +7605,30 @@ class DiscussionPane {
   }
 
   // Runs one write, then reloads the list so it shows what the server stored. One write
-  // at a time for the whole tab: a second Ctrl+Enter (or a click while the first request
-  // is on its way) does nothing, whatever state the buttons are in, so a post can never
-  // be published twice.
+  // at a time for the whole tab, until the reload has finished too: a second Ctrl+Enter
+  // (or a click) while the request is on its way, or while the old composer is still shown
+  // after it succeeded, does nothing, so a post can never be published twice.
   async write(e, fn, onSuccess) {
     if (this.busy) return false;
     this.busy = true;
     let ok = false;
     try {
-      await fn();
-      ok = true;
-      if (onSuccess) onSuccess();
-      this.showError('');
-    } catch (err) {
-      this.fail(err);
+      try {
+        await fn();
+        ok = true;
+        if (onSuccess) onSuccess();
+        this.showError('');
+      } catch (err) {
+        this.fail(err);
+      }
+      // The list is loaded again either way (what was saved, or what is there now); a write
+      // that failed keeps saying so afterwards (a successful load clears load errors).
+      const failed = ok ? '' : this.errorEl.textContent;
+      await this.load();
+      if (failed) this.showError(failed);
     } finally {
       this.busy = false;
     }
-    // The list is loaded again either way (what was saved, or what is there now); a write
-    // that failed keeps saying so afterwards (a successful load clears load errors).
-    const failed = ok ? '' : this.errorEl.textContent;
-    await this.load();
-    if (failed) this.showError(failed);
     return ok;
   }
 
@@ -7463,7 +7684,7 @@ class MarkersLayer {
       if (m.time < 0 || m.time > this.dur) continue;
       const i = document.createElement('i');
       i.className = 'mk mk-' + m.kind;
-      if (m.color) i.style.background = m.color;
+      if (m.color) i.style.backgroundColor = plainColor(m.color, TAG_FALLBACK_COLOR);
       i.style.left = ((m.time / this.dur) * 100).toFixed(3) + '%';
       frag.appendChild(i);
     }
@@ -8538,6 +8759,9 @@ function parseFragment(buf, segmentOffset) {
   if (rf & 0x1) { offset = base + dv.getInt32(p); p += 4; }
   let firstFlags = null;
   if (rf & 0x4) { firstFlags = dv.getUint32(p); p += 4; }
+  // Each listed field takes four bytes per sample: the count must fit in the box.
+  const fieldBytes = 4 * [0x100, 0x200, 0x400, 0x800].filter((f) => rf & f).length;
+  if (count > MP4_MAX_SAMPLES || count * fieldBytes > trun.end - p) throw new Error('bad sample count: ' + count);
   const samples = [];
   for (let i = 0; i < count; i++) {
     let dur = defDur;
@@ -9414,6 +9638,7 @@ class SlideReader {
     this.sample = -1;
     this.targets = new Map();   // name -> { stage, active, token }
     this.infoListeners = new Set();
+    this.lastInFile = new Map();   // page key prefix (a file) -> key of the page last shown in it
   }
 
   get deck() {
@@ -9477,6 +9702,35 @@ class SlideReader {
     this.showPage(clamp(this.currentView() + dir, 0, deck.pages.length - 1), true);
   }
 
+  // Shows another file (by hash): the page last shown in it, else its first page. Like
+  // paging by hand, this pauses following.
+  showFile(hash) {
+    const deck = this.deck;
+    if (!deck) return;
+    const prefix = pageKeyPrefix(hash);
+    const last = this.lastInFile.get(prefix);
+    let i = last ? deck.pages.findIndex((p) => p.key === last) : -1;
+    if (i < 0) i = deck.pages.findIndex((p) => p.key.startsWith(prefix));
+    if (i < 0) return;
+    this.follow = false;
+    this.showPage(i, true);
+  }
+
+  // The file shown now ({ hash, name }), or null.
+  shownFile() {
+    const deck = this.deck;
+    const p = deck && deck.pages[this.currentView()];
+    return p ? deck.files.find((f) => p.key.startsWith(pageKeyPrefix(f.hash))) || null : null;
+  }
+
+  // The file after the one shown (wrapping round), for the PDF view's file button.
+  nextFile() {
+    const deck = this.deck;
+    const cur = this.shownFile();
+    if (!deck || !cur || deck.files.length < 2) return null;
+    return deck.files[(deck.files.indexOf(cur) + 1) % deck.files.length];
+  }
+
   resumeFollow() {
     this.follow = true;
     this.update(this.player.video.currentTime, true);
@@ -9503,6 +9757,7 @@ class SlideReader {
     const changed = i !== this.view;
     this.view = i;
     this.viewKey = this.deck.pages[i].key;
+    this.lastInFile.set(pageKeyFile(this.viewKey), this.viewKey);
     if (changed || force) for (const tg of this.targets.values()) if (tg.active) this.drawInto(tg, i);
     this.info();
   }
@@ -9535,13 +9790,13 @@ class SlideReader {
     }).catch((e) => log.warn('render page:', e && e.message ? e.message : e));
   }
 
-  // "Page 5 of 21 (file)" for the page shown.
+  // "Page 5 of 21" for the page shown (of its file; the file's name is shown apart).
   label() {
     const deck = this.deck;
     const p = deck.pages[this.currentView()];
     if (!p) return '';
-    return tr('pageOfN', { n: p.num, total: deck.pages.filter((x) => x.file === p.file).length })
-      + (deck.files.length > 1 ? ' (' + p.file.replace(/\.pdf$/i, '') + ')' : '');
+    const prefix = pageKeyFile(p.key);
+    return tr('pageOfN', { n: p.num, total: deck.pages.filter((x) => x.key.startsWith(prefix)).length });
   }
 
   // The following line: following (sure / unsure / stale), or a button back to it.
@@ -9567,6 +9822,7 @@ class SlidesPane {
     this.d = disposer || new Disposer();   // owned by whoever created this (parent.child())
     this.reader = player.reader;
     this.d.add(() => this.reader.setActive('side', false));
+    this.fileBtns = [];          // the file names, as buttons (renderDeck)
     this.deckBox = el('div.sdeck');
     this.readerBox = el('div.reader', { hidden: true });
     this.status = el('div.sstatus', { 'aria-live': 'polite' });
@@ -9646,8 +9902,16 @@ class SlidesPane {
     // Failures are shown in this tab (deck.error).
     input.addEventListener('change', guard(() => { if (input.files.length) deck.addFiles(input.files).catch(() => {}); }));
     const files = el('div.sfiles');
+    // With several files, a name is a button that shows that file (renderPageInfo marks
+    // the one shown).
+    const several = deck.files.length > 1 && !!this.deck;
+    this.fileBtns = [];
     for (const f of deck.files) {
-      files.append(el('span.sfile', null, el('span.sfname', { text: f.name, title: f.name }),
+      const name = several
+        ? el('button.sfname', { text: f.name, title: tr('showFile', { name: f.name }), 'aria-pressed': 'false', onclick: () => this.reader.showFile(f.hash) })
+        : el('span.sfname', { text: f.name, title: f.name });
+      if (several) { name.dataset.hash = f.hash; this.fileBtns.push(name); }
+      files.append(el('span.sfile', null, name,
         el('button.sfremove', { title: tr('removeFile', { name: f.name }), 'aria-label': tr('removeFile', { name: f.name }), text: '✕', onclick: () => deck.removeFile(f.hash) })));
     }
     files.append(el('button.sfadd', { text: deck.files.length ? tr('addMoreSlides') : tr('addSlides'), onclick: () => input.click() }), input);
@@ -9729,6 +9993,8 @@ class SlidesPane {
     if (!p) return;
     this.pageLabel.textContent = rd.label();
     this.pageLabel.title = p.title || '';
+    const shown = rd.shownFile();
+    for (const b of this.fileBtns || []) setPressed(b, !!shown && b.dataset.hash === shown.hash);
     this.prevBtn.disabled = i <= 0;
     this.nextBtn.disabled = i >= deck.pages.length - 1;
     this.mainBtn.textContent = this.player.prefs.pdfMain ? tr('pdfMainClose') : tr('pdfMainOpen');
@@ -9788,15 +10054,22 @@ class SlidesPane {
 // For later features (on-device speech recognition may reuse the keyframes and text):
 //   reader.times[i], reader.texts, reader.at[i].
 // Language: chosen from the slide files' text (ocrLanguage); English data is about 3 MB,
-// other languages 0.6 to 2.7 MB; each is downloaded when first needed (Tesseract.js then
-// keeps it in the browser's storage), and the slides tab says which and how large while
-// it loads.
+// other languages 0.6 to 2.7 MB; each is downloaded when first needed (the browser's HTTP
+// cache keeps it), and the slides tab says which and how large while it loads.
+//
+// Every file is checked against its SHA-256 (04-libs.js) before it is used: the library,
+// its Worker and the engine through platform.libBlobUrl, the language data inside the
+// Worker (tessWorkerGuard). Tesseract.js's own storage of language data is not used: what
+// it kept would be read back without a check.
 // ===================================================================================
 
 const TESS_FILES = {
   lib: 'tesseract.js@7.0.0/dist/tesseract.esm.min.js',
   worker: 'tesseract.js@7.0.0/dist/worker.min.js',
-  core: 'tesseract.js-core@7.0.0',
+  // The LSTM engine (OEM 1, the only one used), with WebAssembly SIMD where the browser has
+  // it. Named here rather than chosen by Tesseract.js, so that the file run is a pinned one.
+  core: 'tesseract.js-core@7.0.0/tesseract-core-lstm.wasm.js',
+  coreSimd: 'tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js',
 };
 // Language data (pinned npm packages, 4.0.0_best_int): the scripts each one reads (the
 // non-Latin ones read Latin letters too, for the English terms on such slides), the size
@@ -9815,7 +10088,38 @@ const TESS_LANGS = {
   tha: { scripts: ['Thai', 'Latin'], bytes: 896631, tag: 'th' },
   hin: { scripts: ['Devanagari', 'Latin'], bytes: 1389692, tag: 'hi' },
 };
-const TESS_LANG_PATH = (lang) => platform.libUrl('@tesseract.js-data/' + lang + '@1.0.0/4.0.0_best_int');
+const TESS_LANG_DIR = (lang) => '@tesseract.js-data/' + lang + '@1.0.0/4.0.0_best_int';
+
+// The smallest module using a SIMD instruction (i8x16.splat): valid only where the browser
+// runs WebAssembly SIMD. The same test Tesseract.js makes (wasm-feature-detect).
+const WASM_SIMD_PROBE = [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11];
+function wasmSimd() {
+  try { return WebAssembly.validate(new Uint8Array(WASM_SIMD_PROBE)); } catch (e) { return false; }
+}
+
+// Runs first in Tesseract.js's Worker, before its own code: the Worker's only downloads are
+// language data, and each must be a pinned file (url -> SHA-256) with the right bytes.
+// Anything else fails there, before the engine reads it.
+function tessWorkerGuard(pinned) {
+  const real = self.fetch.bind(self);
+  self.fetch = async (url, opts) => {
+    const want = pinned[String(url)];
+    if (!want) throw new Error('not a pinned file: ' + url);
+    const r = await real(url, opts);
+    if (!r.ok) return r;
+    const buf = await r.arrayBuffer();
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    if (Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('') !== want) throw new Error('language data changed on the CDN, not used: ' + url);
+    return new Response(buf, { status: r.status, statusText: r.statusText, headers: r.headers });
+  };
+}
+
+// The pinned language data, by the address the Worker asks for.
+function tessPinnedData() {
+  const out = {};
+  for (const [path, hash] of Object.entries(LIB_SHA256)) if (path.endsWith('.traineddata.gz')) out[platform.libUrl(path)] = hash;
+  return out;
+}
 
 // Characters written differently in simplified and traditional Chinese (common ones, in
 // matching order), to tell the two apart.
@@ -10051,11 +10355,27 @@ class SlideTextReader {
     if (this.ac.signal.aborted) throw new Error('aborted');
     if (!this.engine) {
       const signal = this.ac.signal;
-      this.engine = loadTesseract().then((T) => T.createWorker(this.lang, 1, {
-        workerPath: platform.libUrl(TESS_FILES.worker),
-        corePath: platform.libUrl(TESS_FILES.core),
-        langPath: TESS_LANG_PATH(this.lang),
-      })).then((w) => {
+      // The engine is given as one file ("...#.js": Tesseract.js uses a path ending in "js"
+      // as it is, instead of choosing a file next to it).
+      // The language data is checked here first, although the Worker downloads it again
+      // (from the HTTP cache) and checks it too: Tesseract.js's createWorker never settles
+      // when loading a language fails, so a failure must come before it. errorHandler turns
+      // its later errors into a rejection instead of an exception thrown in the page.
+      let failed;
+      const failure = new Promise((res, rej) => { failed = rej; });
+      failure.catch(() => {});
+      this.engine = Promise.all([
+        loadTesseract(),
+        platform.libBlobUrl(TESS_FILES.worker, '(' + tessWorkerGuard + ')(' + JSON.stringify(tessPinnedData()) + ');\n'),
+        platform.libBlobUrl(wasmSimd() ? TESS_FILES.coreSimd : TESS_FILES.core),
+        platform.libBytes(TESS_LANG_DIR(this.lang) + '/' + this.lang + '.traineddata.gz'),
+      ]).then(([T, workerPath, core]) => Promise.race([failure, T.createWorker(this.lang, 1, {
+        workerPath,
+        corePath: core + '#core.js',
+        langPath: platform.libUrl(TESS_LANG_DIR(this.lang)),
+        cacheMethod: 'none',
+        errorHandler: (e) => { log.warn('text reader:', String(e).slice(0, 200)); failed(new Error(String(e))); },
+      })])).then((w) => {
         if (signal.aborted) { w.terminate(); throw new Error('aborted'); }
         this.engineReady = true;
         this.onChange();
@@ -10544,18 +10864,14 @@ function loadPdfJs() {
   return pdfjsPromise;
 }
 
-// pdf.js's worker for one controller: a module worker from a blob that imports the pinned
-// worker script (a worker URL from another origin cannot be used directly). Ended by its owner.
-function makePdfWorker(lib) {
-  const url = URL.createObjectURL(new Blob(['import "' + platform.libUrl(PDFJS_DIR + 'pdf.worker.min.mjs') + '";'], { type: 'text/javascript' }));
-  const port = new Worker(url, { type: 'module' });
-  URL.revokeObjectURL(url);
-  return { port, pdf: new lib.PDFWorker({ port }) };
+// pdf.js's worker for one controller: a module worker from the checked worker script (a
+// worker URL from another origin cannot be used directly). Ended by its owner.
+function pdfWorkerUrl() {
+  return platform.libBlobUrl(PDFJS_DIR + 'pdf.worker.min.mjs');
 }
-
-async function sha256Hex(buf) {
-  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
-  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
+function makePdfWorker(lib, url) {
+  const port = new Worker(url, { type: 'module' });
+  return { port, pdf: new lib.PDFWorker({ port }) };
 }
 
 // The page's title: the largest text in the top PAGE_TITLE_TOP of the page.
@@ -10567,11 +10883,26 @@ function pageTitle(items, pageHeight) {
     .map((it) => it.str.trim()).join(' ').replace(/\s+/g, ' ').slice(0, 120);
 }
 
+// A page's key is this prefix (its file) and the page number.
+function pageKeyPrefix(fileHash) {
+  return fileHash.slice(0, 12) + ':';
+}
+function pageKeyFile(key) {
+  return key.slice(0, key.indexOf(':') + 1);
+}
+
+// Page drawn `width` pixels wide, or smaller when that would pass the size limits for one
+// page (the picture is shown scaled to its place either way).
 function renderPdfPage(page, width) {
-  const vp = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
+  const base = page.getViewport({ scale: 1 });
+  const bw = base.width;
+  const bh = base.height;
+  if (!(bw > 0 && bh > 0 && Number.isFinite(bw) && Number.isFinite(bh))) throw new Error('bad page size');
+  const scale = Math.min(width / bw, PAGE_RENDER_MAX_SIDE / bw, PAGE_RENDER_MAX_SIDE / bh, Math.sqrt(PAGE_RENDER_MAX_PX / (bw * bh)));
+  const vp = page.getViewport({ scale });
   const c = document.createElement('canvas');
-  c.width = Math.round(width);
-  c.height = Math.round(vp.height);
+  c.width = Math.max(1, Math.floor(bw * scale));
+  c.height = Math.max(1, Math.floor(bh * scale));
   return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => c);
 }
 
@@ -10635,7 +10966,7 @@ class SlideDeckController {
     this.state = 'empty';     // empty | loading | reading | ready | error
     this.error = '';
     this.job = null;
-    this.rendered = new Map(); // page index -> canvas (newest size), least recently used first
+    this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
     this.pdfWorker = null;     // pdf.js worker (makePdfWorker), owned here
     this.d.add(() => this.closeDocs());
   }
@@ -10666,18 +10997,36 @@ class SlideDeckController {
     await this.reload();
   }
 
-  saveRecord() {
-    if (this.lesson.mediaId) idbCache.put(this.key, { files: this.files, fixes: this.fixes });
+  // op({ files, fixes }) changes the record in place: applied here now, then to the stored
+  // record in one transaction. Another tab may have changed it meanwhile (added a file, made
+  // a correction), so this tab's copy is never written back whole; if the stored files
+  // differ afterwards, this tab takes them over.
+  changeRecord(op) {
+    op(this);
+    if (!this.lesson.mediaId) return Promise.resolve();
+    return idbCache.update(this.key, (rec) => {
+      const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
+      op(st);
+      return { files: st.files, fixes: st.fixes };
+    }).then((rec) => {
+      if (!rec || this.ac.signal.aborted) return;
+      this.fixes = rec.fixes;
+      if (JSON.stringify(rec.files) !== JSON.stringify(this.files)) {
+        this.files = rec.files;
+        this.reload();
+      }
+    }).catch((e) => log.warn('slide files:', e));
   }
 
   // Adds PDF files (from a drop or a file picker). Returns how many were PDFs.
   async addFiles(fileList) {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
+    const added = [];
     for (const f of pdfs) {
       const buf = await f.arrayBuffer();
       const hash = await sha256Hex(buf);
-      if (this.files.some((x) => x.hash === hash)) continue;
+      if (this.files.some((x) => x.hash === hash) || added.some((x) => x.hash === hash)) continue;
       // The file must really be stored (a full disk would otherwise lose it silently on
       // the next visit); the reference list changes in one transaction (another tab may
       // add or remove the same file at the same time).
@@ -10691,18 +11040,19 @@ class SlideDeckController {
         this.onChange();
         throw e;
       }
-      this.files.push({ hash, name: f.name });
+      added.push({ hash, name: f.name });
     }
-    this.saveRecord();
+    await this.changeRecord((st) => { for (const a of added) if (!st.files.some((x) => x.hash === a.hash)) st.files.push(a); });
     await this.reload();
     return pdfs.length;
   }
 
   async removeFile(hash) {
-    this.files = this.files.filter((f) => f.hash !== hash);
-    const prefix = hash.slice(0, 12) + ':';
-    this.fixes = this.fixes.filter((x) => !String(x.page).startsWith(prefix));
-    this.saveRecord();
+    const prefix = pageKeyPrefix(hash);
+    await this.changeRecord((st) => {
+      st.files = st.files.filter((f) => f.hash !== hash);
+      st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
+    });
     // The file itself is deleted when no other recording uses it.
     // In one transaction: drop this recording from the file's users and, if it was the
     // last one, the file itself (no other tab can add itself in between).
@@ -10742,6 +11092,8 @@ class SlideDeckController {
       const gone = () => this.job !== job || this.ac.signal.aborted;
       const lib = await loadPdfJs();
       if (gone()) return;
+      const workerUrl = await pdfWorkerUrl();
+      if (gone()) return;
       const pages = [];
       for (const f of this.files) {
         const blob = await idbCache.get('deckfile:' + f.hash);
@@ -10749,7 +11101,7 @@ class SlideDeckController {
         if (!blob) continue;
         const data = new Uint8Array(await blob.arrayBuffer());
         if (gone()) return;
-        if (!this.pdfWorker) this.pdfWorker = makePdfWorker(lib);
+        if (!this.pdfWorker) this.pdfWorker = makePdfWorker(lib, workerUrl);
         const task = lib.getDocument({ data, worker: this.pdfWorker.pdf });
         const doc = await task.promise;
         if (gone()) { task.destroy().catch(() => {}); return; }
@@ -10759,7 +11111,7 @@ class SlideDeckController {
           const tc = await page.getTextContent();
           const [x0, y0, x1, y1] = page.view;
           pages.push({
-            key: f.hash.slice(0, 12) + ':' + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
+            key: pageKeyPrefix(f.hash) + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
             title: pageTitle(tc.items, y1 - y0),
             text: tc.items.map((x) => x.str).join(' ').replace(/\s+/g, ' ').trim(),
           });
@@ -10836,7 +11188,7 @@ class SlideDeckController {
     if (this.deciding) { this.again = this.again || now; return; }
     if (!now && performance.now() - this.decidedAt < FOLLOW_UPDATE_MS) return;
     this.decidedAt = performance.now();
-    const fileOf = this.pages.map((p) => this.files.findIndex((f) => p.key.startsWith(f.hash.slice(0, 12))));
+    const fileOf = this.pages.map((p) => this.files.findIndex((f) => p.key.startsWith(pageKeyPrefix(f.hash))));
     const input = {
       pageTexts: this.pages.map((p) => p.text),
       fileOf,
@@ -10882,26 +11234,28 @@ class SlideDeckController {
   // Kept by the page's key (file and page number), not its index: an index means another
   // page once the files change, and a render still running for a removed file must not be
   // kept for whatever page has its index now.
-  async render(i, width) {
+  // once: a one-off size (a copy): drawn but not kept, so the page on screen stays cached.
+  async render(i, width, once) {
     const w = Math.round(width);
     const pg = this.pages[i];
     if (!pg) throw new Error('no page ' + i);
     const hit = this.rendered.get(pg.key);
-    if (hit && hit.width === w) {
+    // By the width asked for: a page drawn smaller (renderPdfPage) is still the one asked for.
+    if (hit && hit.w === w) {
       this.rendered.delete(pg.key);
       this.rendered.set(pg.key, hit);
-      return hit;
+      return hit.c;
     }
     const page = await pg.doc.getPage(pg.num);
     const c = await renderPdfPage(page, width);
     // The files changed meanwhile: the picture is not kept (the caller checks whether it
     // still wants it).
-    if (!this.pages.includes(pg)) return c;
+    if (once || !this.pages.includes(pg)) return c;
     this.rendered.delete(pg.key);
-    this.rendered.set(pg.key, c);
+    this.rendered.set(pg.key, { c, w });
     let px = 0;
-    for (const x of this.rendered.values()) px += x.width * x.height;
-    for (const [k, x] of this.rendered) {
+    for (const { c: x } of this.rendered.values()) px += x.width * x.height;
+    for (const [k, { c: x }] of this.rendered) {
       if (px <= DECK_RENDER_BUDGET || k === pg.key) break;
       px -= x.width * x.height;
       x.width = 0; // releases the canvas memory now
@@ -10986,14 +11340,13 @@ class SlideDeckController {
   // slide) or null (back to automatic).
   correct(t, value) {
     if (value === null) {
-      this.fixes = this.fixes.filter((x) => !(x.a <= t && t < x.b));
+      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
     } else {
       const part = this.correctionPart(t) || this.partAt(t);
       if (!part) return;
-      this.fixes = this.fixes.filter((x) => x.b <= part.a || x.a >= part.b);
-      this.fixes.push({ a: part.a, b: part.b, page: value === 'none' ? 'none' : this.pages[value].key });
+      const fix = { a: part.a, b: part.b, page: value === 'none' ? 'none' : this.pages[value].key };
+      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => x.b <= part.a || x.a >= part.b).concat(fix); });
     }
-    this.saveRecord();
     this.decide(true);
     this.onChange();
   }
@@ -11531,7 +11884,7 @@ class Exporter {
         if (i < 0 || pics.has(i)) continue;
         const pg = deck.pages[i];
         const name = base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png';
-        const c = await deck.render(i, 1600);
+        const c = await deck.render(i, 1600, true);
         const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
         files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
         pics.set(i, name);
@@ -11650,8 +12003,12 @@ async function restoreBackup(data, db = idbCache) {
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       val = new Blob([bytes], { type: v.type || 'application/octet-stream' });
     }
-    const shape = BACKUP_DB_SHAPES[k.split(':')[0]];
-    if (shape && shape(val)) entries.push([k, val]);
+    const kind = k.split(':')[0];
+    const shape = BACKUP_DB_SHAPES[kind];
+    if (!shape || !shape(val)) continue;
+    // Tags keep only their known fields, with a plain colour (review R1).
+    if (kind === 'tags') val = { tags: val.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) };
+    entries.push([k, val]);
   }
   await db.putMany(entries);
   let n = entries.length;
@@ -11664,9 +12021,10 @@ async function restoreBackup(data, db = idbCache) {
 // ---- 86-diagnostics.js ----
 // ===================================================================================
 // "Copy diagnostics": a plain-text summary to paste into a bug report. It names versions,
-// the state of each feature and recent warnings and errors. It never contains credentials,
-// cookies, addresses (all URLs are masked), user names, notes or discussion text; the user
-// sees the exact text before copying it.
+// the state of each feature and recent warnings and errors. It holds no credentials or
+// cookies; web and email addresses in the warnings are masked, and errors from Echo360 keep
+// only their status (ApiError), not the server's text. Other messages are kept as they
+// are, so the user sees the exact text before copying it.
 // ===================================================================================
 
 function browserName() {
@@ -11677,7 +12035,7 @@ function browserName() {
 }
 
 function maskUrls(s) {
-  return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
+  return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[^\s@<>()'",;:]+@[^\s@<>()'",;:]+\.[^\s@<>()'",;:]+/g, '<email>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
 }
 
 function diagnosticsText(p) {

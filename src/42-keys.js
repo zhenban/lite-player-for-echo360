@@ -31,6 +31,18 @@ const KEY_ACTIONS = {
   ']': ['speed', 1], '[': ['speed', -1],
 };
 
+// Whether the focused element `t` handles key k itself (see KeyboardShortcuts.handle).
+function ownsKey(t, k) {
+  if (!t.matches || !keyboardFocused(t)) return false;
+  if (k === ' ' || k === 'Enter') return t.matches('button, [role=button], [role=tab], a[href], summary, input[type=checkbox], input[type=radio]') || !!t.closest('.panel');
+  if (/^Arrow/.test(k)) return t.matches('[role=separator]') || !!t.closest('.panel');
+  return /^(Page(Up|Down)|Home|End)$/.test(k) && !!t.closest('.panel');
+}
+
+function keyboardFocused(t) {
+  try { return t.matches(':focus-visible'); } catch (e) { return false; }
+}
+
 class KeyboardShortcuts {
   // deps: { $, isDestroyed(), actions: { name(arg, event) -> false if not handled }, wake() }
   constructor(deps, disposer) {
@@ -48,6 +60,10 @@ class KeyboardShortcuts {
     if (e.ctrlKey || e.metaKey || e.altKey || this.x.isDestroyed()) return;
     const target = e.composedPath()[0];
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) && target.type !== 'range') return;
+    // A control reached by keyboard keeps its own keys: Space presses the focused button,
+    // arrows move the divider or scroll the focused list. After a mouse click (no keyboard
+    // focus) the shortcuts win, so Space still plays rather than pressing the last button.
+    if (target && ownsKey(target, e.key)) return;
     // An open menu or popover handles its own keys (arrows, Enter, [ and ] on the speed
     // track); only Esc goes on to close it.
     if (target && target.closest && target.closest('.pop') && e.key !== 'Escape') return;

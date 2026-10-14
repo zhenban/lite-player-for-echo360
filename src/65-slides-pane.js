@@ -23,6 +23,7 @@ class SlideReader {
     this.sample = -1;
     this.targets = new Map();   // name -> { stage, active, token }
     this.infoListeners = new Set();
+    this.lastInFile = new Map();   // page key prefix (a file) -> key of the page last shown in it
   }
 
   get deck() {
@@ -86,6 +87,35 @@ class SlideReader {
     this.showPage(clamp(this.currentView() + dir, 0, deck.pages.length - 1), true);
   }
 
+  // Shows another file (by hash): the page last shown in it, else its first page. Like
+  // paging by hand, this pauses following.
+  showFile(hash) {
+    const deck = this.deck;
+    if (!deck) return;
+    const prefix = pageKeyPrefix(hash);
+    const last = this.lastInFile.get(prefix);
+    let i = last ? deck.pages.findIndex((p) => p.key === last) : -1;
+    if (i < 0) i = deck.pages.findIndex((p) => p.key.startsWith(prefix));
+    if (i < 0) return;
+    this.follow = false;
+    this.showPage(i, true);
+  }
+
+  // The file shown now ({ hash, name }), or null.
+  shownFile() {
+    const deck = this.deck;
+    const p = deck && deck.pages[this.currentView()];
+    return p ? deck.files.find((f) => p.key.startsWith(pageKeyPrefix(f.hash))) || null : null;
+  }
+
+  // The file after the one shown (wrapping round), for the PDF view's file button.
+  nextFile() {
+    const deck = this.deck;
+    const cur = this.shownFile();
+    if (!deck || !cur || deck.files.length < 2) return null;
+    return deck.files[(deck.files.indexOf(cur) + 1) % deck.files.length];
+  }
+
   resumeFollow() {
     this.follow = true;
     this.update(this.player.video.currentTime, true);
@@ -112,6 +142,7 @@ class SlideReader {
     const changed = i !== this.view;
     this.view = i;
     this.viewKey = this.deck.pages[i].key;
+    this.lastInFile.set(pageKeyFile(this.viewKey), this.viewKey);
     if (changed || force) for (const tg of this.targets.values()) if (tg.active) this.drawInto(tg, i);
     this.info();
   }
@@ -144,13 +175,13 @@ class SlideReader {
     }).catch((e) => log.warn('render page:', e && e.message ? e.message : e));
   }
 
-  // "Page 5 of 21 (file)" for the page shown.
+  // "Page 5 of 21" for the page shown (of its file; the file's name is shown apart).
   label() {
     const deck = this.deck;
     const p = deck.pages[this.currentView()];
     if (!p) return '';
-    return tr('pageOfN', { n: p.num, total: deck.pages.filter((x) => x.file === p.file).length })
-      + (deck.files.length > 1 ? ' (' + p.file.replace(/\.pdf$/i, '') + ')' : '');
+    const prefix = pageKeyFile(p.key);
+    return tr('pageOfN', { n: p.num, total: deck.pages.filter((x) => x.key.startsWith(prefix)).length });
   }
 
   // The following line: following (sure / unsure / stale), or a button back to it.
@@ -176,6 +207,7 @@ class SlidesPane {
     this.d = disposer || new Disposer();   // owned by whoever created this (parent.child())
     this.reader = player.reader;
     this.d.add(() => this.reader.setActive('side', false));
+    this.fileBtns = [];          // the file names, as buttons (renderDeck)
     this.deckBox = el('div.sdeck');
     this.readerBox = el('div.reader', { hidden: true });
     this.status = el('div.sstatus', { 'aria-live': 'polite' });
@@ -255,8 +287,16 @@ class SlidesPane {
     // Failures are shown in this tab (deck.error).
     input.addEventListener('change', guard(() => { if (input.files.length) deck.addFiles(input.files).catch(() => {}); }));
     const files = el('div.sfiles');
+    // With several files, a name is a button that shows that file (renderPageInfo marks
+    // the one shown).
+    const several = deck.files.length > 1 && !!this.deck;
+    this.fileBtns = [];
     for (const f of deck.files) {
-      files.append(el('span.sfile', null, el('span.sfname', { text: f.name, title: f.name }),
+      const name = several
+        ? el('button.sfname', { text: f.name, title: tr('showFile', { name: f.name }), 'aria-pressed': 'false', onclick: () => this.reader.showFile(f.hash) })
+        : el('span.sfname', { text: f.name, title: f.name });
+      if (several) { name.dataset.hash = f.hash; this.fileBtns.push(name); }
+      files.append(el('span.sfile', null, name,
         el('button.sfremove', { title: tr('removeFile', { name: f.name }), 'aria-label': tr('removeFile', { name: f.name }), text: '✕', onclick: () => deck.removeFile(f.hash) })));
     }
     files.append(el('button.sfadd', { text: deck.files.length ? tr('addMoreSlides') : tr('addSlides'), onclick: () => input.click() }), input);
@@ -338,6 +378,8 @@ class SlidesPane {
     if (!p) return;
     this.pageLabel.textContent = rd.label();
     this.pageLabel.title = p.title || '';
+    const shown = rd.shownFile();
+    for (const b of this.fileBtns || []) setPressed(b, !!shown && b.dataset.hash === shown.hash);
     this.prevBtn.disabled = i <= 0;
     this.nextBtn.disabled = i >= deck.pages.length - 1;
     this.mainBtn.textContent = this.player.prefs.pdfMain ? tr('pdfMainClose') : tr('pdfMainOpen');

@@ -1,8 +1,9 @@
 // ===================================================================================
 // "Copy diagnostics": a plain-text summary to paste into a bug report. It names versions,
-// the state of each feature and recent warnings and errors. It never contains credentials,
-// cookies, addresses (all URLs are masked), user names, notes or discussion text; the user
-// sees the exact text before copying it.
+// the state of each feature and recent warnings and errors. It holds no credentials or
+// cookies; web and email addresses in the warnings are masked, and errors from Echo360 keep
+// only their status (ApiError), not the server's text. Other messages are kept as they
+// are, so the user sees the exact text before copying it.
 // ===================================================================================
 
 function browserName() {
@@ -13,7 +14,7 @@ function browserName() {
 }
 
 function maskUrls(s) {
-  return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
+  return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[^\s@<>()'",;:]+@[^\s@<>()'",;:]+\.[^\s@<>()'",;:]+/g, '<email>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
 }
 
 function diagnosticsText(p) {

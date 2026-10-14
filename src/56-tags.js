@@ -10,6 +10,13 @@
 
 const TAG_COLORS = ['#f6c343', '#6ea8ff', '#ff6b6b', '#4fd1a5', '#c084fc', '#fb923c', '#94a3b8', '#f472b6'];
 
+// Tags as stored may come from an old version or a restored backup: known fields only, and
+// a plain colour (anything else would be put into a style attribute).
+function cleanTags(list) {
+  return list.filter((g) => g && typeof g.id === 'string' && typeof g.name === 'string')
+    .map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) }));
+}
+
 // Several tabs can show recordings of the same course (or the same recording) at once, so
 // a change is never saved by writing this page's whole copy back: that would undo what
 // another tab saved meanwhile. Each change is an operation, applied to this page's copy at
@@ -36,7 +43,7 @@ class TagStore {
   async load() {
     const rec = await idbCache.get(this.courseKey);
     if (rec && Array.isArray(rec.tags)) {
-      this.tags = rec.tags;
+      this.tags = cleanTags(rec.tags);
     } else {
       // First use in this course: a few suggestions, which the user may delete (kept if
       // another tab has made the list meanwhile).
@@ -53,12 +60,12 @@ class TagStore {
   changeTags(op) {
     op(this.tags);
     idbCache.update(this.courseKey, (rec) => {
-      const tags = rec && Array.isArray(rec.tags) ? rec.tags : TagStore.defaults();
+      const tags = rec && Array.isArray(rec.tags) ? cleanTags(rec.tags) : TagStore.defaults();
       op(tags);
       return { tags };
     }).then((rec) => {
       // Redraw only if another tab's changes came along (else nothing new to show).
-      if (rec && Array.isArray(rec.tags) && JSON.stringify(rec.tags) !== JSON.stringify(this.tags)) { this.tags = rec.tags; this.onChange(); }
+      if (rec && Array.isArray(rec.tags) && JSON.stringify(rec.tags) !== JSON.stringify(this.tags)) { this.tags = cleanTags(rec.tags); this.onChange(); }
     }).catch((e) => log.warn('tags:', e));
   }
 
@@ -149,10 +156,17 @@ class TagStore {
   }
 }
 
+// A tag's colour dot (one style property, never a whole style attribute).
+function colorDot(color) {
+  const i = el('i');
+  i.style.backgroundColor = plainColor(color, TAG_FALLBACK_COLOR);
+  return i;
+}
+
 // A tag as a small coloured chip.
 function tagChip(tag, onclick) {
   const elem = el(onclick ? 'button.tagchip' : 'span.tagchip', { onclick: onclick || null, title: tag.name },
-    el('i', { style: 'background:' + tag.color }), el('span', { text: tag.name }));
+    colorDot(tag.color), el('span', { text: tag.name }));
   return elem;
 }
 
@@ -164,7 +178,7 @@ function tagPicker(tagStore, itemId, onDone) {
     for (const tag of tagStore.tags) {
       const on = tagStore.has(itemId, tag.id);
       box.append(el('button.tagopt' + (on ? '.on' : ''), { 'aria-pressed': String(on), onclick: () => { tagStore.toggle(itemId, tag.id); render(); } },
-        el('i', { style: 'background:' + tag.color }), el('span', { text: tag.name })));
+        colorDot(tag.color), el('span', { text: tag.name })));
     }
     const input = el('input.input.small', { placeholder: tr('newTag'), maxLength: 40, 'aria-label': tr('newTag') });
     input.addEventListener('keydown', (e) => {
@@ -189,7 +203,8 @@ function tagManager(tagStore, onClose) {
     box.textContent = '';
     box.append(el('div.pinfo', { text: tr('tagsPrivate') }));
     for (const tag of tagStore.tags) {
-      const swatch = el('button.tagswatch', { title: tr('tagColor'), 'aria-label': tr('tagColor'), style: 'background:' + tag.color });
+      const swatch = el('button.tagswatch', { title: tr('tagColor'), 'aria-label': tr('tagColor') });
+      swatch.style.backgroundColor = plainColor(tag.color, TAG_FALLBACK_COLOR);
       swatch.addEventListener('click', () => {
         const i = TAG_COLORS.indexOf(tag.color);
         tagStore.recolor(tag.id, TAG_COLORS[(i + 1) % TAG_COLORS.length]);

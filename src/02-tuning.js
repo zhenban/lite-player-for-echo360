@@ -27,6 +27,10 @@ const BG_START_DELAY_MS = 5000;        // before an analysis starts its download
 const CHAPTER_STEP_SEC = 10;
 const CHAPTER_PACE_MS = [300, 120];    // between keyframes (about 20 KB each)
 const CHAPTER_REFINE_PACE_MS = [1000, 300];   // between refinements (a whole segment each)
+// Most samples one media fragment may list. A 10 s segment at 60 fps has 600; a server
+// that claims more is refused before anything is allocated for it (a safety bound, not
+// a measurement: ten times a minute of 60 fps video in one fragment).
+const MP4_MAX_SAMPLES = 36000;
 // Frames are compared as brightness pictures this size: one pixel is a 2 x 2 block at
 // 360p, 8 x 8 at 720p, so a changed line of slide text changes several pixels.
 const THUMB_W = 160;
@@ -104,7 +108,15 @@ const SLIDE_MOVES = {
 const FOLLOW_MIN_SEC = 1.5 * CHAPTER_STEP_SEC;
 const FOLLOW_STALE_SEC = 120;          // after this long without a recognised page, the reader says so (a product choice)
 const FOLLOW_UPDATE_MS = 15000;        // while reading, pages are decided again at most this often (each run takes 0.1-1 s)
+// "Copy picture" on the PDF view: the page drawn this wide (a full HD screen's width:
+// sharp when pasted into notes, a few hundred KB as PNG).
+const PDF_COPY_WIDTH = 1920;
 const DECK_RENDER_BUDGET = 40e6;       // rendered pages kept, in pixels (about 160 MB at 4 bytes a pixel)
+// One rendered page at most: a page far taller or wider than a slide (a poster, a long
+// scroll) is drawn smaller rather than as one huge canvas. 8192 px is within every
+// browser's canvas limit; 16 M pixels is 64 MB, two 4096-wide 16:9 pages.
+const PAGE_RENDER_MAX_SIDE = 8192;
+const PAGE_RENDER_MAX_PX = 16e6;
 const PAGE_TITLE_TOP = 0.4;            // a page's title is the largest text in this top share of the page
 const PAGE_AR_DEFAULT = 9 / 16;        // height / width of a page not opened yet (slides are mostly 16:9)
 
@@ -182,6 +194,10 @@ const POP_MARGIN = 8;                  // px kept free at the edges of the playe
 const SHEET_BELOW = 600;               // player narrower than this (px, a phone held upright): popovers are bottom sheets
 const TIP_DELAY_MS = 500;              // hover time before a tooltip shows (a passing mouse shows none)
 const SPEED_SNAP = 0.06;               // a speed this close to a stop takes the stop (so a finger can hit 1.5x)
+// A bookmark this close to the playing moment (either side) is "here": the bookmark button
+// shows it as on, and a press removes it instead of adding another at nearly the same time
+// (a product choice: a bookmark marks a moment, two within seconds of each other are one).
+const BOOKMARK_NEAR_SEC = 5;
 const FLAG_CONFIRM_MS = 4000;          // "Didn't understand": time to press again to confirm
 const VOLUME_STEP = 0.05;              // one arrow key press or wheel step (common players use 5%)
 const VOLUME_WHEEL_PX = 50;            // wheel distance for one volume step; a single event counts at most this much, so

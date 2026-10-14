@@ -41,6 +41,18 @@ function parseIsoDuration(s) {
   return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
 }
 
+// A colour that is safe to put in a style: only "#rgb" or "#rrggbb" (stored or restored
+// values could otherwise carry other CSS declarations or url() requests); else fallback.
+const TAG_FALLBACK_COLOR = '#94a3b8';   // grey of the tag palette (56-tags.js)
+function plainColor(c, fallback) {
+  return typeof c === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : fallback;
+}
+
+async function sha256Hex(buf) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }

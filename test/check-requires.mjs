@@ -1,5 +1,8 @@
 // Every @require in src/meta.txt must carry a SHA-256 hash (#sha256-<base64>, checked by
-// Tampermonkey) that matches the file the CDN serves now. Needs the network (CI runs it).
+// Tampermonkey) that matches the file the CDN serves now, and so must every library file
+// loaded when first needed (LIB_SHA256 in src/04-libs.js, hex; the player checks these
+// itself). Needs the network
+// (CI runs it).
 //   npm run check-requires
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -17,4 +20,15 @@ for (const line of lines) {
   if (got !== want[1]) { console.error(url + ': hash ' + got + ', expected ' + want[1]); bad++; } else console.log('ok ' + url);
 }
 if (!lines.length) { console.error('no @require found'); bad++; }
+
+const libs = readFileSync(new URL('../src/04-libs.js', import.meta.url), 'utf8');
+const pinned = [...libs.matchAll(/^\s*'([^']+)': '([0-9a-f]{64})',$/gm)];
+if (!pinned.length) { console.error('no LIB_SHA256 entry found'); bad++; }
+for (const [, path, want] of pinned) {
+  const url = 'https://cdn.jsdelivr.net/npm/' + path;
+  const r = await fetch(url);
+  if (!r.ok) { console.error(url + ': HTTP ' + r.status); bad++; continue; }
+  const got = createHash('sha256').update(Buffer.from(await r.arrayBuffer())).digest('hex');
+  if (got !== want) { console.error(url + ': hash ' + got + ', expected ' + want); bad++; } else console.log('ok ' + url);
+}
 process.exit(bad ? 1 : 0);
