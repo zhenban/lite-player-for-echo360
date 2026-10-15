@@ -123,6 +123,16 @@ class LitePlayer {
     featureGuard('captions', () => this.loadCues());
     featureGuard('notes and discussion', () => this.loadInteractions());
     featureGuard('audio tools', () => this.setupAudio());
+    featureGuard('usage data', () => {
+      this.usage = new UsageSession({
+        root: this.root, video: this.video, videos: () => [this.video, this.fvideo], prefs: this.prefs,
+        layout: () => (this.pdfMode ? 'pdf' : this.layout),
+        slides: () => this.slides || null, deck: () => this.deck || null,
+        silence: () => (this.silence && this.silence.analyzer) || null, emptyScreen: () => this.emptyScreen,
+        session: () => this.session, duration: () => this.duration(),
+      }, this.d.child());
+      telemetry.envDaily();
+    });
 
     const start = this.pickStart();
     this.startAt = start;
@@ -574,7 +584,7 @@ class LitePlayer {
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
       canEmptyCamera: () => !!this.emptyScreen && this.dual,
-      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.video.currentTime); },
+      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.clock.position()); },
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
@@ -622,6 +632,7 @@ class LitePlayer {
       copyCaptions: () => this.menus.copyCaptions(),
       escape: () => {
         if (this.menus.diagnosticsOpen) this.menus.showDiagnostics(false);
+        else if (this.menus.myDataOpen) this.menus.showMyData(false);
         else if (this.keys.helpOpen) this.keys.showHelp(false);
         else if (this.pops.isOpen()) this.pops.close(true);
         else return false;
@@ -678,11 +689,14 @@ class LitePlayer {
       const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
       if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
       this.renderBookmarkButton();
-      if (this.silence) this.silence.tick(ct);
+      // Where playback is meant to be: while the start position loads, the element still
+      // says 0, and nothing may act on that moment (skip a silence, switch the layout).
+      const pos = this.clock.position();
+      if (this.silence) this.silence.tick(pos);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
       if (this.notes && this.notesReady) this.notes.update();
-      if (this.emptyScreen) this.emptyScreen.tick(ct);
+      if (this.emptyScreen) this.emptyScreen.tick(pos);
       if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
@@ -964,7 +978,7 @@ class LitePlayer {
       this.quality.apply();
       if (this.deck) this.deck.screenKnown();
     }
-    if (empty && this.emptyScreen) this.emptyScreen.tick(this.video.currentTime);
+    if (empty && this.emptyScreen) this.emptyScreen.tick(this.clock.position());
     this.renderChapterMarks();
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.

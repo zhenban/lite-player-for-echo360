@@ -70,6 +70,7 @@ const featureErrors = { notify: null, seen: new Set() };
 
 function reportUnexpected(err) {
   console.error(TAG, 'unexpected error', err);
+  try { telemetry.error('player core', err); } catch (e) { /* not counted */ }
   const h = unexpected.handler;
   unexpected.handler = null;
   if (h) { try { h(err); } catch (e) { /* ignore */ } }
@@ -79,6 +80,7 @@ function reportFeatureError(name, err) {
   const what = name || 'player';
   console.error(TAG, 'error in ' + what + ':', err);
   logEvent('error', what + ': ' + ((err && err.message) || err));
+  try { telemetry.error(what, err); } catch (e) { /* not counted */ }
   if (featureErrors.seen.has(what)) return;
   featureErrors.seen.add(what);
   if (featureErrors.notify) { try { featureErrors.notify(what, err); } catch (e) { /* ignore */ } }

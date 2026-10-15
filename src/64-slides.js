@@ -595,6 +595,7 @@ class SlideAnalyzer {
     this.guessScreen = null;
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
     this.manualScreen = null;   // the view the user chose, if any
+    this.took = null;           // ms the whole analysis took in this visit (usage data; null: from the cache)
     this.reader = null;
     this.urls = [];
     this.d.add(() => { for (const u of this.urls) URL.revokeObjectURL(u); this.urlOf = null; });
@@ -661,6 +662,7 @@ class SlideAnalyzer {
     // Data Saver: no downloads at all (finding the screen view already reads keyframes or
     // preview pictures); only a stored result is used.
     if (saveDataOn()) { this.reason = 'saveData'; this.state = 'unavailable'; this.onChange(); return; }
+    const t0 = performance.now();
     // Which view is the screen is needed early (quality settings are per view).
     const screen = await this.findScreen(signal);
     if (signal.aborted) return;
@@ -675,6 +677,7 @@ class SlideAnalyzer {
       return;
     }
     await this.fromKeyframes(screen.source, signal, gate, screen.reader);
+    if (!signal.aborted && this.state === 'done') this.took = Math.round(performance.now() - t0);
     if (!signal.aborted) this.save(key);
   }
 

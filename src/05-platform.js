@@ -14,12 +14,18 @@
 //   - Hls: hls.js (the userscript manager loads it through @require)
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
+//   - post: send JSON to the telemetry Worker (87-telemetry.js)
+//   - privateKv: values kept out of the page's reach (the telemetry secret)
+//   - page: the page's own window, for traps on the page's globals (window.Echo)
 // ===================================================================================
 
 const libBlobUrls = new Map();   // path -> Promise of a blob URL (platform.libBlobUrl)
 
 const platform = {
   name: 'userscript',
+  // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
+  // wrapper as `window`: a property defined on it is not seen by the page's scripts.
+  page: typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window,
   kv: {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
@@ -68,6 +74,43 @@ const platform = {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  },
+  // POSTs a JSON text; resolves to { status, text } (status 0: no answer), never rejects.
+  // keepalive: the page is closing (the request must outlive it; GM_xmlhttpRequest is made
+  // by the extension and does anyway).
+  // A userscript uses GM_xmlhttpRequest: no cookies are sent, and the page's content
+  // security policy does not apply (it allows only the page's own servers); @connect in
+  // meta.txt names the one host it may reach. Without it (a development build injected
+  // into the page), fetch.
+  post(url, body, timeoutMs, keepalive) {
+    return new Promise((resolve) => {
+      const done = (status, text) => resolve({ status, text: typeof text === 'string' ? text : '' });
+      try {
+        if (typeof GM_xmlhttpRequest === 'function') {
+          GM_xmlhttpRequest({
+            method: 'POST', url, data: body, headers: { 'Content-Type': 'application/json' }, anonymous: true, timeout: timeoutMs,
+            onload: (r) => done(r.status, r.responseText), onerror: () => done(0), ontimeout: () => done(0), onabort: () => done(0),
+          });
+          return;
+        }
+        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : AbortSignal.timeout(timeoutMs) })
+          .then((r) => r.text().then((t) => done(r.status, t)), () => done(0));
+      } catch (e) {
+        done(0);
+      }
+    });
+  },
+  // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
+  // it; without one, the page's storage like the settings.
+  privateKv: {
+    get(name) {
+      try { if (typeof GM_getValue === 'function') { const v = GM_getValue(name, null); return typeof v === 'string' ? v : null; } } catch (e) { return null; }
+      try { return localStorage.getItem(NS + name); } catch (e) { return null; }
+    },
+    set(name, text) {
+      try { if (typeof GM_setValue === 'function') { GM_setValue(name, text); return; } } catch (e) { return; }
+      try { localStorage.setItem(NS + name, text); } catch (e) { /* storage blocked: a new secret next time */ }
+    },
   },
   manager() {
     try {

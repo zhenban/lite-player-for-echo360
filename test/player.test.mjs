@@ -30,9 +30,25 @@ function fakeHls(log) {
   return FakeHls;
 }
 
+// What Tampermonkey and Violentmonkey give a script with any @grant other than none: a
+// `window` that reads through to the page but keeps what is written or defined on it to
+// itself, and the page's own window as `unsafeWindow`.
+function managerWindow(w) {
+  return new Proxy({}, {
+    get(t, k) {
+      if (Reflect.has(t, k)) return t[k];
+      const v = w[k];
+      return typeof v === 'function' && typeof k === 'string' && /^[a-z]/.test(k) ? v.bind(w) : v;
+    },
+    set(t, k, v) { t[k] = v; return true; },
+    has(t, k) { return Reflect.has(t, k) || k in w; },
+  });
+}
+
 // A lesson page with the userscript loaded and debug on (so the player is reachable).
 // Timers are counted: every interval and timeout set by the page and not yet cleared.
-function page() {
+// granted: run as a userscript manager runs a script with @grant (managerWindow).
+function page({ granted = false } = {}) {
   const w = new Window({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   const hlsLog = [];
   w.Hls = fakeHls(hlsLog);
@@ -46,7 +62,12 @@ function page() {
   w.clearInterval = (id) => { intervals.delete(id); realClearInterval(id); };
   w.navigator.mediaSession && (w.navigator.mediaSession.setActionHandler ||= () => {});
   w.document.body.innerHTML = '<div id="echo-player-root"></div>';
-  w.eval(script);
+  if (granted) {
+    w.__managerWindow = managerWindow(w);
+    w.eval('(function (window, unsafeWindow) {\n' + script + '\n})(__managerWindow, this);');
+  } else {
+    w.eval(script);
+  }
   let originalArg = null;
   // The page's own player, as the page defines it, and its inline start-up call.
   const start = () => {
@@ -339,6 +360,65 @@ test('an automatic message waits for the one shown, replaces its own, and is dro
     assert.equal(text(), null, 'a message that is no longer true is not shown');
   } finally {
     p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});
+
+test('the camera is not shown for an empty screen at 0:00 while the player is on its way to the resume point', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  try {
+    assert.ok(p.dual && p.emptyScreen, 'two views');
+    // Loading at the resume point (2000 s); the element still says 0. The recording starts
+    // with five empty minutes.
+    p.clock.starting = { at: 2000, play: false };
+    p.slides.screenIndex = p.sources[0].index;
+    p.slides.uniform = [{ start: 0, end: 300 }];
+    p.onSlidesChange();
+    p.video.dispatchEvent(new pg.w.Event('timeupdate'));
+    assert.equal(p.emptyScreen.on, false, 'no switch for a moment that is not played');
+    // Once playback is in the empty stretch, it switches.
+    p.clock.starting = { at: 100, play: false };
+    p.video.dispatchEvent(new pg.w.Event('timeupdate'));
+    assert.equal(p.emptyScreen.on, true);
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});
+
+test('a silence at 0:00 is not skipped automatically while the player is on its way to the resume point', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  try {
+    const seeks = [];
+    p.seek = (t) => seeks.push(t);
+    p.prefs.silence.auto = true;
+    p.silence.skips = [{ start: 0, end: 100, kind: 'silence' }];
+    p.silence.idx = -1;
+    p.clock.starting = { at: 2000, play: true };
+    p.video.dispatchEvent(new pg.w.Event('timeupdate'));
+    assert.deepEqual(seeks, [], 'the resume point is kept');
+  } finally {
+    p.destroy();
+    await pg.w.happyDOM.abort();
+    pg.w.close();
+  }
+});
+
+test('with @grant (a wrapped window), the player still catches the page\'s own start-up call', async () => {
+  const pg = page({ granted: true });
+  try {
+    pg.start();
+    assert.equal(pg.original(), null, 'the original player was not started');
+    assert.ok(pg.player() && pg.player().video, 'the player took over');
+    assert.ok(!Object.hasOwn(pg.w.__managerWindow, 'Echo'), 'the trap is on the page, not on the wrapper');
+  } finally {
+    if (pg.player()) pg.player().destroy();
     await pg.w.happyDOM.abort();
     pg.w.close();
   }

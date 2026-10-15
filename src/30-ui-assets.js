@@ -109,10 +109,12 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
 .pbtn:hover { background: var(--fill-2); }
 .pbtn.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .pbtn:disabled { color: var(--text-3); cursor: default; }
+@media (pointer: coarse) { .pbtn { min-height: 44px; min-width: 44px; } }
 .link { font-size: 12px; color: var(--text-2); padding: 2px 0; }
 .link:hover { color: var(--text); text-decoration: underline; }
 .link.on { color: var(--accent); }
 .link.danger:hover { color: var(--danger); }
+@media (pointer: coarse) { .link { min-height: 44px; min-width: 44px; text-align: start; } }
 
 /* ---- title bar and control bar over the picture ---- */
 .top, .bottom { position: absolute; left: 0; right: 0; transition: opacity var(--t) var(--ease); }
@@ -332,7 +334,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .stage:has(.bottom.compact) .captions { bottom: 132px; }
 
 /* ---- dialogs (shortcuts, diagnostics, errors) ---- */
-.keyhelp, .diagbox, .error { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; background: var(--backdrop); }
+.keyhelp, .diagbox, .tdbox, .error { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; background: var(--backdrop); }
 .dialog { max-width: min(640px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 20px var(--sp6); border-radius: var(--r3);
   background: var(--s2); color: var(--text); box-shadow: var(--shadow); }
 .dialog h2 { margin: 0 0 var(--sp3); font-size: 16px; font-weight: 600; }
@@ -343,6 +345,15 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .khlist kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; margin-right: var(--sp1); border-radius: var(--r1); text-align: center;
   background: var(--fill); box-shadow: inset 0 -1px 0 var(--line); font: 600 12px/1.6 inherit; font-family: inherit; }
 .diaginfo { margin: 0 0 10px; font-size: 13px; }
+/* Usage data: one table per kind, scrolling inside the dialog (never the page). */
+.tdbody { margin-bottom: var(--sp4); font-size: 13px; color: var(--text-2); }
+.tdbody h3 { margin: var(--sp4) 0 var(--sp2); font-size: 13px; font-weight: 600; color: var(--text); }
+.tdbody h3:first-child { margin-top: 0; }
+.tdscroll { max-height: 40vh; overflow: auto; border-radius: var(--r2); background: var(--s1); }
+.tdscroll table { border-collapse: collapse; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
+.tdscroll th, .tdscroll td { padding: 4px var(--sp2); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.tdscroll th { position: sticky; top: 0; background: var(--s1); font-weight: 600; }
+.pbtn.danger { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
 .diagtext { max-height: 50vh; overflow: auto; margin: 0 0 var(--sp4); padding: 10px var(--sp3); border-radius: var(--r2); background: var(--s1);
   font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
 
@@ -464,6 +475,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
   color: inherit; font: inherit; font-size: 13px; line-height: 1.45; resize: vertical; }
 .input:focus { border-color: var(--accent); }
 .input.small { width: auto; padding: var(--sp1) var(--sp2); }
+@media (pointer: coarse) { .input.small { min-height: 44px; } }
 select.input option { background: var(--s1); color: var(--text); }
 .crow, .ptools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .ptools { margin-bottom: 10px; }
@@ -660,6 +672,8 @@ function playerTemplate() {
   <div class="diagbox" hidden><div class="dialog" role="dialog" aria-label="${tr('diagTitle')}"><h2>${tr('diagTitle')}</h2>
     <p class="diaginfo">${tr('diagInfo')}</p><pre class="diagtext"></pre>
     <div class="actions"><button class="pbtn diagcopy">${tr('diagCopy')}</button><button class="pbtn diagclose">${tr('close')}</button></div></div></div>
+  <div class="tdbox" hidden><div class="dialog" role="dialog" aria-labelledby="tdtitle"><h2 class="tdtitle" id="tdtitle"></h2><div class="tdbody"></div>
+    <div class="actions tdactions"></div></div></div>
 </div>
 <aside class="panel" hidden aria-label="${tr('sidebarTabs')}">
   <div class="presize" title="${tr('resizePanel')}"></div>

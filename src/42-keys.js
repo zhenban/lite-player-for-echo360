@@ -76,6 +76,7 @@ class KeyboardShortcuts {
     const [name, arg] = entry;
     const fn = name === 'help' ? () => this.showHelp(this.x.$('.keyhelp').hidden) : this.x.actions[name];
     if (!fn || fn(arg, e) === false) return;
+    telemetry.use(KEY_FEATURES[name], 'key');
     e.preventDefault();
     e.stopPropagation();
     this.x.wake();

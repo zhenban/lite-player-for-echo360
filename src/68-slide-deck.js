@@ -133,6 +133,7 @@ class SlideDeckController {
     this.decidedAt = 0;
     this.deciding = null;
     this.state = 'empty';     // empty | loading | reading | ready | error
+    this.corrections = 0;     // pages corrected by hand in this visit (usage data)
     this.error = '';
     this.job = null;
     this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
@@ -191,6 +192,7 @@ class SlideDeckController {
   async addFiles(fileList) {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
+    telemetry.use('pdfAdd');
     const added = [];
     for (const f of pdfs) {
       const buf = await f.arrayBuffer();
@@ -508,6 +510,7 @@ class SlideDeckController {
   // The user's correction for the part playing at time t: a page index, 'none' (not a
   // slide) or null (back to automatic).
   correct(t, value) {
+    this.corrections++;
     if (value === null) {
       this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
     } else {

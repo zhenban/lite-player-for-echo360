@@ -75,7 +75,7 @@ class QualityController {
       const heights = (this.levelsByRole[role] || []).slice().sort((a, b) => b - a);
       const opts = [['auto', tr('qualityAutoBest')]].concat(heights.map((hh) => [hh, hh + 'p']));
       for (const [val, label] of opts) {
-        items.push({ kind: 'radio', label, checked: () => x.prefs.quality[role] === val, select: () => this.set(role, val) });
+        items.push({ kind: 'radio', label, checked: () => x.prefs.quality[role] === val, select: () => { telemetry.use('quality', 'click'); this.set(role, val); } });
       }
     }
     return items;

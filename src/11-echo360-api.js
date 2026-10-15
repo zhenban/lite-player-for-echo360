@@ -94,7 +94,7 @@ class Echo360Api {
     requireGesture(ev);
     if (this.dryRun === 'all' || (this.dryRun === 'public' && visibility === 'public')) {
       const rec = { method, url: new URL(path, location.origin).href, body: body === undefined ? null : JSON.stringify(body), visibility };
-      (window.__litePlayerForEcho360DryRun = window.__litePlayerForEcho360DryRun || []).push(rec);
+      (platform.page.__litePlayerForEcho360DryRun = platform.page.__litePlayerForEcho360DryRun || []).push(rec);
       log.info('DRY RUN (not sent):', method, rec.url, rec.body || '');
       return Promise.resolve(dryRunResult(method, path, body));
     }

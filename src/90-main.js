@@ -28,6 +28,8 @@
 
   adapter.intercept((arg, callOriginal) => {
     booted = true;
+    // Why the page goes to the original player (usage data): the player's reasons.
+    const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
     if (store.get('forceOriginal', false)) {
       startOriginal(callOriginal, arg, null);
       return undefined;
@@ -41,15 +43,17 @@
         api: adapter.api ? (l) => adapter.api(l) : null,
         onFallback(reason) {
           log.info('switching to the original player (' + reason + ')');
+          telemetry.fallback(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
           try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
           startOriginal(callOriginal, handoff, null);
         },
       });
-      if (store.get('debug', false)) { window.__litePlayerForEcho360 = player; window.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold }; } // development only
+      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv }; } // development only
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
+        telemetry.fallback('coreError');
         let handoff = arg;
         try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
         startOriginal(callOriginal, handoff, tr('errorNotice'));
@@ -58,6 +62,7 @@
         + (lesson.analytics ? 'on' : 'off') + ')');
     } catch (e) {
       log.warn('could not start, using the original player:', e);
+      try { telemetry.fallback(canPlayHls() ? 'startFailed' : 'noHls'); } catch (err) { /* not sent */ }
       startOriginal(callOriginal, arg, tr('fallbackNotice'));
     }
     return undefined;
@@ -73,6 +78,7 @@
       if (booted) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
       log.info('player bootstrap not seen; leaving the original player in place');
+      telemetry.fallback('noBootstrap');
       cpuFix.start();
       notice(tr('fallbackNotice'));
     };

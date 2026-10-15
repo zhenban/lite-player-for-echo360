@@ -1,0 +1,15 @@
+{
+  "name": "lite-player-telemetry-worker",
+  "private": true,
+  "description": "Receives the anonymous usage data of Lite Player for Echo360 (Cloudflare Workers + D1).",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "migrate": "wrangler d1 migrations apply telemetry --remote",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "4.146.0"
+  }
+}

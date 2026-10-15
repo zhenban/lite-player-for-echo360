@@ -10,7 +10,12 @@
 // @match        https://echo360.net.au/section/*/home
 // @require      https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js#sha256-oS5+4c1kpp3NsxQVfkXa/LpwW/sLFEC3k1yyZdN0Qj4=
 // @run-at       document-start
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
+// @connect      lite-player-telemetry.zhenban.workers.dev
+// @antifeature  tracking Anonymous usage data (performance, features used, errors; no names, recordings or content), on by default; Settings > Usage data turns it off, shows it or deletes it
 // @inject-into  page
 // @sandbox      raw
 // ==/UserScript==

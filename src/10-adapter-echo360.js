@@ -67,8 +67,10 @@ const echo360ClassroomAdapter = {
       });
     }
 
-    let echo = wrap(window.Echo || {});
-    Object.defineProperty(window, 'Echo', {
+    // On the page's own window: the inline bootstrap reads the page's global.
+    const page = platform.page;
+    let echo = wrap(page.Echo || {});
+    Object.defineProperty(page, 'Echo', {
       configurable: true,
       enumerable: true,
       get() { return echo; },

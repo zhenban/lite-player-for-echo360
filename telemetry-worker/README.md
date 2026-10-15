@@ -1,0 +1,84 @@
+# Telemetry Worker
+
+Receives the anonymous usage data of Lite Player for Echo360 (what is collected and why: the
+"Anonymous usage data" section of the main README). Cloudflare Workers + D1. This directory
+holds no secrets.
+
+- `src/index.js`: the endpoints (all `POST`, JSON body):
+  - `/v1/events` `{ uid, events: [...] }` stores events (at most 25 per request, 16 KB);
+  - `/v1/me` `{ uid, secret }` returns everything stored for that user;
+  - `/v1/me/delete` `{ uid, secret }` deletes it.
+
+  `uid` must equal SHA-256 of `secret` (hex). The secret is only hashed, never stored.
+- `src/schema.js` lists the fields kept per kind of event (`env`, `session`, `error`, `fallback`)
+  with their checks. Unknown fields are dropped, and invalid values are stored as NULL. The
+  main repository's `test/telemetry.test.mjs` runs the Worker against SQLite and checks that
+  the player sends only listed fields.
+- `migrations/` holds the tables and indexes (uid, time, version).
+- `queries/` holds the usual questions, see below.
+
+Nothing is logged. The Worker writes nothing to the console, and `observability` is off in
+`wrangler.toml`. The sender's address is used only as the key of the rate limits (30
+requests a minute for events, 5 for viewing and deleting). Country, region and network
+provider come from Cloudflare's `request.cf` and are stored with each row.
+
+## Wrangler's own usage statistics
+
+Wrangler sends Cloudflare statistics about how it is used unless told not to. `.env` in this
+directory sets `WRANGLER_SEND_METRICS=false`, and wrangler reads it whenever it runs here
+(`npx wrangler telemetry status` shows "Disabled (set by WRANGLER_SEND_METRICS)"). Running
+wrangler from another directory needs the variable set in the shell:
+
+```sh
+export WRANGLER_SEND_METRICS=false
+```
+
+## Deploying
+
+```sh
+cd telemetry-worker
+npm install
+npx wrangler login
+npx wrangler d1 create telemetry      # once; put the database_id it prints into wrangler.toml
+npm run migrate                       # applies migrations/ to the remote database
+npm run deploy                        # prints the workers.dev address
+```
+
+The player sends to `TELEMETRY_URL` in `src/87-telemetry.js`, and `@connect` in
+`src/meta.txt` must name the same host (the build checks this).
+
+## Queries
+
+```sh
+npx wrangler d1 execute telemetry --remote --command="$(cat queries/active-users.sql)"
+```
+
+(`--file` runs the file but prints only a summary, not the rows.)
+
+| File | Answers |
+|---|---|
+| `active-users.sql` | active users per day and week |
+| `versions-browsers.sql` | script versions, browsers, systems, script managers, desktop/touch |
+| `regions.sql` | countries, regions, network providers |
+| `performance.sql` | load per version: median and 90th percentile of long tasks, dropped frames, memory, first picture, rebuffering, analysis times |
+| `errors.sql` | most frequent errors |
+| `fallbacks.sql` | why pages went to the original player, with Echo360 front-end versions |
+| `features.sql` | share of users using each feature |
+| `changed-defaults.sql` | share of users who changed each setting |
+| `webgpu.sql` | WebGPU, WebCodecs and built-in AI availability by browser |
+| `algorithms.sql` | screen detection, chapters per hour, PDF follower, corrections, layout undos, access renewals |
+| `check-columns.sql` | the columns of every table (only the listed fields exist) |
+
+## Deleting one user's data
+
+Users delete their own data from the player (Settings > Usage data). If someone sends their
+uid (for example from the downloaded JSON) and asks for deletion by other means:
+
+```sh
+UID=<64 hex characters>
+for t in env sessions errors fallbacks; do
+  npx wrangler d1 execute telemetry --remote --command "DELETE FROM $t WHERE uid = '$UID'"
+done
+```
+
+Check that the value is exactly 64 hexadecimal characters before running it.

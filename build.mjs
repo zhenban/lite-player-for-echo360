@@ -37,7 +37,7 @@ export function assemble() {
   // What depends on how the player is run goes through `platform` (05-platform.js), so that
   // an extension can provide its own. Echo360's own sign-in token lives in the page's
   // storage whatever runs the player, so the reporter reads it there.
-  const PLATFORM_ONLY = [[/\blocalStorage\b/, 'localStorage'], [/\bindexedDB\b/, 'indexedDB'], [/\bimport\(/, 'import()'], [/\bGM_\w+/, 'GM_ functions'], [/(?<![.\w])Hls\b/, 'Hls']];
+  const PLATFORM_ONLY = [[/\blocalStorage\b/, 'localStorage'], [/\bindexedDB\b/, 'indexedDB'], [/\bimport\(/, 'import()'], [/\bGM_\w+/, 'GM_ functions'], [/\bunsafeWindow\b/, 'unsafeWindow'], [/(?<![.\w])Hls\b/, 'Hls']];
   const PLATFORM_ALLOWED = { '05-platform.js': /./, '20-reporter.js': /^localStorage$/ };
   for (const f of files) {
     readFileSync(join(srcDir, f), 'utf8').split('\n').forEach((line, i) => {
@@ -54,6 +54,13 @@ export function assemble() {
   const sites = JSON.parse(/const SITE_HOSTS = (\[[^\]]*\]);/.exec(readFileSync(join(srcDir, '03-common.js'), 'utf8'))[1].replace(/'/g, '"')).sort();
   if (JSON.stringify(matched) !== JSON.stringify(sites)) {
     console.error('meta.txt @match hosts ' + matched.join(', ') + ' differ from SITE_HOSTS ' + sites.join(', '));
+    return null;
+  }
+  // The one host the script sends to (@connect) is the telemetry Worker's.
+  const connect = [...meta.matchAll(/^\/\/ @connect\s+(\S+)$/gm)].map((m) => m[1]);
+  const worker = /const TELEMETRY_URL = 'https:\/\/([^/']+)'/.exec(readFileSync(join(srcDir, '87-telemetry.js'), 'utf8'));
+  if (!worker || connect.length !== 1 || connect[0] !== worker[1]) {
+    console.error('meta.txt @connect (' + connect.join(', ') + ') must be exactly the host of TELEMETRY_URL (' + (worker ? worker[1] : 'not found') + ')');
     return null;
   }
   const out = `${meta}

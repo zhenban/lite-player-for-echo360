@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+New:
+- **Anonymous usage data, on by default.** The player sends a short summary of each viewing (how smooth playback was, which features were used, how well the slide and silence analyses worked), errors with names, addresses and numbers removed, and once a day the browser and computer type. It never sends your name, school account, recordings, notes, discussion, transcripts or files, and your address is not stored. Settings → Usage data turns it off at once, shows everything stored for you (and downloads it), deletes it, or gives you a new ID. Details are in the README under "Anonymous usage data". Because of this, the script now asks the script manager for permission to connect to one server (lite-player-telemetry.zhenban.workers.dev).
+
+Fixes:
+- A recording that opens at your resume point no longer switches to the camera and back ("back to your layout") on the way, when it starts with an empty screen. (Since 0.21.0.)
+- With automatic silence skipping on, a recording that starts with silence no longer skips from 0:00 and loses your resume point.
+- On touch screens, the buttons in dialogs and panels (Close, Add note, Retry…), the small text buttons (Like, Reply, Manage tags…) and the small drop-down lists are now at least 44 px high, so they are easier to tap. Before, they were 21 to 32 px.
+
 ## 0.21.0
 New:
 - **Camera only while the screen is empty.** When the screen view shows nothing for a long stretch (a blackboard lecture with the projector off, a black screen at the end), the player shows the camera alone and goes back to your layout when the screen has a picture again. A recording whose screen is empty throughout opens with the camera. A short message says so each time, with Undo. Short black moments are ignored, so the layout does not jump back and forth. Once you choose a layout yourself in a recording, it is not switched again in that recording. Turn it off in ⋮ → Layout. It starts once the recording's slide analysis has run (at once for a recording opened before).

@@ -228,3 +228,14 @@ const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
+
+// ---- anonymous usage data (87-telemetry.js) ----
+// Product choices, not measurements: few small requests, nothing while the page is in the
+// background or offline, nothing that waits long.
+const TELEMETRY_SAMPLE_MS = 15000;     // dropped frames and memory read this often while visible (two property reads)
+const TELEMETRY_ERROR_WAIT_MS = 60000; // errors are collected this long and sent together (one request, not one each)
+const TELEMETRY_MAX_ERRORS = 20;       // different errors kept per page; more are not sent (a loop cannot flood)
+const TELEMETRY_RETRY_MS = [30000, 120000];   // waits before the two retries of a request that got no answer or a server error
+const TELEMETRY_TIMEOUT_MS = 15000;    // one request
+const TELEMETRY_MIN_OPEN_SEC = 5;      // a viewing open shorter than this is not reported (a page passed through)
+const TELEMETRY_ENV_DELAY_MS = 30000;  // the environment (once a day) is read this long after start, once playback has settled

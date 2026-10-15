@@ -1,0 +1,160 @@
+// What the Worker accepts and stores: one list of fields per kind of event. Each field
+// names its database column and a check; a value that fails the check is stored as NULL,
+// and fields that are not listed are dropped. The player builds its events from the same
+// lists (test/telemetry.test.mjs in the main repository checks that every field it sends is
+// listed here).
+//
+// Kinds:
+//   env       the computer and browser, at most once a day per user
+//   session   one viewing of a recording, summed up when it ends or the page is hidden
+//   error     a feature that failed (feature, error type, a message without addresses,
+//             numbers or names)
+//   fallback  the page went to the original player, and why
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const SID = /^[0-9a-f]{16}$/;
+const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+const int = (lo, hi) => (v) => (Number.isInteger(v) && v >= lo && v <= hi ? v : null);
+const num = (lo, hi) => (v) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? Math.round(v * 1000) / 1000 : null);
+const bool = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : null);
+const text = (re, max) => (v) => (typeof v === 'string' && v.length <= max && re.test(v) ? v : null);
+const oneOf = (list) => (v) => (list.includes(v) ? v : null);
+
+// Features whose use is counted (the player's feature ids, 87-telemetry.js).
+export const FEATURES = [
+  'play', 'seek', 'seekbar', 'chapter', 'volume', 'mute', 'fullscreen', 'swap', 'layout', 'speed',
+  'captions', 'transcript', 'bookmark', 'flag', 'tag', 'notes', 'discussion', 'slides', 'copyFrame',
+  'copyCaptions', 'zoom', 'loop', 'popout', 'exportNotes', 'help', 'pdfAdd', 'pdfTurn', 'pdfFix',
+  'silenceSkip', 'quality', 'settings', 'original', 'diagnostics', 'backup', 'theme', 'language',
+];
+// Settings whose change from the default is reported (names only, never values).
+export const PREFS = [
+  'primary', 'layout', 'ratio', 'pipw', 'corner', 'rate', 'volume', 'muted', 'captions', 'capSize',
+  'capHidePaused', 'panel', 'tab', 'panelw', 'audio.level', 'audio.voice', 'audio.mono', 'silence.auto',
+  'silence.min', 'silence.sens', 'copySpan', 'pdfMain', 'pdfFirst', 'emptyCamera', 'quality.screen',
+  'quality.camera', 'theme', 'lang',
+];
+export const FALLBACK_REASONS = ['startFailed', 'noHls', 'noBootstrap', 'coreError', 'playbackError', 'auth', 'user', 'extras', 'attachment'];
+
+// { name: count } with known names and whole counts only.
+const counts = (names) => (v) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out = {};
+  for (const [k, n] of Object.entries(v)) if (names.includes(k) && Number.isInteger(n) && n > 0 && n <= 100000) out[k] = n;
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+};
+// A list of known names.
+const names = (list) => (v) => {
+  if (!Array.isArray(v) || v.length > list.length) return null;
+  const out = [...new Set(v.filter((x) => list.includes(x)))].sort();
+  return JSON.stringify(out);
+};
+
+// An error message with nothing that could point at a person or a recording: addresses,
+// e-mail addresses, quoted text, long hexadecimal or numeric ids and other numbers are
+// replaced. Done by the player before sending and again here.
+export function plainMessage(s) {
+  if (typeof s !== 'string') return null;
+  const out = s
+    .replace(/[a-z][\w+.-]*:\/\/\S+/gi, '<url>')
+    .replace(/\S+@\S+/g, '<email>')
+    .replace(/(["'`‘“])[^"'`’”]*["'`’”]/g, '<text>')
+    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]{9,}/gi, '<id>')
+    .replace(/\d+(\.\d+)?/g, '#')
+    .replace(/[^\x20-\x7e]/g, '?')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+  return out || null;
+}
+
+// [field in the event, column, check]
+export const KINDS = {
+  env: [
+    ['v', 'version', text(VERSION, 11)],
+    ['browser', 'browser', oneOf(['Chrome', 'Edge', 'Firefox', 'Safari', 'Opera', 'other'])],
+    ['browserV', 'browser_v', int(1, 999)],
+    ['os', 'os', oneOf(['Windows', 'macOS', 'Linux', 'ChromeOS', 'Android', 'iOS', 'other'])],
+    ['manager', 'manager', oneOf(['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'other', 'none'])],
+    ['managerV', 'manager_v', text(/^[\w.-]+$/, 20)],
+    ['lang', 'lang', text(/^[a-z]{2}$/, 2)],
+    ['browserLang', 'browser_lang', text(/^[a-z]{2,3}$/, 3)],
+    ['touch', 'touch', bool],
+    ['screenW', 'screen_w', int(1, 20000)],
+    ['screenH', 'screen_h', int(1, 20000)],
+    ['dpr', 'dpr', num(0.25, 10)],
+    ['cores', 'cores', int(1, 1024)],
+    ['memGb', 'mem_gb', num(0, 1024)],
+    ['gpu', 'gpu', text(/^[\x20-\x7e]+$/, 120)],
+    ['webgpu', 'webgpu', bool],
+    ['webcodecs', 'webcodecs', bool],
+    ['builtinAi', 'builtin_ai', bool],
+    ['netType', 'net_type', oneOf(['slow-2g', '2g', '3g', '4g'])],
+    ['downlink', 'downlink', num(0, 100000)],
+  ],
+  session: [
+    ['sid', 'sid', text(SID, 16)],
+    ['v', 'version', text(VERSION, 11)],
+    ['playSec', 'play_sec', int(0, 86400)],
+    ['openSec', 'open_sec', int(0, 7 * 86400)],
+    ['longTasksPerMin', 'long_tasks_pm', num(0, 10000)],
+    ['droppedPct', 'dropped_pct', num(0, 100)],
+    ['heapMb', 'heap_mb', num(0, 1000000)],
+    ['firstFrameMs', 'first_frame_ms', int(0, 3600000)],
+    ['rebufferN', 'rebuffer_n', int(0, 100000)],
+    ['rebufferSec', 'rebuffer_sec', num(0, 86400)],
+    ['scanMs', 'scan_ms', int(0, 86400000)],
+    ['ocrFrameMs', 'ocr_frame_ms', num(0, 600000)],
+    ['silenceMs', 'silence_ms', int(0, 86400000)],
+    ['speed', 'speed', num(0.25, 4)],
+    ['layout', 'layout', oneOf(['side', 'pip', 'single', 'pdf'])],
+    ['keys', 'keys', int(0, 1000000)],
+    ['clicks', 'clicks', int(0, 1000000)],
+    ['features', 'features', counts(FEATURES)],
+    ['changed', 'changed', names(PREFS)],
+    ['screen', 'screen', oneOf(['sure', 'guess', 'manual', 'none'])],
+    ['chaptersPerHour', 'chapters_ph', num(0, 3600)],
+    ['pdfUnrecPct', 'pdf_unrec_pct', num(0, 100)],
+    ['pageFixes', 'page_fixes', int(0, 100000)],
+    ['layoutUndos', 'layout_undos', int(0, 100000)],
+    ['renewOk', 'renew_ok', int(0, 100000)],
+    ['renewFail', 'renew_fail', int(0, 100000)],
+    ['frontend', 'frontend', text(/^[\w.,-]+$/, 160)],
+  ],
+  error: [
+    ['v', 'version', text(VERSION, 11)],
+    ['feature', 'feature', text(/^[a-z][a-z ()-]*$/, 40)],
+    ['type', 'type', text(/^[A-Za-z]\w*$/, 40)],
+    ['msg', 'msg', plainMessage],
+    ['n', 'n', int(1, 100000)],
+  ],
+  fallback: [
+    ['v', 'version', text(VERSION, 11)],
+    ['reason', 'reason', oneOf(FALLBACK_REASONS)],
+    ['frontend', 'frontend', text(/^[\w.,-]+$/, 160)],
+  ],
+};
+// Without these an event is dropped.
+const REQUIRED = { env: ['v'], session: ['sid', 'v'], error: ['v', 'feature'], fallback: ['v', 'reason'] };
+
+export const TABLES = { env: 'env', session: 'sessions', error: 'errors', fallback: 'fallbacks' };
+
+// The columns of one event, or null when it is not one we keep.
+export function cleanEvent(ev) {
+  if (!ev || typeof ev !== 'object' || Array.isArray(ev) || !Object.hasOwn(KINDS, ev.k)) return null;
+  const row = {};
+  for (const [field, column, check] of KINDS[ev.k]) {
+    row[column] = Object.hasOwn(ev, field) ? check(ev[field]) : null;
+  }
+  for (const f of REQUIRED[ev.k]) {
+    const col = KINDS[ev.k].find((x) => x[0] === f)[1];
+    if (row[col] == null) return null;
+  }
+  return { kind: ev.k, row };
+}
+
+export function isUid(v) { return typeof v === 'string' && HEX64.test(v); }
+// The secret: 32 random bytes in base64url (43 characters).
+export function isSecret(v) { return typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/.test(v); }

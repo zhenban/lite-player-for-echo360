@@ -357,6 +357,7 @@ class SilenceAnalyzer {
     this.env = null;
     this.options = { minSec: 30, sensitivity: 'normal' };
     this.stats = null;
+    this.took = null;            // ms reading the audio took in this visit, when it read any (usage data)
   }
 
   setOptions(o) {
@@ -429,6 +430,8 @@ class SilenceAnalyzer {
     for (let k = 0; k < n; k++) order.push((from + k) % n);
     let sinceSave = 0;
     let fails = 0;
+    let read = 0;
+    const t0 = performance.now();
     for (const i of order) {
       const span = track.chunkSpan(i);
       if (this.env.coverageOf(span.start, span.end) > 0.9) continue;
@@ -448,6 +451,7 @@ class SilenceAnalyzer {
       await idle();
       if (signal.aborted) return;
       this.env.fill(chunk.start, chunk.pcm, chunk.rate);
+      read++;
       this.progress = this.env.coverage();
       if (++sinceSave >= 5) {
         sinceSave = 0;
@@ -456,6 +460,7 @@ class SilenceAnalyzer {
       }
     }
     this.progress = 1;
+    if (read) this.took = Math.round(performance.now() - t0);
     this.save(key);
     this.recompute();
   }

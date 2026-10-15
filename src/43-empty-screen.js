@@ -37,6 +37,7 @@ class EmptyScreenLayout {
     this.known = null;        // the uniform list the plan was made from
     this.plan = [];
     this.cameraPos = -1;
+    this.undos = 0;           // automatic switches undone by the user (usage data)
     this.chosen = (store.get(EMPTY_LAYOUT_KEY, []) || []).includes(deps.lesson.id);
     disposer.add(() => { if (this.on) this.x.showOnly(null); });
   }
@@ -84,14 +85,14 @@ class EmptyScreenLayout {
     this.on = true;
     this.cameraPos = cam;
     this.x.showOnly(cam);
-    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.leave(false); this.choose(); }, () => this.on);
+    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
   }
 
   leave(say) {
     this.on = false;
     this.x.showOnly(null);
     // Undo keeps the camera alone, as if chosen by hand.
-    if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
+    if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.undos++; this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
   }
 
   // The user arranged the views: the chosen arrangement takes over and this recording is

@@ -139,7 +139,7 @@ const cpuFix = (function () {
 
   function installThrottle() {
     const last = new WeakMap();
-    window.addEventListener('timeupdate', (e) => {
+    platform.page.addEventListener('timeupdate', (e) => {
       const v = e.target;
       if (!state.throttleOn || !e.isTrusted || !(v instanceof HTMLMediaElement)) return;
       const now = performance.now();

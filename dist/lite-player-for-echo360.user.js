@@ -10,7 +10,12 @@
 // @match        https://echo360.net.au/section/*/home
 // @require      https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js#sha256-oS5+4c1kpp3NsxQVfkXa/LpwW/sLFEC3k1yyZdN0Qj4=
 // @run-at       document-start
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
+// @connect      lite-player-telemetry.zhenban.workers.dev
+// @antifeature  tracking Anonymous usage data (performance, features used, errors; no names, recordings or content), on by default; Settings > Usage data turns it off, shows it or deletes it
 // @inject-into  page
 // @sandbox      raw
 // ==/UserScript==
@@ -94,6 +99,7 @@ const featureErrors = { notify: null, seen: new Set() };
 
 function reportUnexpected(err) {
   console.error(TAG, 'unexpected error', err);
+  try { telemetry.error('player core', err); } catch (e) { /* not counted */ }
   const h = unexpected.handler;
   unexpected.handler = null;
   if (h) { try { h(err); } catch (e) { /* ignore */ } }
@@ -103,6 +109,7 @@ function reportFeatureError(name, err) {
   const what = name || 'player';
   console.error(TAG, 'error in ' + what + ':', err);
   logEvent('error', what + ': ' + ((err && err.message) || err));
+  try { telemetry.error(what, err); } catch (e) { /* not counted */ }
   if (featureErrors.seen.has(what)) return;
   featureErrors.seen.add(what);
   if (featureErrors.notify) { try { featureErrors.notify(what, err); } catch (e) { /* ignore */ } }
@@ -290,6 +297,33 @@ const STRINGS = {
     emptyScreenCamera: 'The screen shows nothing: showing the camera only.',
     emptyScreenBack: 'The screen shows a picture again: back to your layout.',
     emptyScreenAuto: 'Camera only while the screen is empty',
+    telemetryMenu: 'Usage data',
+    telemetrySend: 'Send anonymous usage data',
+    telemetryDesc: 'How well the player runs on this computer, which features are used, and errors. No names, no recordings or courses, nothing you write. Kept on Cloudflare; only the country, region and network provider are kept, not the address.',
+    telemetryView: 'View my data',
+    telemetryDelete: 'Delete all my data',
+    telemetryReset: 'Reset my ID',
+    telemetryDataTitle: 'Your usage data',
+    telemetryLoading: 'Loading…',
+    telemetryNone: 'Nothing is stored for your ID.',
+    telemetryFailed: 'Could not reach the server ({msg}). Try again later.',
+    telemetryDownload: 'Download JSON',
+    telemetryNoAnswer: 'no answer',
+    telemetryRows: '{n} rows',
+    telemetryRow: '1 row',
+    telemetryKindEnv: 'Computer and browser',
+    telemetryKindSession: 'Viewings',
+    telemetryKindError: 'Errors',
+    telemetryKindFallback: 'Switches to the original player',
+    telemetryDeleteTitle: 'Delete all your usage data?',
+    telemetryDeleteText: 'Everything sent with your ID is deleted from the server now. This cannot be undone. Sending goes on unless you also turn it off.',
+    telemetryDeleteConfirm: 'Delete',
+    telemetryDeleted: 'Deleted from the server: {n} records.',
+    telemetryResetTitle: 'Reset your ID?',
+    telemetryResetText: 'A new ID is used from now on. Data sent with the old ID can then no longer be viewed or deleted from here.',
+    telemetryResetDelete: 'Delete my data, then reset',
+    telemetryResetOnly: 'Reset only',
+    telemetryResetDone: 'New ID in use.',
     emptyScreenAutoDesc: 'Long stretches without a picture on the screen show the camera alone. Choosing a layout yourself turns this off for that recording.',
     swapViewsKey: 'Swap views (S)',
     layout: 'Layout',
@@ -641,6 +675,7 @@ const STRINGS = {
     featureSilence: 'silence detection',
     featureSlideChapters: 'slide chapters',
     featureEmptyCamera: 'the camera for an empty screen',
+    featureUsage: 'usage data',
     featureSlideReader: 'the slide reader',
     featureNotes: 'notes',
     featureSession: 'session renewal',
@@ -705,7 +740,7 @@ function uiLocale() {
 const FEATURE_NAMES = {
   player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
   'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
-  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'slide reader': 'featureSlideReader',
+  'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'usage data': 'featureUsage', 'slide reader': 'featureSlideReader',
   notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
 };
 function featureName(id) {
@@ -749,6 +784,33 @@ STRINGS.zh = {
   emptyScreenCamera: '屏幕没有画面，已只显示摄像机',
   emptyScreenBack: '屏幕恢复画面，已恢复原来的布局',
   emptyScreenAuto: '屏幕没有画面时只显示摄像机',
+  telemetryMenu: '使用数据',
+  telemetrySend: '发送匿名使用数据',
+  telemetryDesc: '播放器在这台电脑上运行得怎样、用了哪些功能、出过什么错误。不含姓名、录像和课程，也不含你写的任何内容。存放在 Cloudflare；只保存国家、地区和网络运营商，不保存 IP 地址。',
+  telemetryView: '查看我的数据',
+  telemetryDelete: '删除我的全部数据',
+  telemetryReset: '重置 ID',
+  telemetryDataTitle: '你的使用数据',
+  telemetryLoading: '正在读取…',
+  telemetryNone: '服务器上没有你的 ID 的数据。',
+  telemetryFailed: '连不上服务器（{msg}），请稍后再试。',
+  telemetryDownload: '下载 JSON',
+  telemetryNoAnswer: '没有响应',
+  telemetryRows: '{n} 条',
+  telemetryRow: '1 条',
+  telemetryKindEnv: '电脑和浏览器',
+  telemetryKindSession: '观看记录',
+  telemetryKindError: '错误',
+  telemetryKindFallback: '切回原播放器',
+  telemetryDeleteTitle: '删除你的全部使用数据？',
+  telemetryDeleteText: '用你的 ID 发送过的数据会立即从服务器删除，无法恢复。之后仍会继续发送，除非你同时关掉发送。',
+  telemetryDeleteConfirm: '删除',
+  telemetryDeleted: '已从服务器删除 {n} 条记录。',
+  telemetryResetTitle: '重置 ID？',
+  telemetryResetText: '之后使用新的 ID。用旧 ID 发送过的数据将无法再在这里查看或删除。',
+  telemetryResetDelete: '先删除我的数据，再重置',
+  telemetryResetOnly: '只重置',
+  telemetryResetDone: '已使用新的 ID。',
   emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机。在一节录像里自己选过布局后，这节录像不再自动切换。',
   swapViewsKey: '交换画面（S）',
   layout: '布局',
@@ -1098,6 +1160,7 @@ STRINGS.zh = {
   featureSilence: '无声段检测',
   featureSlideChapters: '幻灯片章节',
   featureEmptyCamera: '屏幕无画面时显示摄像机',
+  featureUsage: '使用数据',
   featureSlideReader: '幻灯片跟读',
   featureNotes: '笔记',
   featureSession: '会话续期',
@@ -1363,6 +1426,17 @@ const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
+
+// ---- anonymous usage data (87-telemetry.js) ----
+// Product choices, not measurements: few small requests, nothing while the page is in the
+// background or offline, nothing that waits long.
+const TELEMETRY_SAMPLE_MS = 15000;     // dropped frames and memory read this often while visible (two property reads)
+const TELEMETRY_ERROR_WAIT_MS = 60000; // errors are collected this long and sent together (one request, not one each)
+const TELEMETRY_MAX_ERRORS = 20;       // different errors kept per page; more are not sent (a loop cannot flood)
+const TELEMETRY_RETRY_MS = [30000, 120000];   // waits before the two retries of a request that got no answer or a server error
+const TELEMETRY_TIMEOUT_MS = 15000;    // one request
+const TELEMETRY_MIN_OPEN_SEC = 5;      // a viewing open shorter than this is not reported (a page passed through)
+const TELEMETRY_ENV_DELAY_MS = 30000;  // the environment (once a day) is read this long after start, once playback has settled
 
 // ---- 03-common.js ----
 // ===================================================================================
@@ -1711,12 +1785,18 @@ const LIB_SHA256 = {
 //   - Hls: hls.js (the userscript manager loads it through @require)
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
+//   - post: send JSON to the telemetry Worker (87-telemetry.js)
+//   - privateKv: values kept out of the page's reach (the telemetry secret)
+//   - page: the page's own window, for traps on the page's globals (window.Echo)
 // ===================================================================================
 
 const libBlobUrls = new Map();   // path -> Promise of a blob URL (platform.libBlobUrl)
 
 const platform = {
   name: 'userscript',
+  // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
+  // wrapper as `window`: a property defined on it is not seen by the page's scripts.
+  page: typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window,
   kv: {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
@@ -1765,6 +1845,43 @@ const platform = {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  },
+  // POSTs a JSON text; resolves to { status, text } (status 0: no answer), never rejects.
+  // keepalive: the page is closing (the request must outlive it; GM_xmlhttpRequest is made
+  // by the extension and does anyway).
+  // A userscript uses GM_xmlhttpRequest: no cookies are sent, and the page's content
+  // security policy does not apply (it allows only the page's own servers); @connect in
+  // meta.txt names the one host it may reach. Without it (a development build injected
+  // into the page), fetch.
+  post(url, body, timeoutMs, keepalive) {
+    return new Promise((resolve) => {
+      const done = (status, text) => resolve({ status, text: typeof text === 'string' ? text : '' });
+      try {
+        if (typeof GM_xmlhttpRequest === 'function') {
+          GM_xmlhttpRequest({
+            method: 'POST', url, data: body, headers: { 'Content-Type': 'application/json' }, anonymous: true, timeout: timeoutMs,
+            onload: (r) => done(r.status, r.responseText), onerror: () => done(0), ontimeout: () => done(0), onabort: () => done(0),
+          });
+          return;
+        }
+        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : AbortSignal.timeout(timeoutMs) })
+          .then((r) => r.text().then((t) => done(r.status, t)), () => done(0));
+      } catch (e) {
+        done(0);
+      }
+    });
+  },
+  // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
+  // it; without one, the page's storage like the settings.
+  privateKv: {
+    get(name) {
+      try { if (typeof GM_getValue === 'function') { const v = GM_getValue(name, null); return typeof v === 'string' ? v : null; } } catch (e) { return null; }
+      try { return localStorage.getItem(NS + name); } catch (e) { return null; }
+    },
+    set(name, text) {
+      try { if (typeof GM_setValue === 'function') { GM_setValue(name, text); return; } } catch (e) { return; }
+      try { localStorage.setItem(NS + name, text); } catch (e) { /* storage blocked: a new secret next time */ }
+    },
   },
   manager() {
     try {
@@ -1844,8 +1961,10 @@ const echo360ClassroomAdapter = {
       });
     }
 
-    let echo = wrap(window.Echo || {});
-    Object.defineProperty(window, 'Echo', {
+    // On the page's own window: the inline bootstrap reads the page's global.
+    const page = platform.page;
+    let echo = wrap(page.Echo || {});
+    Object.defineProperty(page, 'Echo', {
       configurable: true,
       enumerable: true,
       get() { return echo; },
@@ -2109,7 +2228,7 @@ class Echo360Api {
     requireGesture(ev);
     if (this.dryRun === 'all' || (this.dryRun === 'public' && visibility === 'public')) {
       const rec = { method, url: new URL(path, location.origin).href, body: body === undefined ? null : JSON.stringify(body), visibility };
-      (window.__litePlayerForEcho360DryRun = window.__litePlayerForEcho360DryRun || []).push(rec);
+      (platform.page.__litePlayerForEcho360DryRun = platform.page.__litePlayerForEcho360DryRun || []).push(rec);
       log.info('DRY RUN (not sent):', method, rec.url, rec.body || '');
       return Promise.resolve(dryRunResult(method, path, body));
     }
@@ -2534,10 +2653,12 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
 .pbtn:hover { background: var(--fill-2); }
 .pbtn.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .pbtn:disabled { color: var(--text-3); cursor: default; }
+@media (pointer: coarse) { .pbtn { min-height: 44px; min-width: 44px; } }
 .link { font-size: 12px; color: var(--text-2); padding: 2px 0; }
 .link:hover { color: var(--text); text-decoration: underline; }
 .link.on { color: var(--accent); }
 .link.danger:hover { color: var(--danger); }
+@media (pointer: coarse) { .link { min-height: 44px; min-width: 44px; text-align: start; } }
 
 /* ---- title bar and control bar over the picture ---- */
 .top, .bottom { position: absolute; left: 0; right: 0; transition: opacity var(--t) var(--ease); }
@@ -2757,7 +2878,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .stage:has(.bottom.compact) .captions { bottom: 132px; }
 
 /* ---- dialogs (shortcuts, diagnostics, errors) ---- */
-.keyhelp, .diagbox, .error { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; background: var(--backdrop); }
+.keyhelp, .diagbox, .tdbox, .error { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; background: var(--backdrop); }
 .dialog { max-width: min(640px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 20px var(--sp6); border-radius: var(--r3);
   background: var(--s2); color: var(--text); box-shadow: var(--shadow); }
 .dialog h2 { margin: 0 0 var(--sp3); font-size: 16px; font-weight: 600; }
@@ -2768,6 +2889,15 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .khlist kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; margin-right: var(--sp1); border-radius: var(--r1); text-align: center;
   background: var(--fill); box-shadow: inset 0 -1px 0 var(--line); font: 600 12px/1.6 inherit; font-family: inherit; }
 .diaginfo { margin: 0 0 10px; font-size: 13px; }
+/* Usage data: one table per kind, scrolling inside the dialog (never the page). */
+.tdbody { margin-bottom: var(--sp4); font-size: 13px; color: var(--text-2); }
+.tdbody h3 { margin: var(--sp4) 0 var(--sp2); font-size: 13px; font-weight: 600; color: var(--text); }
+.tdbody h3:first-child { margin-top: 0; }
+.tdscroll { max-height: 40vh; overflow: auto; border-radius: var(--r2); background: var(--s1); }
+.tdscroll table { border-collapse: collapse; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
+.tdscroll th, .tdscroll td { padding: 4px var(--sp2); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.tdscroll th { position: sticky; top: 0; background: var(--s1); font-weight: 600; }
+.pbtn.danger { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
 .diagtext { max-height: 50vh; overflow: auto; margin: 0 0 var(--sp4); padding: 10px var(--sp3); border-radius: var(--r2); background: var(--s1);
   font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
 
@@ -2889,6 +3019,7 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
   color: inherit; font: inherit; font-size: 13px; line-height: 1.45; resize: vertical; }
 .input:focus { border-color: var(--accent); }
 .input.small { width: auto; padding: var(--sp1) var(--sp2); }
+@media (pointer: coarse) { .input.small { min-height: 44px; } }
 select.input option { background: var(--s1); color: var(--text); }
 .crow, .ptools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .ptools { margin-bottom: 10px; }
@@ -3085,6 +3216,8 @@ function playerTemplate() {
   <div class="diagbox" hidden><div class="dialog" role="dialog" aria-label="${tr('diagTitle')}"><h2>${tr('diagTitle')}</h2>
     <p class="diaginfo">${tr('diagInfo')}</p><pre class="diagtext"></pre>
     <div class="actions"><button class="pbtn diagcopy">${tr('diagCopy')}</button><button class="pbtn diagclose">${tr('close')}</button></div></div></div>
+  <div class="tdbox" hidden><div class="dialog" role="dialog" aria-labelledby="tdtitle"><h2 class="tdtitle" id="tdtitle"></h2><div class="tdbody"></div>
+    <div class="actions tdactions"></div></div></div>
 </div>
 <aside class="panel" hidden aria-label="${tr('sidebarTabs')}">
   <div class="presize" title="${tr('resizePanel')}"></div>
@@ -3784,6 +3917,7 @@ class SessionKeeper {
     this.pending = null;
     this.failed = null;           // { login } once renewal has given up
     this.renewals = 0;
+    this.failures = 0;            // renewals that failed (each after its retries)
     this.d = opts.disposer;
     this.timer = 0;
     // Once the player is gone (falling back to the original player), nothing may start
@@ -3820,6 +3954,7 @@ class SessionKeeper {
       this.onState('ok');
     }, (e) => {
       if (this.disposed) throw e;
+      this.failures++;
       // A routine renewal that could not reach the server is tried again later; the
       // cookies are still valid for a while.
       if ((e && e.login) || afterFailure) {
@@ -3967,6 +4102,7 @@ function prefDefaults() {
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
     lang: 'auto',
+    telemetry: true,
   };
 }
 
@@ -4016,6 +4152,7 @@ function sanitizePrefs(raw) {
     theme: oneOf(r.theme, THEMES, d.theme),
     // 'auto' or a language code; one without a table means English (uiLang).
     lang: typeof r.lang === 'string' && /^(auto|[a-z]{2})$/.test(r.lang) ? r.lang : d.lang,
+    telemetry: bool(r.telemetry, d.telemetry),
   };
 }
 
@@ -4159,6 +4296,16 @@ class LitePlayer {
     featureGuard('captions', () => this.loadCues());
     featureGuard('notes and discussion', () => this.loadInteractions());
     featureGuard('audio tools', () => this.setupAudio());
+    featureGuard('usage data', () => {
+      this.usage = new UsageSession({
+        root: this.root, video: this.video, videos: () => [this.video, this.fvideo], prefs: this.prefs,
+        layout: () => (this.pdfMode ? 'pdf' : this.layout),
+        slides: () => this.slides || null, deck: () => this.deck || null,
+        silence: () => (this.silence && this.silence.analyzer) || null, emptyScreen: () => this.emptyScreen,
+        session: () => this.session, duration: () => this.duration(),
+      }, this.d.child());
+      telemetry.envDaily();
+    });
 
     const start = this.pickStart();
     this.startAt = start;
@@ -4610,7 +4757,7 @@ class LitePlayer {
       diagnostics: () => diagnosticsText(this),
       layouts: () => this.layoutChoices(), layout: () => this.layout, setLayout: (l) => this.setLayout(l), swap: () => this.swapViews(),
       canEmptyCamera: () => !!this.emptyScreen && this.dual,
-      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.video.currentTime); },
+      setEmptyCamera: (on) => { this.emptyScreen.setEnabled(on); this.emptyScreen.tick(this.clock.position()); },
       pdfMode: () => this.pdfMode, setTheme: (t) => this.setTheme(t), setLang: (l) => this.setLang(l),
       // Optional features add their pages and actions once they have started.
       pages: this.menuPages = { quality: () => this.quality.items(), audio: null, silence: null },
@@ -4658,6 +4805,7 @@ class LitePlayer {
       copyCaptions: () => this.menus.copyCaptions(),
       escape: () => {
         if (this.menus.diagnosticsOpen) this.menus.showDiagnostics(false);
+        else if (this.menus.myDataOpen) this.menus.showMyData(false);
         else if (this.keys.helpOpen) this.keys.showHelp(false);
         else if (this.pops.isOpen()) this.pops.close(true);
         else return false;
@@ -4714,11 +4862,14 @@ class LitePlayer {
       const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
       if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
       this.renderBookmarkButton();
-      if (this.silence) this.silence.tick(ct);
+      // Where playback is meant to be: while the start position loads, the element still
+      // says 0, and nothing may act on that moment (skip a silence, switch the layout).
+      const pos = this.clock.position();
+      if (this.silence) this.silence.tick(pos);
       if (this.slidesPane) this.slidesPane.update(ct);
       if (this.reader) this.reader.update(ct);
       if (this.notes && this.notesReady) this.notes.update();
-      if (this.emptyScreen) this.emptyScreen.tick(ct);
+      if (this.emptyScreen) this.emptyScreen.tick(pos);
       if (this.discussion) this.discussion.update();
     };
     on('timeupdate', () => { invalidate(); onTime(); });
@@ -5000,7 +5151,7 @@ class LitePlayer {
       this.quality.apply();
       if (this.deck) this.deck.screenKnown();
     }
-    if (empty && this.emptyScreen) this.emptyScreen.tick(this.video.currentTime);
+    if (empty && this.emptyScreen) this.emptyScreen.tick(this.clock.position());
     this.renderChapterMarks();
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.
@@ -5569,6 +5720,7 @@ class KeyboardShortcuts {
     const [name, arg] = entry;
     const fn = name === 'help' ? () => this.showHelp(this.x.$('.keyhelp').hidden) : this.x.actions[name];
     if (!fn || fn(arg, e) === false) return;
+    telemetry.use(KEY_FEATURES[name], 'key');
     e.preventDefault();
     e.stopPropagation();
     this.x.wake();
@@ -5636,6 +5788,7 @@ class EmptyScreenLayout {
     this.known = null;        // the uniform list the plan was made from
     this.plan = [];
     this.cameraPos = -1;
+    this.undos = 0;           // automatic switches undone by the user (usage data)
     this.chosen = (store.get(EMPTY_LAYOUT_KEY, []) || []).includes(deps.lesson.id);
     disposer.add(() => { if (this.on) this.x.showOnly(null); });
   }
@@ -5683,14 +5836,14 @@ class EmptyScreenLayout {
     this.on = true;
     this.cameraPos = cam;
     this.x.showOnly(cam);
-    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.leave(false); this.choose(); }, () => this.on);
+    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
   }
 
   leave(say) {
     this.on = false;
     this.x.showOnly(null);
     // Undo keeps the camera alone, as if chosen by hand.
-    if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
+    if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.undos++; this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
   }
 
   // The user arranged the views: the chosen arrangement takes over and this recording is
@@ -5919,7 +6072,7 @@ class QualityController {
       const heights = (this.levelsByRole[role] || []).slice().sort((a, b) => b - a);
       const opts = [['auto', tr('qualityAutoBest')]].concat(heights.map((hh) => [hh, hh + 'p']));
       for (const [val, label] of opts) {
-        items.push({ kind: 'radio', label, checked: () => x.prefs.quality[role] === val, select: () => this.set(role, val) });
+        items.push({ kind: 'radio', label, checked: () => x.prefs.quality[role] === val, select: () => { telemetry.use('quality', 'click'); this.set(role, val); } });
       }
     }
     return items;
@@ -5996,6 +6149,7 @@ class MenuBar {
     d.listen($('.textbtn'), 'click', () => this.copyCaptions());
     d.listen($('.diagclose'), 'click', (e) => { e.stopPropagation(); this.showDiagnostics(false); });
     d.listen($('.diagbox'), 'click', (e) => { if (e.target === $('.diagbox')) this.showDiagnostics(false); });
+    d.listen($('.tdbox'), 'click', (e) => { if (e.target === $('.tdbox')) this.showMyData(false); });
     d.listen($('.diagcopy'), 'click', (e) => {
       e.stopPropagation();
       navigator.clipboard.writeText($('.diagtext').textContent)
@@ -6061,12 +6215,13 @@ class MenuBar {
       { kind: 'page', label: tr('theme'), value: () => tr(themeKey(x.prefs.theme)), items: () => this.themeItems() },
       { kind: 'page', label: tr('language'), value: () => langLabel(x.prefs.lang), items: () => this.langItems() },
       { kind: 'sep' },
-      { kind: 'action', label: tr('popout'), key: 'W', run: () => a.popout(), hidden: () => !a.popout },
+      { kind: 'action', label: tr('popout'), key: 'W', run: () => { telemetry.use('popout', 'click'); a.popout(); }, hidden: () => !a.popout },
       { kind: 'page', label: tr('loopMenu'), value: a.loopLabel, items: () => this.loopItems() },
-      { kind: 'action', label: tr('exportNotes'), key: 'E', run: () => a.exportNotes(), hidden: () => !a.exportNotes },
-      { kind: 'action', label: tr('keysMenu'), key: '?', run: () => a.showKeys() },
+      { kind: 'action', label: tr('exportNotes'), key: 'E', run: () => { telemetry.use('exportNotes', 'click'); a.exportNotes(); }, hidden: () => !a.exportNotes },
+      { kind: 'action', label: tr('keysMenu'), key: '?', run: () => { telemetry.use('help', 'click'); a.showKeys(); } },
       { kind: 'page', label: tr('storageMenu'), items: () => this.storageItems() },
-      { kind: 'action', label: tr('useOriginal'), run: () => a.original() },
+      { kind: 'page', label: tr('telemetryMenu'), value: () => tr(x.prefs.telemetry ? 'on' : 'off'), items: () => this.telemetryItems() },
+      { kind: 'action', label: tr('useOriginal'), run: () => { telemetry.use('original', 'click'); a.original(); } },
       { kind: 'foot', text: tr('appVersion', { version: VERSION }) },
     ];
   }
@@ -6112,7 +6267,7 @@ class MenuBar {
   themeItems() {
     const x = this.x;
     return [
-      ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => x.setTheme(t) })),
+      ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => { telemetry.use('theme', 'click'); x.setTheme(t); } })),
       { kind: 'text', text: () => tr('themeNote') },
     ];
   }
@@ -6120,7 +6275,7 @@ class MenuBar {
   langItems() {
     const x = this.x;
     return [
-      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => x.setLang(l) })),
+      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => { telemetry.use('language', 'click'); x.setLang(l); } })),
       { kind: 'text', text: () => tr('langNote') },
     ];
   }
@@ -6128,8 +6283,8 @@ class MenuBar {
   loopItems() {
     const a = this.x.actions;
     return [
-      { kind: 'action', label: tr('loopFromHere'), key: 'I', run: () => a.loopA() },
-      { kind: 'action', label: tr('loopToHere'), key: 'O', run: () => a.loopB() },
+      { kind: 'action', label: tr('loopFromHere'), key: 'I', run: () => { telemetry.use('loop', 'click'); a.loopA(); } },
+      { kind: 'action', label: tr('loopToHere'), key: 'O', run: () => { telemetry.use('loop', 'click'); a.loopB(); } },
       { kind: 'action', label: tr('loopClear'), key: 'X', run: () => a.loopClear(), reason: () => (a.loopLabel() === tr('loopNone') ? tr('loopNone') : '') },
     ];
   }
@@ -6152,8 +6307,91 @@ class MenuBar {
       { kind: 'custom', render: () => row },
       { kind: 'text', text: () => tr('cachesInfo') },
       { kind: 'sep' },
-      { kind: 'action', label: tr('diagMenu'), run: () => this.showDiagnostics(true) },
+      { kind: 'action', label: tr('diagMenu'), run: () => { telemetry.use('diagnostics', 'click'); this.showDiagnostics(true); } },
     ];
+  }
+
+  // ---- usage data (87-telemetry.js) ----
+
+  telemetryItems() {
+    const x = this.x;
+    return [
+      {
+        kind: 'toggle', label: tr('telemetrySend'), desc: tr('telemetryDesc'), on: () => !!x.prefs.telemetry,
+        set: (on) => { x.prefs.telemetry = !!on; x.savePrefs(); telemetry.setEnabled(on); },
+      },
+      { kind: 'sep' },
+      { kind: 'action', label: tr('telemetryView'), run: () => this.showMyData('view') },
+      { kind: 'action', label: tr('telemetryDelete'), run: () => this.showMyData('delete') },
+      { kind: 'action', label: tr('telemetryReset'), run: () => this.showMyData('reset') },
+    ];
+  }
+
+  get myDataOpen() { return !this.x.$('.tdbox').hidden; }
+
+  // The dialog for the data sent so far: 'view' (tables, download), 'delete' (asks first),
+  // 'reset' (a new ID, optionally deleting first), false (close).
+  showMyData(mode) {
+    const x = this.x;
+    const box = x.$('.tdbox');
+    if (mode === false) { box.hidden = true; this.myDataJob = null; x.$('.morebtn').focus({ preventScroll: true }); return; }
+    const job = {};
+    this.myDataJob = job;
+    const body = x.$('.tdbody');
+    const acts = x.$('.tdactions');
+    const set = (title, nodes, buttons) => {
+      if (this.myDataJob !== job) return;
+      x.$('.tdtitle').textContent = title;
+      body.replaceChildren(...nodes);
+      acts.replaceChildren(...buttons);
+      // The first button: never the one that deletes.
+      if (buttons[0]) buttons[0].focus();
+    };
+    const btn = (label, fn, cls) => el('button.pbtn' + (cls || ''), { text: label, onclick: (e) => { e.stopPropagation(); fn(); } });
+    const close = btn(tr('close'), () => this.showMyData(false));
+    const failed = (r) => tr('telemetryFailed', { msg: r.status ? 'HTTP ' + r.status : tr('telemetryNoAnswer') });
+    const del = (then) => {
+      set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryLoading') })], []);
+      telemetry.ask('/v1/me/delete').then((r) => {
+        if (r.status !== 200 || !r.data || !r.data.deleted) { set(tr('telemetryDeleteTitle'), [el('p', { text: failed(r) })], [close]); return; }
+        const n = Object.values(r.data.deleted).reduce((a, b) => a + (+b || 0), 0);
+        if (then) then(n); else set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleted', { n }) })], [close]);
+      });
+    };
+    const reset = (n) => {
+      telemetry.resetIdentity();
+      this.showMyData(false);
+      x.toast(n == null ? tr('telemetryResetDone') : tr('telemetryDeleted', { n }) + ' ' + tr('telemetryResetDone'));
+    };
+    box.hidden = false;
+    if (mode === 'delete') {
+      set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleteText') })], [close, btn(tr('telemetryDeleteConfirm'), () => del(null), '.danger')]);
+      return;
+    }
+    if (mode === 'reset') {
+      set(tr('telemetryResetTitle'), [el('p', { text: tr('telemetryResetText') })],
+        [btn(tr('cancel'), () => this.showMyData(false)), btn(tr('telemetryResetOnly'), () => reset(null)), btn(tr('telemetryResetDelete'), () => del(reset), '.danger')]);
+      return;
+    }
+    set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryLoading') })], [close]);
+    telemetry.ask('/v1/me').then((r) => {
+      if (r.status !== 200 || !r.data) { set(tr('telemetryDataTitle'), [el('p', { text: failed(r) })], [close]); return; }
+      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback' };
+      const nodes = [];
+      for (const [k, label] of Object.entries(kinds)) {
+        const rows = Array.isArray(r.data[k]) ? r.data[k] : [];
+        if (!rows.length) continue;
+        const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+        const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
+        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }),
+          el('div.tdscroll', null, el('table', null,
+            el('thead', null, el('tr', null, ...cols.map((c) => el('th', { text: c })))),
+            el('tbody', null, ...rows.map((row) => el('tr', null, ...cols.map((c) => el('td', { text: cell(c, row[c]) }))))))));
+      }
+      if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
+      const json = JSON.stringify(r.data, null, 2);
+      set(tr('telemetryDataTitle'), nodes, [btn(tr('telemetryDownload'), () => platform.save(new Blob([json], { type: 'application/json' }), 'lite-player-usage-data.json')), close]);
+    });
   }
 
   // ---- captions ----
@@ -9308,6 +9546,7 @@ class SilenceAnalyzer {
     this.env = null;
     this.options = { minSec: 30, sensitivity: 'normal' };
     this.stats = null;
+    this.took = null;            // ms reading the audio took in this visit, when it read any (usage data)
   }
 
   setOptions(o) {
@@ -9380,6 +9619,8 @@ class SilenceAnalyzer {
     for (let k = 0; k < n; k++) order.push((from + k) % n);
     let sinceSave = 0;
     let fails = 0;
+    let read = 0;
+    const t0 = performance.now();
     for (const i of order) {
       const span = track.chunkSpan(i);
       if (this.env.coverageOf(span.start, span.end) > 0.9) continue;
@@ -9399,6 +9640,7 @@ class SilenceAnalyzer {
       await idle();
       if (signal.aborted) return;
       this.env.fill(chunk.start, chunk.pcm, chunk.rate);
+      read++;
       this.progress = this.env.coverage();
       if (++sinceSave >= 5) {
         sinceSave = 0;
@@ -9407,6 +9649,7 @@ class SilenceAnalyzer {
       }
     }
     this.progress = 1;
+    if (read) this.took = Math.round(performance.now() - t0);
     this.save(key);
     this.recompute();
   }
@@ -10114,6 +10357,7 @@ class SlideAnalyzer {
     this.guessScreen = null;
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
     this.manualScreen = null;   // the view the user chose, if any
+    this.took = null;           // ms the whole analysis took in this visit (usage data; null: from the cache)
     this.reader = null;
     this.urls = [];
     this.d.add(() => { for (const u of this.urls) URL.revokeObjectURL(u); this.urlOf = null; });
@@ -10180,6 +10424,7 @@ class SlideAnalyzer {
     // Data Saver: no downloads at all (finding the screen view already reads keyframes or
     // preview pictures); only a stored result is used.
     if (saveDataOn()) { this.reason = 'saveData'; this.state = 'unavailable'; this.onChange(); return; }
+    const t0 = performance.now();
     // Which view is the screen is needed early (quality settings are per view).
     const screen = await this.findScreen(signal);
     if (signal.aborted) return;
@@ -10194,6 +10439,7 @@ class SlideAnalyzer {
       return;
     }
     await this.fromKeyframes(screen.source, signal, gate, screen.reader);
+    if (!signal.aborted && this.state === 'done') this.took = Math.round(performance.now() - t0);
     if (!signal.aborted) this.save(key);
   }
 
@@ -11839,6 +12085,7 @@ class SlideDeckController {
     this.decidedAt = 0;
     this.deciding = null;
     this.state = 'empty';     // empty | loading | reading | ready | error
+    this.corrections = 0;     // pages corrected by hand in this visit (usage data)
     this.error = '';
     this.job = null;
     this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
@@ -11897,6 +12144,7 @@ class SlideDeckController {
   async addFiles(fileList) {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
+    telemetry.use('pdfAdd');
     const added = [];
     for (const f of pdfs) {
       const buf = await f.arrayBuffer();
@@ -12214,6 +12462,7 @@ class SlideDeckController {
   // The user's correction for the part playing at time t: a page index, 'none' (not a
   // slide) or null (back to automatic).
   correct(t, value) {
+    this.corrections++;
     if (value === null) {
       this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
     } else {
@@ -12378,7 +12627,7 @@ const cpuFix = (function () {
 
   function installThrottle() {
     const last = new WeakMap();
-    window.addEventListener('timeupdate', (e) => {
+    platform.page.addEventListener('timeupdate', (e) => {
       const v = e.target;
       if (!state.throttleOn || !e.isTrusted || !(v instanceof HTMLMediaElement)) return;
       const now = performance.now();
@@ -12949,6 +13198,442 @@ function diagnosticsText(p) {
   return lines.join('\n');
 }
 
+// ---- 87-telemetry.js ----
+// ===================================================================================
+// Anonymous usage data (on by default; Settings > Usage data turns it off at once, and
+// shows or deletes what was sent). What is sent and kept is listed in the README's privacy
+// section and checked field by field by the Worker (telemetry-worker/src/schema.js).
+//
+// Who: a random secret made on first use (32 bytes, kept by the userscript manager, never
+// shown, logged, exported or backed up) and its SHA-256, the user id every event carries.
+// Viewing or deleting one's data sends the secret, which the Worker hashes and compares:
+// knowing an id is not enough.
+//
+// What, and when:
+//   env       the computer and browser: at most once a day, a while after a player starts
+//   session   one viewing summed up (UsageSession): when the page is hidden or closed, and
+//             when the player goes; sent again as the viewing goes on (same session id, the
+//             Worker keeps the latest)
+//   error     a feature that failed: its name, the error type, the message with addresses,
+//             numbers, ids and quoted text taken out; collected for a minute, then sent
+//   fallback  the page went to the original player, and why
+// Nothing is sent while the page is in the background (except the summary as it is
+// hidden) or offline. A request that fails is tried twice more, later and only in the
+// foreground, then dropped. Nothing here may disturb the player: every entry point
+// catches its own errors and none of them reports to featureGuard.
+// ===================================================================================
+
+const TELEMETRY_URL = 'https://lite-player-telemetry.zhenban.workers.dev';
+const TELEMETRY_SECRET_KEY = 'telemetrySecret';
+const TELEMETRY_DAY_KEY = 'telemetryDay';
+
+// Key actions (42-keys.js) and the features they count as.
+const KEY_FEATURES = {
+  togglePlay: 'play', seekBy: 'seek', stepChapter: 'chapter', volumeBy: 'volume', toggleMute: 'mute',
+  fullscreen: 'fullscreen', swap: 'swap', captions: 'captions', transcript: 'transcript', bookmark: 'bookmark',
+  flag: 'flag', tag: 'tag', copyFrame: 'copyFrame', copyCaptions: 'copyCaptions', zoom: 'zoom',
+  loopA: 'loop', loopB: 'loop', loopClear: 'loop', popout: 'popout', exportNotes: 'exportNotes', speed: 'speed', help: 'help',
+};
+// Clicks on the player's own controls and the features they count as (the first match).
+const CLICK_FEATURES = [
+  ['.play', 'play'], ['.rew', 'seek'], ['.fwd', 'seek'], ['.seek', 'seekbar'], ['.fs', 'fullscreen'],
+  ['.swapdot', 'swap'], ['.layout', 'layout'], ['.ccbtn', 'captions'], ['.framebtn', 'copyFrame'],
+  ['.textbtn', 'copyCaptions'], ['.bmbtn', 'bookmark'], ['.mute', 'mute'], ['.speed', 'speed'],
+  ['.morebtn', 'settings'], ['[data-open=transcript]', 'transcript'], ['[data-open=notes]', 'notes'],
+  ['[data-open=discussion]', 'discussion'], ['[data-open=slides]', 'slides'], ['.pprev', 'pdfTurn'],
+  ['.pnext', 'pdfTurn'], ['.skipsil', 'silenceSkip'], ['.endskip', 'silenceSkip'], ['.pextras', 'original'],
+  ['.views video', 'play'],
+];
+
+// An error message with nothing that could point at a person or a recording (the Worker
+// does the same again).
+function telemetryMessage(s) {
+  return String(s == null ? '' : s)
+    .replace(/[a-z][\w+.-]*:\/\/\S+/gi, '<url>')
+    .replace(/\S+@\S+/g, '<email>')
+    .replace(/(["'`‘“])[^"'`’”]*["'`’”]/g, '<text>')
+    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]{9,}/gi, '<id>')
+    .replace(/\d+(\.\d+)?/g, '#')
+    .replace(/[^\x20-\x7e]/g, '?')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+// Settings that differ from their defaults, by name ('audio.level'): never their values.
+function changedPrefs(prefs) {
+  const d = prefDefaults();
+  const out = [];
+  const walk = (a, b, path) => {
+    for (const k of Object.keys(b)) {
+      if (k === 'levelChosen' || k === 'telemetry') continue;
+      const name = path ? path + '.' + k : k;
+      if (b[k] && typeof b[k] === 'object') walk(a && a[k], b[k], name);
+      else if (a && a[k] !== undefined && a[k] !== b[k]) out.push(name);
+    }
+  };
+  walk(prefs, d, '');
+  return out;
+}
+
+// Echo360's front-end build: the names and hash prefixes of its script bundles
+// ("application-373f7d"), nothing of the page's address or content.
+function echoFrontend() {
+  const out = [];
+  for (const s of document.querySelectorAll('script[src]')) {
+    let u;
+    try { u = new URL(s.getAttribute('src'), location.href); } catch (e) { continue; }
+    if (u.origin !== location.origin || !u.pathname.startsWith('/assets/')) continue;
+    const m = /\/([0-9a-f]{6})[0-9a-f]*-([A-Za-z][\w.-]{0,60})\.js$/.exec(u.pathname);
+    if (m) out.push(m[2].replace(/\.react-bundle$/, '') + '-' + m[1]);
+  }
+  return out.sort().join(',').slice(0, 160) || null;
+}
+
+// The computer and browser, as far as the browser tells.
+async function telemetryEnv() {
+  const ua = navigator.userAgent;
+  const m = /(Edg|OPR|Firefox|Chrome|Version)\/(\d+)/.exec(ua);
+  const browser = !m ? 'other' : { Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[m[1]] || m[1];
+  const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+  const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
+  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts'];
+  const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
+  const conn = /** @type {any} */ (navigator).connection;
+  const env = {
+    k: 'env', v: VERSION, browser, browserV: m ? +m[2] : undefined, os,
+    manager, managerV: manager !== 'none' && /^[\w.-]{1,20}$/.test(mgr[2] || '') ? mgr[2] : undefined,
+    lang: uiLang(), browserLang: (/^[a-z]{2,3}/.exec((navigator.language || '').toLowerCase()) || [])[0],
+    touch: matchMedia('(pointer: coarse)').matches,
+    screenW: screen.width, screenH: screen.height, dpr: Math.round(devicePixelRatio * 100) / 100,
+    cores: navigator.hardwareConcurrency || undefined,
+    memGb: /** @type {any} */ (navigator).deviceMemory,
+    gpu: undefined, webgpu: false,
+    webcodecs: typeof VideoDecoder === 'function',
+    builtinAi: typeof (/** @type {any} */ (self)).LanguageModel === 'function' || typeof (/** @type {any} */ (self)).Summarizer === 'function',
+    netType: conn && conn.effectiveType, downlink: conn && conn.downlink,
+  };
+  try {
+    const c = document.createElement('canvas').getContext('webgl');
+    const info = c && c.getExtension('WEBGL_debug_renderer_info');
+    const r = info ? c.getParameter(info.UNMASKED_RENDERER_WEBGL) : c && c.getParameter(c.RENDERER);
+    if (typeof r === 'string') env.gpu = r.replace(/[^\x20-\x7e]/g, '').slice(0, 120);
+    const lose = c && c.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+  } catch (e) { /* no WebGL */ }
+  try {
+    const gpu = /** @type {any} */ (navigator).gpu;
+    if (gpu) env.webgpu = !!(await Promise.race([gpu.requestAdapter(), new Promise((r) => setTimeout(() => r(null), 3000))]));
+  } catch (e) { /* not available */ }
+  return env;
+}
+
+const telemetry = {
+  on: null,            // null: not read yet (from the settings)
+  ids: null,           // Promise of { secret, uid }
+  idNow: null,         // the same once known (a page that is closing cannot wait)
+  current: null,       // the UsageSession of the player on the page
+  errors: new Map(),   // key -> error event, waiting to be sent
+  errorTimer: 0,
+
+  enabled() {
+    if (this.on === null) {
+      let on = false;
+      try { on = !store.get('telemetryOff', false) && sanitizePrefs(store.get('prefs', null)).telemetry; } catch (e) { on = false; }
+      this.on = on;
+    }
+    return this.on;
+  },
+
+  // Turned on or off in the settings: off stops everything at once.
+  setEnabled(on) {
+    this.on = !!on;
+    if (!on) { this.errors.clear(); clearTimeout(this.errorTimer); this.errorTimer = 0; }
+  },
+
+  // { secret, uid }: made on first use.
+  identity() {
+    if (!this.ids) {
+      let p; // read inside the function once it has awaited, so set by then
+      this.ids = p = (async () => {
+        let secret = platform.privateKv.get(TELEMETRY_SECRET_KEY);
+        if (!/^[A-Za-z0-9_-]{43}$/.test(secret || '')) {
+          secret = newTelemetrySecret();
+          platform.privateKv.set(TELEMETRY_SECRET_KEY, secret);
+        }
+        const id = { secret, uid: await sha256Hex(new TextEncoder().encode(secret)) };
+        if (this.ids === p) this.idNow = id;
+        return id;
+      })();
+      this.ids.catch(() => { this.ids = null; });
+    }
+    return this.ids;
+  },
+
+  // A new secret (a new id): data sent before can no longer be viewed or deleted here.
+  resetIdentity() {
+    platform.privateKv.set(TELEMETRY_SECRET_KEY, newTelemetrySecret());
+    this.ids = null;
+    this.idNow = null;
+    store.set(TELEMETRY_DAY_KEY, null);
+  },
+
+  // Sends events; never throws. `last`: the page is being hidden or closed (no retries).
+  async send(events, last, attempt) {
+    try {
+      if (!this.enabled() || !events.length || navigator.onLine === false) return;
+      // Sent at once while the page closes: nothing is awaited before the request.
+      const { uid } = this.idNow || await this.identity();
+      if (!this.enabled()) return;
+      const r = await platform.post(TELEMETRY_URL + '/v1/events', JSON.stringify({ uid, events }), TELEMETRY_TIMEOUT_MS, !!last);
+      const k = attempt || 0;
+      if ((r.status === 0 || r.status >= 500) && !last && k < TELEMETRY_RETRY_MS.length) {
+        setTimeout(() => {
+          if (!document.hidden && navigator.onLine !== false) this.send(events, false, k + 1);
+        }, TELEMETRY_RETRY_MS[k]);
+      }
+    } catch (e) { /* dropped */ }
+  },
+
+  // A request with the secret (viewing or deleting one's data): { status, data }.
+  // Never rejects (status 0: no answer).
+  async ask(path) {
+    try {
+      const { secret, uid } = await this.identity();
+      const r = await platform.post(TELEMETRY_URL + path, JSON.stringify({ uid, secret }), TELEMETRY_TIMEOUT_MS);
+      let data = null;
+      try { data = JSON.parse(r.text); } catch (e) { data = null; }
+      return { status: r.status, data };
+    } catch (e) {
+      return { status: 0, data: null };
+    }
+  },
+
+  // The environment, at most once a day.
+  envDaily() {
+    try {
+      if (!this.enabled()) return;
+      const day = new Date().toISOString().slice(0, 10);
+      if (store.get(TELEMETRY_DAY_KEY, null) === day) return;
+      setTimeout(() => {
+        if (!this.enabled() || document.hidden || store.get(TELEMETRY_DAY_KEY, null) === day) return;
+        store.set(TELEMETRY_DAY_KEY, day);
+        telemetryEnv().then((env) => this.send([env]), () => {});
+      }, TELEMETRY_ENV_DELAY_MS);
+    } catch (e) { /* not sent */ }
+  },
+
+  // A feature that failed (from reportFeatureError / reportUnexpected).
+  error(feature, err) {
+    try {
+      if (!this.enabled()) return;
+      const name = String(feature || 'player').toLowerCase().replace(/[^a-z ()-]/g, '').slice(0, 40) || 'player';
+      const type = err && typeof err.name === 'string' && /^[A-Za-z]\w{0,39}$/.test(err.name) ? err.name : typeof err;
+      const msg = telemetryMessage(err && err.message != null ? err.message : err);
+      const key = name + '\n' + type + '\n' + msg;
+      const known = this.errors.get(key);
+      if (known) { known.n++; return; }
+      if (this.errors.size >= TELEMETRY_MAX_ERRORS) return;
+      this.errors.set(key, { k: 'error', v: VERSION, feature: name, type, msg, n: 1 });
+      if (!this.errorTimer) this.errorTimer = setTimeout(() => { this.errorTimer = 0; if (!document.hidden) this.flushErrors(false); }, TELEMETRY_ERROR_WAIT_MS);
+    } catch (e) { /* not counted */ }
+  },
+
+  flushErrors(last) {
+    const list = [...this.errors.values()];
+    this.errors.clear();
+    clearTimeout(this.errorTimer);
+    this.errorTimer = 0;
+    if (list.length) this.send(list, last);
+  },
+
+  fallback(reason) {
+    try {
+      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend() }]);
+    } catch (e) { /* not sent */ }
+  },
+
+  // A feature used by `via` ('key' or 'click').
+  use(feature, via) {
+    try { if (this.current) this.current.use(feature, via); } catch (e) { /* not counted */ }
+  },
+};
+
+function newTelemetrySecret() {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// One viewing: what it cost the computer, what was used, how the analyses did.
+//
+// deps: { root (the player's shadow root), video (the clock video), videos() (both),
+//         prefs, layout() ('side' | 'pip' | 'single' | 'pdf', as shown), slides(), deck(),
+//         silence() (the analyzer), emptyScreen(), session() (SessionKeeper), duration() }
+class UsageSession {
+  constructor(deps, disposer) {
+    this.x = deps;
+    this.d = disposer;
+    this.sid = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+    this.opened = performance.now();
+    this.features = {};
+    this.keys = 0;
+    this.clicks = 0;
+    this.playMs = 0;
+    this.byRate = new Map();       // playback rate -> ms played
+    this.byLayout = new Map();     // layout -> ms played
+    this.lastTick = 0;
+    this.longTasks = 0;
+    this.visibleMs = 0;
+    this.visibleSince = document.hidden ? 0 : performance.now();
+    this.firstFrameMs = null;
+    this.rebufferN = 0;
+    this.rebufferMs = 0;
+    this.waitingSince = 0;
+    this.heap = 0;
+    this.frames = new Map();       // video -> { dropped, total, base: { dropped, total } }
+    this.lastReport = -Infinity;
+    telemetry.current = this;
+    // The id is worked out now: a summary sent as the page closes cannot wait for it.
+    if (telemetry.enabled()) telemetry.identity().catch(() => {});
+    disposer.add(() => { this.report(true); if (telemetry.current === this) telemetry.current = null; });
+    const v = deps.video;
+    const on = (target, type, fn, opts) => disposer.listen(target, type, () => { try { fn(); } catch (e) { /* not counted */ } }, opts);
+    on(v, 'timeupdate', () => this.tick());
+    on(v, 'pause', () => { this.tick(); this.lastTick = 0; });
+    on(v, 'loadeddata', () => { if (this.firstFrameMs == null) this.firstFrameMs = Math.round(performance.now()); });
+    on(v, 'waiting', () => { if (!v.seeking && !v.paused && this.firstFrameMs != null && !this.waitingSince) this.waitingSince = performance.now(); });
+    const resumed = () => {
+      if (!this.waitingSince) return;
+      this.rebufferN++;
+      this.rebufferMs += performance.now() - this.waitingSince;
+      this.waitingSince = 0;
+    };
+    on(v, 'playing', resumed);
+    on(v, 'seeking', () => { this.waitingSince = 0; });
+    on(document, 'visibilitychange', () => {
+      if (document.hidden) {
+        if (this.visibleSince) this.visibleMs += performance.now() - this.visibleSince;
+        this.visibleSince = 0;
+        this.report(true);
+      } else this.visibleSince = performance.now();
+    });
+    on(window, 'pagehide', () => this.report(true));
+    // Clicks on the player's controls (before their own handlers: counted even when a
+    // handler stops the event).
+    disposer.listen(deps.root, 'click', (e) => {
+      try {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        for (const [sel, f] of CLICK_FEATURES) if (t.closest(sel)) { this.use(f, 'click'); return; }
+      } catch (err) { /* not counted */ }
+    }, true);
+    if (typeof PerformanceObserver === 'function' && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) {
+      const po = new PerformanceObserver((list) => { this.longTasks += list.getEntries().length; });
+      po.observe({ type: 'longtask' });
+      disposer.observe(po);
+    }
+    disposer.interval(() => { if (!document.hidden) this.sample(); }, TELEMETRY_SAMPLE_MS);
+  }
+
+  use(feature, via) {
+    this.features[feature] = (this.features[feature] || 0) + 1;
+    if (via === 'key') this.keys++; else if (via === 'click') this.clicks++;
+  }
+
+  // Playing time, by rate and layout (from timeupdate, about four times a second).
+  tick() {
+    const v = this.x.video;
+    const now = performance.now();
+    if (this.lastTick && !v.paused) {
+      const dt = now - this.lastTick;
+      if (dt > 0 && dt < 2000) {
+        this.playMs += dt;
+        const r = v.playbackRate;
+        this.byRate.set(r, (this.byRate.get(r) || 0) + dt);
+        const l = this.x.layout();
+        this.byLayout.set(l, (this.byLayout.get(l) || 0) + dt);
+      }
+    }
+    this.lastTick = v.paused ? 0 : now;
+  }
+
+  // Dropped frames (counters start again when a video loads another stream) and memory.
+  sample() {
+    for (const v of this.x.videos()) {
+      if (!v || typeof v.getVideoPlaybackQuality !== 'function') continue;
+      const q = v.getVideoPlaybackQuality();
+      let f = this.frames.get(v);
+      if (!f) { f = { dropped: 0, total: 0, base: { dropped: 0, total: 0 } }; this.frames.set(v, f); }
+      if (q.totalVideoFrames < f.total) { f.base.dropped += f.dropped; f.base.total += f.total; }
+      f.dropped = q.droppedVideoFrames;
+      f.total = q.totalVideoFrames;
+    }
+    const mem = /** @type {any} */ (performance).memory;
+    if (mem && mem.usedJSHeapSize > this.heap) this.heap = mem.usedJSHeapSize;
+  }
+
+  summary() {
+    const x = this.x;
+    this.tick();
+    this.sample();
+    let dropped = 0;
+    let total = 0;
+    for (const f of this.frames.values()) { dropped += f.base.dropped + f.dropped; total += f.base.total + f.total; }
+    const visibleMs = this.visibleMs + (this.visibleSince ? performance.now() - this.visibleSince : 0);
+    const top = (m) => { let best = null; let most = 0; for (const [k, ms] of m) if (ms > most) { most = ms; best = k; } return best; };
+    const slides = x.slides();
+    const deck = x.deck();
+    const silence = x.silence();
+    const ocr = deck && deck.ocr;
+    const ses = x.session();
+    const dur = x.duration();
+    const s = {
+      k: 'session', v: VERSION, sid: this.sid,
+      playSec: Math.round(this.playMs / 1000),
+      openSec: Math.round((performance.now() - this.opened) / 1000),
+      longTasksPerMin: visibleMs > 60000 ? Math.round(this.longTasks / (visibleMs / 60000) * 10) / 10 : undefined,
+      droppedPct: total > 0 ? Math.round(dropped / total * 10000) / 100 : undefined,
+      heapMb: this.heap ? Math.round(this.heap / 1e5) / 10 : undefined,
+      firstFrameMs: this.firstFrameMs == null ? undefined : this.firstFrameMs,
+      rebufferN: this.rebufferN,
+      rebufferSec: Math.round(this.rebufferMs / 100) / 10,
+      scanMs: slides && slides.took != null ? slides.took : undefined,
+      ocrFrameMs: ocr && ocr.stats && ocr.stats.read ? Math.round(ocr.stats.ms / ocr.stats.read) : undefined,
+      silenceMs: silence && silence.took != null ? silence.took : undefined,
+      speed: top(this.byRate) == null ? undefined : top(this.byRate),
+      layout: top(this.byLayout) || undefined,
+      keys: this.keys, clicks: this.clicks,
+      features: this.features,
+      changed: changedPrefs(x.prefs),
+      screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
+      chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
+      pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
+      pageFixes: deck ? deck.corrections || 0 : undefined,
+      layoutUndos: x.emptyScreen() ? x.emptyScreen().undos : undefined,
+      renewOk: ses ? ses.renewals : undefined,
+      renewFail: ses ? ses.failures : undefined,
+      frontend: echoFrontend() || undefined,
+    };
+    return s;
+  }
+
+  // Sends the summary so far (the Worker keeps the latest of this session).
+  report(last) {
+    try {
+      if (!telemetry.enabled()) return;
+      const now = performance.now();
+      if ((now - this.opened) / 1000 < TELEMETRY_MIN_OPEN_SEC) return;
+      // Hidden and then closed: one summary is enough.
+      if (now - this.lastReport < 2000) return;
+      this.lastReport = now;
+      telemetry.send([this.summary()], last);
+      telemetry.flushErrors(last);
+    } catch (e) { /* not sent */ }
+  }
+}
+
 // ---- 90-main.js ----
 // ===================================================================================
 // Bootstrap
@@ -12980,6 +13665,8 @@ function diagnosticsText(p) {
 
   adapter.intercept((arg, callOriginal) => {
     booted = true;
+    // Why the page goes to the original player (usage data): the player's reasons.
+    const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
     if (store.get('forceOriginal', false)) {
       startOriginal(callOriginal, arg, null);
       return undefined;
@@ -12993,15 +13680,17 @@ function diagnosticsText(p) {
         api: adapter.api ? (l) => adapter.api(l) : null,
         onFallback(reason) {
           log.info('switching to the original player (' + reason + ')');
+          telemetry.fallback(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
           try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
           startOriginal(callOriginal, handoff, null);
         },
       });
-      if (store.get('debug', false)) { window.__litePlayerForEcho360 = player; window.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold }; } // development only
+      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv }; } // development only
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
+        telemetry.fallback('coreError');
         let handoff = arg;
         try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
         startOriginal(callOriginal, handoff, tr('errorNotice'));
@@ -13010,6 +13699,7 @@ function diagnosticsText(p) {
         + (lesson.analytics ? 'on' : 'off') + ')');
     } catch (e) {
       log.warn('could not start, using the original player:', e);
+      try { telemetry.fallback(canPlayHls() ? 'startFailed' : 'noHls'); } catch (err) { /* not sent */ }
       startOriginal(callOriginal, arg, tr('fallbackNotice'));
     }
     return undefined;
@@ -13025,6 +13715,7 @@ function diagnosticsText(p) {
       if (booted) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
       log.info('player bootstrap not seen; leaving the original player in place');
+      telemetry.fallback('noBootstrap');
       cpuFix.start();
       notice(tr('fallbackNotice'));
     };

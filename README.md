@@ -73,12 +73,27 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 
 ## Privacy
 
-- The script only runs on Echo360 lecture pages and sends nothing anywhere except Echo360 itself.
+- The script only runs on Echo360 lecture pages. Apart from Echo360 itself, it sends data to one place only: the anonymous usage data described below, which you can turn off.
 - Settings, resume positions and analysis caches are stored only in your browser (localStorage and IndexedDB).
 - hls.js is loaded from jsDelivr at a pinned version with its SHA-256 hash (Tampermonkey refuses a file that does not match, and the script then leaves the original player in place; Violentmonkey does not check hashes yet); pdf.js and Tesseract.js (text recognition) are loaded at pinned versions only when a recording has a slide PDF. Text recognition runs in your browser.
 - Tags, watch progress, slide files and backups stay on your device. Exports and backups never contain the video or its address.
 - Nothing is ever posted for you. Writes to Echo360 (notes, posts, flags) only happen when you click. Anything your instructors or classmates can see is labelled before you send it.
 - There is no download feature.
+
+### Anonymous usage data
+
+On by default; **Settings (⋮) > Usage data** turns it off, and sending stops at once. It helps find problems that only show on some computers and decide what to improve.
+
+- **What is sent:**
+  - the computer and browser, at most once a day: script, browser, system and script-manager versions, interface language, desktop or touch, screen size and scaling, CPU cores, memory and graphics card (when the browser tells), whether WebGPU, WebCodecs and the browser's built-in AI are available, network type and estimated speed;
+  - one summary per viewing: time played, how much the player loaded the computer (long main-thread tasks, dropped frames, memory, time to the first picture, rebuffering, how long the background analyses took), how often each feature was used, the speed and layout used most, keys against clicks, the *names* of settings you changed from their defaults, and how the analyses did (how the screen view was found, chapters per hour, how much of the time the PDF follower recognised no page, corrections by hand, automatic layout changes undone);
+  - switches to the original player and why, renewals of the video access that worked or failed, and the version of Echo360's page code (the names of its script files);
+  - errors: the feature, the error type and the message with web addresses, e-mail addresses, quoted text, ids and numbers removed.
+- **What is never sent:** your name, account, student number or e-mail; which courses or recordings you watch, their titles or addresses; anything you write (notes, tags, discussion); captions or slide content; your IP address.
+- **Where:** a Cloudflare Worker and D1 database run for this project (code in [`telemetry-worker/`](telemetry-worker/)). The Worker keeps only the listed fields and drops everything else. It keeps the country, region and network provider Cloudflare derives from the request, never the IP address; the address only serves as the key of a one-minute rate-limit counter. Requests are not logged. The data is kept with no automatic deletion.
+- **Who you are to it:** on first use the script makes a random secret, kept by your script manager and never shown or exported. Your data is stored under the SHA-256 hash of that secret. Viewing or deleting needs the secret itself, so someone who learns the hash can neither read nor delete your data.
+- **Your data:** **Settings > Usage data** has *View my data* (a table, and a JSON download), *Delete all my data* (asks first, then deletes at once on the server) and *Reset my ID* (a new secret; it offers to delete the old data first, since the old ID can no longer be used afterwards).
+- Greasy Fork's label for this is `@antifeature tracking`.
 
 ## Known limitations
 

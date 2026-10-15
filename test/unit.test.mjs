@@ -1798,3 +1798,22 @@ test('camera for an empty screen: only long stretches, planned ahead; a hand-cho
   g.d.dispose();
   assert.equal(g.st.shown, null);
 });
+
+test('touch: the shared controls are at least 44 px high on a coarse pointer (DESIGN.md)', () => {
+  const src = readFileSync(join(root, 'src', '30-ui-assets.js'), 'utf8');
+  const css = src.slice(src.indexOf('const PLAYER_CSS = `'));
+  // The contents of every @media (pointer: coarse) block.
+  const coarse = [];
+  for (let i = css.indexOf('@media (pointer: coarse)'); i >= 0; i = css.indexOf('@media (pointer: coarse)', i + 1)) {
+    let depth = 0;
+    const open = css.indexOf('{', i);
+    for (let j = open; j < css.length; j++) {
+      if (css[j] === '{') depth++;
+      else if (css[j] === '}' && --depth === 0) { coarse.push(css.slice(open + 1, j)); break; }
+    }
+  }
+  const tall = (sel) => coarse.some((block) => [...block.matchAll(/([^{}]+)\{([^}]*)\}/g)].some(([, s, body]) =>
+    s.split(',').some((x) => x.trim() === sel) && /(?:^|;)\s*(?:min-)?height:\s*(\d+)px/.test(body) && +/(?:min-)?height:\s*(\d+)px/.exec(body)[1] >= 44));
+  // Text buttons (dialogs, panels, errors), text links, small selects, menu rows, chips, tabs.
+  for (const sel of ['.pbtn', '.link', '.input.small', '.mi', '.chip', '.tabs button']) assert.ok(tall(sel), sel);
+});

@@ -13,8 +13,17 @@
 // lectures.local.json (not committed: lesson ids show which courses an account takes):
 //   [{ "name": "ELEC2134 2026-09-15", "lesson": "G_..._2026-09-15T16:05:00.000_2026-09-15T19:00:00.000", "expect": { "blackEnd": true } }, ...]
 // Nothing is written to Echo360 (dry run on for public writes; the test writes nothing
-// private either). Viewing is reported as usual, like watching a few seconds.
-import { readFileSync, writeFileSync } from 'node:fs';
+// private either). Viewing is reported as usual, like watching a few seconds: Echo360's
+// own record of the last position played changes, and cannot be put back without
+// reporting viewing that did not happen. Everything this player keeps in the browser for
+// the user (settings, resume positions, the recordings whose layout was chosen by hand,
+// watched parts, tags, slide files and corrections, the view chosen as the screen) is
+// saved before the run and put back after it, also when the run is stopped (Ctrl+C). The
+// copy is also kept in test/smoke/saved-user-data.local.json until it is back: when the
+// tab stops answering it goes back through a new tab, and a run that could not put it
+// back (killed, browser gone) is put right by the next run before it starts.
+// Analysis caches are kept (they only save work). Telemetry is off during the run.
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -90,6 +99,20 @@ async function cdpDriver(log) {
       await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
       await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
     },
+    // In a tab of its own (opened and closed here), for when this one stops answering.
+    inNewTab: async (url, expr) => {
+      const t = await (await fetch(`http://127.0.0.1:${port}/json/new?${url}`, { method: 'PUT' })).json();
+      const s = await socket(t.webSocketDebuggerUrl);
+      try {
+        await sleep(2000);
+        const r = await s.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+        if (r.exceptionDetails) throw new Error(r.exceptionDetails.text);
+        return r.result.value;
+      } finally {
+        s.close();
+        await fetch(`http://127.0.0.1:${port}/json/close/${t.id}`).catch(() => {});
+      }
+    },
     close: () => c.close(),
   };
 }
@@ -123,6 +146,17 @@ async function bidiDriver(log) {
     key: (k) => c.send('input.performActions', { context, actions: [{ type: 'key', id: 'kb', actions: [{ type: 'keyDown', value: k }, { type: 'keyUp', value: k }] }] }),
     click: (x, y) => c.send('input.performActions', { context, actions: [{ type: 'pointer', id: 'mouse', parameters: { pointerType: 'mouse' },
       actions: [{ type: 'pointerMove', x: Math.round(x), y: Math.round(y) }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] }] }),
+    inNewTab: async (url, expr) => {
+      const tab = (await c.send('browsingContext.create', { type: 'tab' })).context;
+      try {
+        await c.send('browsingContext.navigate', { context: tab, url, wait: 'complete' });
+        const r = await c.send('script.evaluate', { expression: `(async () => JSON.stringify(await (${expr})))()`, target: { context: tab }, awaitPromise: true, resultOwnership: 'none' });
+        if (r.type === 'exception') throw new Error(r.exceptionDetails.text);
+        return r.result.value === undefined ? undefined : JSON.parse(r.result.value);
+      } finally {
+        await c.send('browsingContext.close', { context: tab }).catch(() => {});
+      }
+    },
     close: () => c.send('session.end', {}).catch(() => {}).then(() => c.close()),
   };
 }
@@ -138,7 +172,7 @@ const version = /@version\s+(\S+)/.exec(lite)[1];
 // be this build, and run in the page, as with Violentmonkey's @inject-into page).
 const inject = !process.argv.includes('--no-inject');
 await driver.addInitScript('if (/^https:\\/\\/echo360\\.net\\.au\\/(lesson\\/|section\\/[^/]+\\/home)/.test(location.href)) {\n'
-  + 'try { localStorage.setItem("lite-player-for-echo360:debug", "true"); localStorage.setItem("lite-player-for-echo360:dryRun", "\\"public\\""); } catch (e) {}\n'
+  + 'try { localStorage.setItem("lite-player-for-echo360:debug", "true"); localStorage.setItem("lite-player-for-echo360:dryRun", "\\"public\\""); localStorage.setItem("lite-player-for-echo360:telemetryOff", "true"); } catch (e) {}\n'
   + (inject ? hls + '\n;\n' + lite : '') + '\n}\n//# sourceURL=lite-player-for-echo360.user.js');
 
 const evalIn = (expr) => driver.evaluate(expr);
@@ -160,6 +194,78 @@ const open = async (lesson) => {
   await sleep(1500);
   return until(`!!(${P} && ${P}.video)`, 40);
 };
+// ---- the user's own data in this browser: saved before the run, put back after ----
+// On a page of the same site without the player (nothing running that could write).
+// Records in IndexedDB as the backup knows them (85-export.js, BACKUP_KEYS).
+const USER_RECORDS = '/^(tags|tagmap|deck|deckref|watched|screenpick):/';
+const NEUTRAL = 'https://echo360.net.au/robots.txt';
+const snapshotJs = `(async () => {
+  const NS = 'lite-player-for-echo360:';
+  const local = {};
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith(NS)) local[k] = localStorage.getItem(k); }
+  // Never create the database here: one made without its store would break the player.
+  const dbs = indexedDB.databases ? await indexedDB.databases() : [];
+  if (!dbs.some((d) => d.name === 'lite-player-for-echo360')) return { local, db: null };
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('lite-player-for-echo360'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const out = {};
+  if (db.objectStoreNames.contains('cache')) {
+    const os = db.transaction('cache').objectStore('cache');
+    const keys = await new Promise((res) => { const r = os.getAllKeys(); r.onsuccess = () => res(r.result); });
+    for (const k of keys.filter((k) => ${USER_RECORDS}.test(String(k)))) out[k] = await new Promise((res) => { const r = os.get(k); r.onsuccess = () => res(r.result); });
+  }
+  db.close();
+  return { local, db: out };
+})()`;
+const restoreJs = (snap) => `(async () => {
+  const snap = ${JSON.stringify(snap)};
+  const NS = 'lite-player-for-echo360:';
+  for (const k of Object.keys(localStorage)) if (k.startsWith(NS) && !(k in snap.local)) localStorage.removeItem(k);
+  for (const [k, v] of Object.entries(snap.local)) localStorage.setItem(k, v);
+  const dbs = indexedDB.databases ? await indexedDB.databases() : [];
+  if (!dbs.some((d) => d.name === 'lite-player-for-echo360')) return 'ok';
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('lite-player-for-echo360'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  if (db.objectStoreNames.contains('cache')) {
+    const tx = db.transaction('cache', 'readwrite');
+    const os = tx.objectStore('cache');
+    const keys = await new Promise((res) => { const r = os.getAllKeys(); r.onsuccess = () => res(r.result); });
+    const before = snap.db || {};
+    for (const k of keys) if (${USER_RECORDS}.test(String(k)) && !(k in before)) os.delete(k);
+    for (const [k, v] of Object.entries(before)) os.put(v, k);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  }
+  db.close();
+  return 'ok';
+})()`;
+// The records are plain data (slide files themselves, deckfile:, are not touched by the
+// run and not copied).
+// Not committed: resume positions and tags name the user's recordings.
+const SAVED_FILE = join(root, 'test', 'smoke', 'saved-user-data.local.json');
+let saved = null;
+async function saveUserData() {
+  if (existsSync(SAVED_FILE)) {
+    process.stderr.write('smoke: the last run did not put the saved data back; doing it now\n');
+    saved = JSON.parse(readFileSync(SAVED_FILE, 'utf8'));
+    await restoreUserData();
+  }
+  await driver.navigate(NEUTRAL);
+  await sleep(1000);
+  saved = await evalIn(snapshotJs);
+  writeFileSync(SAVED_FILE, JSON.stringify(saved));
+}
+async function restoreUserData() {
+  if (!saved) return;
+  try {
+    await driver.navigate(NEUTRAL);
+    await sleep(1000);
+    await evalIn(restoreJs(saved));
+  } catch (e) {
+    process.stderr.write('smoke: the tab did not answer (' + e.message + '); putting the data back in a new tab\n');
+    await driver.inNewTab(NEUTRAL, restoreJs(saved));
+  }
+  saved = null;
+  unlinkSync(SAVED_FILE);
+}
+
 const state = () => evalIn(`(() => { const p = ${P}; const v = p.video; return { t: v.currentTime, paused: v.paused, ready: v.readyState, layout: p.layout, dual: p.dual, primary: p.primaryPos, fready: p.fvideo.readyState }; })()`);
 
 // ---- the checklist ----
@@ -267,11 +373,33 @@ async function smoke(lec) {
   return r;
 }
 
+await saveUserData();
+let restoring = null;
+let notPutBack = false;
+const putBack = () => {
+  if (!restoring) {
+    restoring = restoreUserData().catch((e) => {
+      notPutBack = true;
+      console.error('smoke: could not put the saved data back (' + e.message + '); it is in ' + SAVED_FILE + ' and the next run puts it back first');
+    });
+  }
+  return restoring;
+};
+// Stopped: the data goes back first, then the browser session ends (replaces the driver's
+// own handler).
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.removeAllListeners(sig);
+  process.on(sig, () => {
+    setTimeout(() => process.exit(130), 20000);
+    putBack().finally(() => Promise.resolve(driver.close()).catch(() => {}).finally(() => process.exit(130)));
+  });
+}
 const results = [];
 for (const lec of lectures) {
   process.stderr.write('smoke: ' + lec.name + '...\n');
   try { results.push(await smoke(lec)); } catch (e) { results.push({ name: lec.name, checks: [{ name: 'runs', ok: false, detail: e.message }], notes: [] }); }
 }
+await putBack();
 await driver.close();
 
 const lines = [`Smoke test, ${label} (${driver.product}), Lite Player for Echo360 ${version}, ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`, ''];
@@ -283,4 +411,5 @@ for (const r of results) {
 const text = lines.join('\n');
 console.log(text);
 if (arg('out')) writeFileSync(arg('out'), text + '\n');
-process.exit(results.every((r) => r.checks.every((x) => x.ok)) ? 0 : 1);
+if (notPutBack) console.log('\nThe saved data was NOT put back (see above).');
+process.exit(!notPutBack && results.every((r) => r.checks.every((x) => x.ok)) ? 0 : 1);

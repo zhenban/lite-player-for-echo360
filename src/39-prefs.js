@@ -26,6 +26,7 @@ function prefDefaults() {
     quality: { screen: 'auto', camera: 'auto' },
     theme: 'system',
     lang: 'auto',
+    telemetry: true,
   };
 }
 
@@ -75,6 +76,7 @@ function sanitizePrefs(raw) {
     theme: oneOf(r.theme, THEMES, d.theme),
     // 'auto' or a language code; one without a table means English (uiLang).
     lang: typeof r.lang === 'string' && /^(auto|[a-z]{2})$/.test(r.lang) ? r.lang : d.lang,
+    telemetry: bool(r.telemetry, d.telemetry),
   };
 }
 

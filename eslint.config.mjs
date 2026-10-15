@@ -31,9 +31,14 @@ export default [
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'script',
-      globals: { ...globals.browser, ...shared, Hls: 'readonly', GM_info: 'readonly', VERSION: 'readonly' },
+      globals: { ...globals.browser, ...shared, Hls: 'readonly', GM_info: 'readonly', GM_xmlhttpRequest: 'readonly', GM_getValue: 'readonly', GM_setValue: 'readonly', unsafeWindow: 'readonly', VERSION: 'readonly' },
     },
     rules: { ...rules, 'no-redeclare': 'off' },
+  },
+  {
+    files: ['telemetry-worker/src/**/*.js'],
+    languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.serviceworker } },
+    rules,
   },
   {
     files: ['test/**/*.mjs', 'build.mjs', 'eslint.config.mjs'],

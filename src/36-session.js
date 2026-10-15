@@ -35,6 +35,7 @@ class SessionKeeper {
     this.pending = null;
     this.failed = null;           // { login } once renewal has given up
     this.renewals = 0;
+    this.failures = 0;            // renewals that failed (each after its retries)
     this.d = opts.disposer;
     this.timer = 0;
     // Once the player is gone (falling back to the original player), nothing may start
@@ -71,6 +72,7 @@ class SessionKeeper {
       this.onState('ok');
     }, (e) => {
       if (this.disposed) throw e;
+      this.failures++;
       // A routine renewal that could not reach the server is tried again later; the
       // cookies are still valid for a while.
       if ((e && e.login) || afterFailure) {

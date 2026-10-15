@@ -61,6 +61,7 @@ class MenuBar {
     d.listen($('.textbtn'), 'click', () => this.copyCaptions());
     d.listen($('.diagclose'), 'click', (e) => { e.stopPropagation(); this.showDiagnostics(false); });
     d.listen($('.diagbox'), 'click', (e) => { if (e.target === $('.diagbox')) this.showDiagnostics(false); });
+    d.listen($('.tdbox'), 'click', (e) => { if (e.target === $('.tdbox')) this.showMyData(false); });
     d.listen($('.diagcopy'), 'click', (e) => {
       e.stopPropagation();
       navigator.clipboard.writeText($('.diagtext').textContent)
@@ -126,12 +127,13 @@ class MenuBar {
       { kind: 'page', label: tr('theme'), value: () => tr(themeKey(x.prefs.theme)), items: () => this.themeItems() },
       { kind: 'page', label: tr('language'), value: () => langLabel(x.prefs.lang), items: () => this.langItems() },
       { kind: 'sep' },
-      { kind: 'action', label: tr('popout'), key: 'W', run: () => a.popout(), hidden: () => !a.popout },
+      { kind: 'action', label: tr('popout'), key: 'W', run: () => { telemetry.use('popout', 'click'); a.popout(); }, hidden: () => !a.popout },
       { kind: 'page', label: tr('loopMenu'), value: a.loopLabel, items: () => this.loopItems() },
-      { kind: 'action', label: tr('exportNotes'), key: 'E', run: () => a.exportNotes(), hidden: () => !a.exportNotes },
-      { kind: 'action', label: tr('keysMenu'), key: '?', run: () => a.showKeys() },
+      { kind: 'action', label: tr('exportNotes'), key: 'E', run: () => { telemetry.use('exportNotes', 'click'); a.exportNotes(); }, hidden: () => !a.exportNotes },
+      { kind: 'action', label: tr('keysMenu'), key: '?', run: () => { telemetry.use('help', 'click'); a.showKeys(); } },
       { kind: 'page', label: tr('storageMenu'), items: () => this.storageItems() },
-      { kind: 'action', label: tr('useOriginal'), run: () => a.original() },
+      { kind: 'page', label: tr('telemetryMenu'), value: () => tr(x.prefs.telemetry ? 'on' : 'off'), items: () => this.telemetryItems() },
+      { kind: 'action', label: tr('useOriginal'), run: () => { telemetry.use('original', 'click'); a.original(); } },
       { kind: 'foot', text: tr('appVersion', { version: VERSION }) },
     ];
   }
@@ -177,7 +179,7 @@ class MenuBar {
   themeItems() {
     const x = this.x;
     return [
-      ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => x.setTheme(t) })),
+      ...THEMES.map((t) => ({ kind: 'radio', label: tr(themeKey(t)), checked: () => x.prefs.theme === t, select: () => { telemetry.use('theme', 'click'); x.setTheme(t); } })),
       { kind: 'text', text: () => tr('themeNote') },
     ];
   }
@@ -185,7 +187,7 @@ class MenuBar {
   langItems() {
     const x = this.x;
     return [
-      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => x.setLang(l) })),
+      ...UI_LANGS.map((l) => ({ kind: 'radio', label: langLabel(l), checked: () => x.prefs.lang === l, select: () => { telemetry.use('language', 'click'); x.setLang(l); } })),
       { kind: 'text', text: () => tr('langNote') },
     ];
   }
@@ -193,8 +195,8 @@ class MenuBar {
   loopItems() {
     const a = this.x.actions;
     return [
-      { kind: 'action', label: tr('loopFromHere'), key: 'I', run: () => a.loopA() },
-      { kind: 'action', label: tr('loopToHere'), key: 'O', run: () => a.loopB() },
+      { kind: 'action', label: tr('loopFromHere'), key: 'I', run: () => { telemetry.use('loop', 'click'); a.loopA(); } },
+      { kind: 'action', label: tr('loopToHere'), key: 'O', run: () => { telemetry.use('loop', 'click'); a.loopB(); } },
       { kind: 'action', label: tr('loopClear'), key: 'X', run: () => a.loopClear(), reason: () => (a.loopLabel() === tr('loopNone') ? tr('loopNone') : '') },
     ];
   }
@@ -217,8 +219,91 @@ class MenuBar {
       { kind: 'custom', render: () => row },
       { kind: 'text', text: () => tr('cachesInfo') },
       { kind: 'sep' },
-      { kind: 'action', label: tr('diagMenu'), run: () => this.showDiagnostics(true) },
+      { kind: 'action', label: tr('diagMenu'), run: () => { telemetry.use('diagnostics', 'click'); this.showDiagnostics(true); } },
     ];
+  }
+
+  // ---- usage data (87-telemetry.js) ----
+
+  telemetryItems() {
+    const x = this.x;
+    return [
+      {
+        kind: 'toggle', label: tr('telemetrySend'), desc: tr('telemetryDesc'), on: () => !!x.prefs.telemetry,
+        set: (on) => { x.prefs.telemetry = !!on; x.savePrefs(); telemetry.setEnabled(on); },
+      },
+      { kind: 'sep' },
+      { kind: 'action', label: tr('telemetryView'), run: () => this.showMyData('view') },
+      { kind: 'action', label: tr('telemetryDelete'), run: () => this.showMyData('delete') },
+      { kind: 'action', label: tr('telemetryReset'), run: () => this.showMyData('reset') },
+    ];
+  }
+
+  get myDataOpen() { return !this.x.$('.tdbox').hidden; }
+
+  // The dialog for the data sent so far: 'view' (tables, download), 'delete' (asks first),
+  // 'reset' (a new ID, optionally deleting first), false (close).
+  showMyData(mode) {
+    const x = this.x;
+    const box = x.$('.tdbox');
+    if (mode === false) { box.hidden = true; this.myDataJob = null; x.$('.morebtn').focus({ preventScroll: true }); return; }
+    const job = {};
+    this.myDataJob = job;
+    const body = x.$('.tdbody');
+    const acts = x.$('.tdactions');
+    const set = (title, nodes, buttons) => {
+      if (this.myDataJob !== job) return;
+      x.$('.tdtitle').textContent = title;
+      body.replaceChildren(...nodes);
+      acts.replaceChildren(...buttons);
+      // The first button: never the one that deletes.
+      if (buttons[0]) buttons[0].focus();
+    };
+    const btn = (label, fn, cls) => el('button.pbtn' + (cls || ''), { text: label, onclick: (e) => { e.stopPropagation(); fn(); } });
+    const close = btn(tr('close'), () => this.showMyData(false));
+    const failed = (r) => tr('telemetryFailed', { msg: r.status ? 'HTTP ' + r.status : tr('telemetryNoAnswer') });
+    const del = (then) => {
+      set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryLoading') })], []);
+      telemetry.ask('/v1/me/delete').then((r) => {
+        if (r.status !== 200 || !r.data || !r.data.deleted) { set(tr('telemetryDeleteTitle'), [el('p', { text: failed(r) })], [close]); return; }
+        const n = Object.values(r.data.deleted).reduce((a, b) => a + (+b || 0), 0);
+        if (then) then(n); else set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleted', { n }) })], [close]);
+      });
+    };
+    const reset = (n) => {
+      telemetry.resetIdentity();
+      this.showMyData(false);
+      x.toast(n == null ? tr('telemetryResetDone') : tr('telemetryDeleted', { n }) + ' ' + tr('telemetryResetDone'));
+    };
+    box.hidden = false;
+    if (mode === 'delete') {
+      set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleteText') })], [close, btn(tr('telemetryDeleteConfirm'), () => del(null), '.danger')]);
+      return;
+    }
+    if (mode === 'reset') {
+      set(tr('telemetryResetTitle'), [el('p', { text: tr('telemetryResetText') })],
+        [btn(tr('cancel'), () => this.showMyData(false)), btn(tr('telemetryResetOnly'), () => reset(null)), btn(tr('telemetryResetDelete'), () => del(reset), '.danger')]);
+      return;
+    }
+    set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryLoading') })], [close]);
+    telemetry.ask('/v1/me').then((r) => {
+      if (r.status !== 200 || !r.data) { set(tr('telemetryDataTitle'), [el('p', { text: failed(r) })], [close]); return; }
+      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback' };
+      const nodes = [];
+      for (const [k, label] of Object.entries(kinds)) {
+        const rows = Array.isArray(r.data[k]) ? r.data[k] : [];
+        if (!rows.length) continue;
+        const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+        const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
+        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }),
+          el('div.tdscroll', null, el('table', null,
+            el('thead', null, el('tr', null, ...cols.map((c) => el('th', { text: c })))),
+            el('tbody', null, ...rows.map((row) => el('tr', null, ...cols.map((c) => el('td', { text: cell(c, row[c]) }))))))));
+      }
+      if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
+      const json = JSON.stringify(r.data, null, 2);
+      set(tr('telemetryDataTitle'), nodes, [btn(tr('telemetryDownload'), () => platform.save(new Blob([json], { type: 'application/json' }), 'lite-player-usage-data.json')), close]);
+    });
   }
 
   // ---- captions ----
