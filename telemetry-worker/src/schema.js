@@ -20,6 +20,8 @@ const num = (lo, hi) => (v) => (typeof v === 'number' && Number.isFinite(v) && v
 const bool = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : null);
 const text = (re, max) => (v) => (typeof v === 'string' && v.length <= max && re.test(v) ? v : null);
 const oneOf = (list) => (v) => (list.includes(v) ? v : null);
+// Two significant digits (the player rounds timings so; done again here).
+const num2 = (lo, hi) => (v) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? Number(v.toPrecision(2)) : null);
 
 // Features whose use is counted (the player's feature ids, 87-telemetry.js).
 export const FEATURES = [
@@ -44,6 +46,28 @@ const counts = (names) => (v) => {
   for (const [k, n] of Object.entries(v)) if (names.includes(k) && Number.isInteger(n) && n > 0 && n <= 100000) out[k] = n;
   return Object.keys(out).length ? JSON.stringify(out) : null;
 };
+// { key: number } with keys matching `re` (at most `most`) and values in [lo, hi].
+const keyed = (re, most, lo, hi, whole) => (v) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const entries = Object.entries(v);
+  if (entries.length > most) return null;
+  const out = {};
+  for (const [k, n] of entries) {
+    if (!re.test(k) || typeof n !== 'number' || !Number.isFinite(n) || n < lo || n > hi || (whole && !Number.isInteger(n))) continue;
+    out[k] = whole ? n : Number(n.toPrecision(2));
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+};
+// Shares in percent: { name: 0..100 }.
+const shares = (re) => keyed(re, 12, 0, 100, false);
+// Counts: { name: times }.
+const tally = (re) => keyed(re, 20, 1, 1000000, true);
+const THEMES = ['system', 'dark', 'light'];
+// Measures of the analyses' real work (median, 90th percentile and count each) and the
+// fixed steps that time this computer (87-telemetry.js: WORK_MEASURES, FIXED_STEPS).
+const WORK = [['scanFrame', 'scan_frame'], ['silenceMin', 'silence_min'], ['ocrMpx', 'ocr_mpx'], ['pdfMpx', 'pdf_mpx']];
+const STEPS = ['luma', 'loud'];
+
 // A list of known names.
 const names = (list) => (v) => {
   if (!Array.isArray(v) || v.length > list.length) return null;
@@ -93,6 +117,19 @@ export const KINDS = {
     ['builtinAi', 'builtin_ai', bool],
     ['netType', 'net_type', oneOf(['slow-2g', '2g', '3g', '4g'])],
     ['downlink', 'downlink', num(0, 100000)],
+    ['gpuVendor', 'gpu_vendor', text(/^[\w .-]+$/, 40)],
+    ['gpuArch', 'gpu_arch', text(/^[\w .-]+$/, 40)],
+    ['gpuFallback', 'gpu_fallback', bool],
+    ['gpuF16', 'gpu_f16', bool],
+    ['hw720', 'hw720', bool],
+    ['hw1080', 'hw1080', bool],
+    ['arch', 'arch', oneOf(['x86', 'arm', 'other'])],
+    ['bitness', 'bitness', oneOf([32, 64])],
+    ['osV', 'os_v', int(0, 999)],
+    ['mobile', 'mobile', bool],
+    ['charging', 'charging', bool],
+    ['pressureApi', 'pressure_api', bool],
+    ['timerUs', 'timer_us', num2(0, 1000000)],
   ],
   session: [
     ['sid', 'sid', text(SID, 16)],
@@ -122,6 +159,63 @@ export const KINDS = {
     ['renewOk', 'renew_ok', int(0, 100000)],
     ['renewFail', 'renew_fail', int(0, 100000)],
     ['frontend', 'frontend', text(/^[\w.,-]+$/, 160)],
+    // Watching
+    ['fromLoad', 'from_load', bool],
+    ['readyMs', 'ready_ms', int(0, 3600000)],
+    ['seekN', 'seek_n', int(0, 1000000)],
+    ['seekMs50', 'seek_ms50', num2(0, 3600000)],
+    ['seekMs90', 'seek_ms90', num2(0, 3600000)],
+    ['rebufferPct', 'rebuffer_pct', num2(0, 100)],
+    ['quality', 'quality', shares(/^\d{2,4}$/)],
+    ['levelSwitches', 'level_switches', int(0, 1000000)],
+    ['bwKbps', 'bw_kbps', num2(0, 10000000)],
+    ['syncMs50', 'sync_ms50', num2(0, 3600000)],
+    ['syncMsMax', 'sync_ms_max', num2(0, 3600000)],
+    // Responsiveness and load
+    ['inputN', 'input_n', int(0, 1000000)],
+    ['inputMs50', 'input_ms50', num2(0, 600000)],
+    ['inputMs90', 'input_ms90', num2(0, 600000)],
+    ['inputSlow', 'input_slow', int(0, 1000000)],
+    ['longTasks', 'long_tasks', int(0, 10000000)],
+    ['pressure', 'pressure', shares(/^(nominal|fair|serious|critical)$/)],
+    ['batteryPct', 'battery_pct', num2(0, 100)],
+    // Background analyses
+    ['streamMbPerHour', 'stream_mb_ph', num2(0, 100000)],
+    ['bgMbPerHour', 'bg_mb_ph', num2(0, 100000)],
+    ['cacheHit', 'cache_hit', int(0, 100000)],
+    ['cacheMiss', 'cache_miss', int(0, 100000)],
+    ['chaptersMs', 'chapters_ms', num2(0, 86400000)],
+    ['pdfMs', 'pdf_ms', num2(0, 86400000)],
+    // Stability
+    ['guardOff', 'guard_off', tally(/^[a-z][a-z ()-]{0,39}$/)],
+    ['uncaught', 'uncaught', int(0, 1000000)],
+    ['netErrors', 'net_errors', tally(/^(401|403|4xx|5xx|timeout|network|other)$/)],
+    ['streamErrors', 'stream_errors', tally(/^[A-Za-z]{1,40}$/)],
+    // Habits
+    ['watchedPct', 'watched_pct', num2(0, 100)],
+    ['speeds', 'speeds', shares(/^\d(\.\d{1,3})?$/)],
+    ['skipSilenceSec', 'skip_silence_sec', int(0, 86400)],
+    ['skipBlankSec', 'skip_blank_sec', int(0, 86400)],
+    ['lang', 'lang', text(/^[a-z]{2}$/, 2)],
+    ['theme', 'theme', oneOf(THEMES)],
+    ['originalAfterSec', 'original_after_sec', int(0, 86400)],
+    // The usage data itself
+    ['sendFail', 'send_fail', int(0, 100000)],
+    ['dropped', 'dropped', int(0, 100000)],
+    ['timerUs', 'timer_us', num2(0, 1000000)],
+    ...WORK.flatMap(([f, c]) => [
+      [f + 'Ms50', c + '_ms50', num2(0, 86400000)],
+      [f + 'Ms90', c + '_ms90', num2(0, 86400000)],
+      [f + 'N', c + '_n', int(0, 10000000)],
+    ]),
+    ...STEPS.flatMap((f) => [
+      [f + 'V', f + '_v', int(1, 999)],
+      [f + 'P10', f + '_p10', num2(0, 1000000)],
+      [f + 'P50', f + '_p50', num2(0, 1000000)],
+      [f + 'P90', f + '_p90', num2(0, 1000000)],
+      [f + 'N', f + '_n', int(0, 1000000)],
+      [f + 'Cond', f + '_cond', tally(/^(playing|paused|rate:\d(\.\d{1,3})?|cpu:(nominal|fair|serious|critical|unknown)|power:(ac|battery|unknown))$/)],
+    ]),
   ],
   error: [
     ['v', 'version', text(VERSION, 11)],

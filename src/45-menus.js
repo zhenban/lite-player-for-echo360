@@ -295,10 +295,23 @@ class MenuBar {
         if (!rows.length) continue;
         const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
         const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
-        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }),
-          el('div.tdscroll', null, el('table', null,
+        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }));
+        if (cols.length <= TELEMETRY_WIDE_COLS) {
+          nodes.push(el('div.tdscroll', null, el('table', null,
             el('thead', null, el('tr', null, ...cols.map((c) => el('th', { text: c })))),
             el('tbody', null, ...rows.map((row) => el('tr', null, ...cols.map((c) => el('td', { text: cell(c, row[c]) }))))))));
+          continue;
+        }
+        // Too many columns to read across: one record at a time, a field per line (the
+        // empty ones left out), newest first and open.
+        rows.forEach((row, i) => {
+          const filled = cols.filter((c) => row[c] != null && row[c] !== '');
+          const d = el('details.tdrec', null,
+            el('summary', { text: [cell('at', row.at), row.version].filter(Boolean).join(' · ') }),
+            el('div.tdscroll', null, el('table', null, el('tbody', null, ...filled.map((c) => el('tr', null, el('th', { text: c }), el('td', { text: cell(c, row[c]) })))))));
+          if (i === 0) d.open = true;
+          nodes.push(d);
+        });
       }
       if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
       const json = JSON.stringify(r.data, null, 2);

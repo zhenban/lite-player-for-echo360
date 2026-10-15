@@ -21,7 +21,7 @@ function loadSources(names, overrides) {
     document: { hidden: false, addEventListener() {}, removeEventListener() {} },
     localStorage: { getItem: () => null, setItem() {} },
     fetch: (...a) => ctx.__fetch(...a),
-    Blob, TextEncoder, AbortController, location: { origin: 'https://echo360.example', hash: '' },
+    Blob, TextEncoder, AbortController, performance, location: { origin: 'https://echo360.example', hash: '' },
     setInterval: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearInterval: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
     setTimeout, clearTimeout,

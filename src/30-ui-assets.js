@@ -353,6 +353,10 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .tdscroll table { border-collapse: collapse; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
 .tdscroll th, .tdscroll td { padding: 4px var(--sp2); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .tdscroll th { position: sticky; top: 0; background: var(--s1); font-weight: 600; }
+.tdrec { margin-top: var(--sp2); }
+.tdrec summary { padding: var(--sp1) 0; cursor: pointer; color: var(--text); font-variant-numeric: tabular-nums; }
+.tdrec .tdscroll th { position: static; font-weight: 400; color: var(--text-2); }
+@media (pointer: coarse) { .tdrec summary { min-height: 44px; display: flex; align-items: center; } }
 .pbtn.danger { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
 .diagtext { max-height: 50vh; overflow: auto; margin: 0 0 var(--sp4); padding: 10px var(--sp3); border-radius: var(--r2); background: var(--s1);
   font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }

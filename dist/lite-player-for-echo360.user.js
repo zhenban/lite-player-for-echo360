@@ -97,6 +97,19 @@ function clamp(v, lo, hi) {
 const unexpected = { handler: null };
 const featureErrors = { notify: null, seen: new Set() };
 
+// Usage data (87-telemetry.js) from code that knows nothing about it: never throws, and
+// costs a call when usage data is off.
+//   usageNote(kind, key, value)   something happened (a failed request, bytes loaded, ...)
+//   usageStep(step, version, units, ms)
+//                                 one run of a fixed amount of pure computation took ms
+//                                 (see FIXED_STEPS in 87-telemetry.js)
+function usageNote(kind, key, value) {
+  try { telemetry.note(kind, key, value); } catch (e) { /* not counted */ }
+}
+function usageStep(step, version, units, ms) {
+  try { telemetry.step(step, version, units, ms); } catch (e) { /* not counted */ }
+}
+
 function reportUnexpected(err) {
   console.error(TAG, 'unexpected error', err);
   try { telemetry.error('player core', err); } catch (e) { /* not counted */ }
@@ -112,6 +125,7 @@ function reportFeatureError(name, err) {
   try { telemetry.error(what, err); } catch (e) { /* not counted */ }
   if (featureErrors.seen.has(what)) return;
   featureErrors.seen.add(what);
+  usageNote('guardOff', what);
   if (featureErrors.notify) { try { featureErrors.notify(what, err); } catch (e) { /* ignore */ } }
 }
 
@@ -1437,6 +1451,14 @@ const TELEMETRY_RETRY_MS = [30000, 120000];   // waits before the two retries of
 const TELEMETRY_TIMEOUT_MS = 15000;    // one request
 const TELEMETRY_MIN_OPEN_SEC = 5;      // a viewing open shorter than this is not reported (a page passed through)
 const TELEMETRY_ENV_DELAY_MS = 30000;  // the environment (once a day) is read this long after start, once playback has settled
+const TELEMETRY_STEP_BATCH_MS = 20;    // fixed steps are timed in batches of at least this much computation: one run (about 0.02 ms) is shorter than the browser's timer step (0.1 ms in Chrome, up to 1 ms elsewhere); 20 ms is 200 of Chrome's steps (user requirement: about 20 ms)
+const TELEMETRY_KEEP_VALUES = 400;     // values kept per measure of a viewing for its percentiles (a uniform random sample beyond that: memory stays small)
+const TELEMETRY_TIMER_PROBE_MS = 3;    // longest the timer's step is measured for, once a page (in idle time)
+const TELEMETRY_INPUT_MIN_MS = 16;     // Event Timing reports interactions from this long (the smallest durationThreshold the standard allows)
+const TELEMETRY_SLOW_INPUT_MS = 200;   // a slow interaction: web.dev's INP "good" limit
+const TELEMETRY_INPUT_MAX_MS = 10000;  // an interaction "answered" later than this was not drawn at all (window covered or not being drawn: Event Timing waits for the next frame shown; seen 181 s in a window behind others), not a delay anyone saw: left out
+const TELEMETRY_WIDE_COLS = 12;        // "View my data": a kind of record with more columns is shown a record at a time (a field per line)
+const TELEMETRY_PRESSURE_SAMPLE_MS = 2000;  // CPU pressure sampling asked of the browser (changes only are reported)
 
 // ---- 03-common.js ----
 // ===================================================================================
@@ -2897,6 +2919,10 @@ video, .pdfview { position: absolute; left: 0; top: 0; width: 100%; height: 100%
 .tdscroll table { border-collapse: collapse; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
 .tdscroll th, .tdscroll td { padding: 4px var(--sp2); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .tdscroll th { position: sticky; top: 0; background: var(--s1); font-weight: 600; }
+.tdrec { margin-top: var(--sp2); }
+.tdrec summary { padding: var(--sp1) 0; cursor: pointer; color: var(--text); font-variant-numeric: tabular-nums; }
+.tdrec .tdscroll th { position: static; font-weight: 400; color: var(--text-2); }
+@media (pointer: coarse) { .tdrec summary { min-height: 44px; display: flex; align-items: center; } }
 .pbtn.danger { background: var(--danger-bg); color: var(--danger); font-weight: 600; }
 .diagtext { max-height: 50vh; overflow: auto; margin: 0 0 var(--sp4); padding: 10px var(--sp3); border-radius: var(--r2); background: var(--s1);
   font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
@@ -3755,7 +3781,10 @@ class Stream {
         this.applyQuality(true);
         if (onReady) onReady();
       }));
-      hls.on(platform.Hls.Events.LEVEL_SWITCHED, guardCore(() => { if (this.onLevel) this.onLevel(); }));
+      // The first switch is the start; later ones are counted (usage data).
+      let switches = 0;
+      hls.on(platform.Hls.Events.LEVEL_SWITCHED, guardCore(() => { if (switches++) usageNote('level'); if (this.onLevel) this.onLevel(); }));
+      hls.on(platform.Hls.Events.FRAG_LOADED, (e, data) => { usageNote('streamBytes', null, data && data.frag && data.frag.stats ? data.frag.stats.loaded : 0); });
       // hls.js resets the MediaSource after some failed appends (refused segments can cause
       // them) and then starts over at startPosition: keep the position and play state.
       hls.on(platform.Hls.Events.MEDIA_DETACHING, guardCore(() => {
@@ -3801,6 +3830,9 @@ class Stream {
   onError(data) {
     if (!data || !this.hls) return;
     const code = data.response && data.response.code;
+    // Usage data: what went wrong (hls.js's name for it) and, for requests, how.
+    usageNote('stream', data.details);
+    if (data.type === platform.Hls.ErrorTypes.NETWORK_ERROR) usageNote('net', code || (/TimeOut$/.test(data.details || '') ? 'timeout' : 'network'));
     // Refused: hls.js would keep retrying for half a minute; renew the access now so that
     // one of its retries succeeds.
     if ((code === 401 || code === 403) && !data.fatal && this.onAuth) { this.onAuth(); return; }
@@ -4056,6 +4088,7 @@ class FollowerSync {
     if (c.paused || c.seeking || f.seeking || f.readyState < 2) return;
     const base = c.playbackRate;
     const drift = f.currentTime - c.currentTime;
+    usageNote('drift', null, Math.abs(drift) * 1000);
     if (Math.abs(drift) >= SYNC_SEEK_AT) {
       // Aim slightly ahead so the follower lands in sync once its seek completes.
       f.currentTime = c.currentTime + 0.1 * base;
@@ -4212,6 +4245,7 @@ class LitePlayer {
   }
 
   init(lesson, opts) {
+    this.startedAt = performance.now();   // usage data: times are measured from here
     this.lesson = lesson;
     this.opts = opts;
     // A feature that fails is announced once (playback goes on).
@@ -4302,7 +4336,9 @@ class LitePlayer {
         layout: () => (this.pdfMode ? 'pdf' : this.layout),
         slides: () => this.slides || null, deck: () => this.deck || null,
         silence: () => (this.silence && this.silence.analyzer) || null, emptyScreen: () => this.emptyScreen,
-        session: () => this.session, duration: () => this.duration(),
+        session: () => this.session, duration: () => this.duration(), startedAt: this.startedAt,
+        height: () => this.clock.height, bandwidth: () => (this.clock.hls ? this.clock.hls.bandwidthEstimate : NaN),
+        played: () => this.played.merged(this.video.played),
       }, this.d.child());
       telemetry.envDaily();
     });
@@ -5153,6 +5189,7 @@ class LitePlayer {
     }
     if (empty && this.emptyScreen) this.emptyScreen.tick(this.clock.position());
     this.renderChapterMarks();
+    if (a.chapters.length && this.usage) this.usage.mark('chapters');
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.
     if (!this.slidesPane && !a.chapters.length && a.state !== 'done' && a.state !== 'unavailable') return;
@@ -5186,6 +5223,7 @@ class LitePlayer {
         // The PDF view appears (pages loaded) or goes (files removed) with the deck.
         if (this.pdfMode !== this.shownPdfMode) { this.shownPdfMode = this.pdfMode; this.applyLayout(); }
         if (this.reader.active) this.reader.update(this.video.currentTime, true);
+        if (this.deck && this.deck.decided && this.usage) this.usage.mark('pdf');
       },
     });
     this.deck.restore().catch((e) => log.warn('slide files:', e && e.message ? e.message : e));
@@ -6383,10 +6421,23 @@ class MenuBar {
         if (!rows.length) continue;
         const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
         const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
-        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }),
-          el('div.tdscroll', null, el('table', null,
+        nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }));
+        if (cols.length <= TELEMETRY_WIDE_COLS) {
+          nodes.push(el('div.tdscroll', null, el('table', null,
             el('thead', null, el('tr', null, ...cols.map((c) => el('th', { text: c })))),
             el('tbody', null, ...rows.map((row) => el('tr', null, ...cols.map((c) => el('td', { text: cell(c, row[c]) }))))))));
+          continue;
+        }
+        // Too many columns to read across: one record at a time, a field per line (the
+        // empty ones left out), newest first and open.
+        rows.forEach((row, i) => {
+          const filled = cols.filter((c) => row[c] != null && row[c] !== '');
+          const d = el('details.tdrec', null,
+            el('summary', { text: [cell('at', row.at), row.version].filter(Boolean).join(' · ') }),
+            el('div.tdscroll', null, el('table', null, el('tbody', null, ...filled.map((c) => el('tr', null, el('th', { text: c }), el('td', { text: cell(c, row[c]) })))))));
+          if (i === 0) d.open = true;
+          nodes.push(d);
+        });
       }
       if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
       const json = JSON.stringify(r.data, null, 2);
@@ -6639,7 +6690,7 @@ class SilenceUi {
       e.stopPropagation();
       const s = this.skips[this.idx];
       this.hideSkip();
-      if (s) x.seek(s.end);
+      if (s) { usageNote('skip', s.kind, s.end - x.video.currentTime); x.seek(s.end); }
     });
   }
 
@@ -6722,6 +6773,7 @@ class SilenceUi {
       this.autoSkipped.add(s.start);
       const from = ct;
       this.hideSkip();
+      usageNote('skip', s.kind, s.end - from);
       x.seek(s.end);
       x.toast(tr(s.kind === 'blank' ? 'skippedBlank' : 'skippedSilence', { time: fmtTime(s.end - from) }), tr('undo'), () => x.seek(from));
       return;
@@ -9058,19 +9110,25 @@ function parseMediaPlaylist(text, base) {
 
 // A refused request (the video access has expired) renews the session once and retries
 // (see 36-session.js), so background work continues where it was.
+// Failures are counted for the usage data (the status, or 'network' for no answer).
 function fetchOk(url, init, renewed) {
   return fetch(url, Object.assign({ credentials: 'include' }, init)).then((r) => {
+    if (!r.ok) usageNote('net', r.status);
     if ((r.status === 401 || r.status === 403) && !renewed && mediaSession.renew) {
       return mediaSession.renew().then(() => fetchOk(url, init, true));
     }
     if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url.split('?')[0]);
     return r;
+  }, (e) => {
+    if (!(e && e.name === 'AbortError')) usageNote('net', 'network');
+    throw e;
   });
 }
 
+// Used by the background analyses only: what they download is counted (usage data).
 function fetchRange(url, offset, length, signal) {
   const headers = length === null ? {} : { Range: 'bytes=' + offset + '-' + (offset + length - 1) };
-  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer());
+  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer()).then((b) => { usageNote('bgBytes', null, b.byteLength); return b; });
 }
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot
@@ -9297,6 +9355,7 @@ class HlsAudioTrack {
     let o = 0;
     for (const p of parts) { bytes.set(new Uint8Array(p), o); o += p.byteLength; }
     const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const t0 = performance.now();
     const ab = await new Offline(1, sampleRate, sampleRate).decodeAudioData(bytes.buffer);
     let pcm = ab.getChannelData(0);
     if (ab.numberOfChannels > 1) {
@@ -9307,6 +9366,7 @@ class HlsAudioTrack {
       }
       for (let k = 0; k < pcm.length; k++) pcm[k] /= ab.numberOfChannels;
     }
+    this.decodeMs = performance.now() - t0;   // usage data
     const last = segs[segs.length - 1];
     return { start: segs[0].start, end: last.start + last.dur, rate: ab.sampleRate, pcm };
   }
@@ -9316,6 +9376,10 @@ class HlsAudioTrack {
 
 // Speech-band level (roughly 150 Hz to 4 kHz, so air-conditioning rumble counts as quiet)
 // per ENV_STEP seconds, stored as one byte: 0 = not analysed yet, 1..255 = -100..0 dBFS.
+// The filter loop of fill() is timed for the usage data (a fixed step: the same
+// arithmetic for every sample whatever the sound, see FIXED_STEPS in 87-telemetry.js).
+// LOUD_STEP_V names that loop: change it whenever the loop changes.
+const LOUD_STEP_V = 1;
 class Envelope {
   constructor(duration, data) {
     this.step = ENV_STEP;
@@ -9346,6 +9410,7 @@ class Envelope {
     let hpPrevOut = c ? c.hpOut : 0;
     let lp = c ? c.lp : 0;
     let f = 0;
+    const t0 = performance.now();
     for (; (f + 1) * per <= pcm.length; f++) {
       const i = first + f;
       let sum = 0;
@@ -9361,6 +9426,7 @@ class Envelope {
       const db = 10 * Math.log10(sum / per + 1e-12);
       this.data[i] = 1 + Math.round((clamp(db, -100, 0) + 100) * 2.54);
     }
+    if (f) usageStep('loud', LOUD_STEP_V, f * per, performance.now() - t0);
     this.carry = { at: first + f, hpIn: hpPrevIn, hpOut: hpPrevOut, lp };
   }
 
@@ -9608,6 +9674,7 @@ class SilenceAnalyzer {
     this.track = track;
     const data = cacheValid('silence-env', cached) && cached.step === ENV_STEP ? cached.data : null;
     if (data) cacheTouch(key);
+    if (this.lesson.mediaId) usageNote('cache', data ? 'hit' : 'miss');
     this.env = new Envelope(track.duration, data);
     this.progress = this.env.coverage();
     this.recompute();
@@ -9639,7 +9706,9 @@ class SilenceAnalyzer {
       }
       await idle();
       if (signal.aborted) return;
+      const f0 = performance.now();
       this.env.fill(chunk.start, chunk.pcm, chunk.rate);
+      if (chunk.end > chunk.start) usageNote('work', 'silenceMin', (track.decodeMs + performance.now() - f0) / ((chunk.end - chunk.start) / 60));
       read++;
       this.progress = this.env.coverage();
       if (++sinceSave >= 5) {
@@ -9918,6 +9987,7 @@ class HlsVideoReader {
     this.info = null;
     this.bytes = 0;          // downloaded so far
     this.lastNeed = 0;       // bytes the last keyframe needed (header included)
+    this.decodeMs = 0;       // how long decoding the last keyframe took, with onFrame (usage data)
   }
 
   static supported() {
@@ -10029,7 +10099,9 @@ class HlsVideoReader {
     const ts = this.info.timescale;
     const chunk = new EncodedVideoChunk({ type: 'key', timestamp: Math.round((k.time / ts) * 1e6), data: new Uint8Array(buf, k.offset, k.size) });
     let got = false;
+    const t0 = performance.now();
     await this.decode([chunk], (f) => { if (!got) { got = true; fn(f, k.time / ts); } });
+    this.decodeMs = performance.now() - t0;
     if (!got) throw new Error('no frame decoded');
   }
 
@@ -10059,11 +10131,18 @@ class HlsVideoReader {
 
 
 // Brightness of a frame at THUMB_W x THUMB_H, drawn with the 2D context g.
+// The conversion loop is timed for the usage data (a fixed step: the same arithmetic for
+// every pixel whatever the picture, see FIXED_STEPS in 87-telemetry.js). LUMA_STEP_V
+// names this loop: change it whenever the loop changes, so that timings of different
+// code are never compared.
+const LUMA_STEP_V = 1;
 function lumaThumb(g, img) {
   g.drawImage(img, 0, 0, THUMB_W, THUMB_H);
   const d = g.getImageData(0, 0, THUMB_W, THUMB_H).data;
   const out = new Uint8Array(THUMB_W * THUMB_H);
+  const t0 = performance.now();
   for (let i = 0, j = 0; i < out.length; i++, j += 4) out[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+  usageStep('luma', LUMA_STEP_V, out.length, performance.now() - t0);
   return out;
 }
 
@@ -10410,7 +10489,9 @@ class SlideAnalyzer {
     const cached = id ? await idbCache.get(key) : undefined;
     if (signal.aborted) return;
     // A result for another view than the one chosen by hand is made again.
-    if (cacheValid('slides', cached) && Array.isArray(cached.chapters) && (this.manualScreen == null || cached.screen === this.manualScreen)) {
+    const hit = cacheValid('slides', cached) && Array.isArray(cached.chapters) && (this.manualScreen == null || cached.screen === this.manualScreen);
+    if (id) usageNote('cache', hit ? 'hit' : 'miss');
+    if (hit) {
       cacheTouch(key);
       this.uniform = Array.isArray(cached.uniform) ? cached.uniform : [];
       this.screenIndex = cached.screen;
@@ -10632,6 +10713,7 @@ class SlideAnalyzer {
       // the analysis: it counts as "same picture as before"; only several in a row do.
       try {
         await reader.keyframe(i, signal, (f) => { luma = frameLuma(f); pic = smallBitmap(f, CHAPTER_THUMB_W); });
+        usageNote('work', 'scanFrame', reader.decodeMs);
         fails = 0;
       } catch (e) {
         if (signal.aborted) throw e;
@@ -11373,7 +11455,9 @@ class SlideTextReader {
     const lumaOf = this.shared && this.shared.shareLumas(true, this.source) ? (t) => this.shared.lumaAt(t) : () => null;
     const n = this.times.length;
     const cached = this.lesson.mediaId ? await idbCache.get(this.key) : undefined;
-    if (cacheValid('ocr', cached) && cached.height === this.reader.info.height && Array.isArray(cached.at) && cached.at.length === n) {
+    const hit = cacheValid('ocr', cached) && cached.height === this.reader.info.height && Array.isArray(cached.at) && cached.at.length === n;
+    if (this.lesson.mediaId) usageNote('cache', hit ? 'hit' : 'miss');
+    if (hit) {
       cacheTouch(this.key);
       this.texts = cached.texts;
       this.at = Int32Array.from(cached.at);
@@ -11441,6 +11525,7 @@ class SlideTextReader {
         ref = thumb;
         this.stats.read++;
         this.stats.ms += Math.round(ms);
+        usageNote('work', 'ocrMpx', ms / (canvas.width * canvas.height / 1e6));
         // Half pace while playing: rest as long as the reading took.
         if (!this.video.paused) await this.gate.wait(ms);
       }
@@ -12024,7 +12109,11 @@ function renderPdfPage(page, width) {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.floor(bw * scale));
   c.height = Math.max(1, Math.floor(bh * scale));
-  return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => c);
+  const t0 = performance.now();
+  return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => {
+    usageNote('work', 'pdfMpx', (performance.now() - t0) / (c.width * c.height / 1e6));
+    return c;
+  });
 }
 
 // The page to show at each sample while following. pages[i]: from followLecture (a page,
@@ -13217,6 +13306,8 @@ function diagnosticsText(p) {
 //   error     a feature that failed: its name, the error type, the message with addresses,
 //             numbers, ids and quoted text taken out; collected for a minute, then sent
 //   fallback  the page went to the original player, and why
+// How fast this computer is: FIXED_STEPS below, timed as part of the analyses' real work
+// (no test runs of its own).
 // Nothing is sent while the page is in the background (except the summary as it is
 // hidden) or offline. A request that fails is tried twice more, later and only in the
 // foreground, then dropped. Nothing here may disturb the player: every entry point
@@ -13226,6 +13317,87 @@ function diagnosticsText(p) {
 const TELEMETRY_URL = 'https://lite-player-telemetry.zhenban.workers.dev';
 const TELEMETRY_SECRET_KEY = 'telemetrySecret';
 const TELEMETRY_DAY_KEY = 'telemetryDay';
+const TELEMETRY_PENDING_KEY = 'telemetryPending';   // failed sends and dropped errors not yet reported
+
+// Fixed steps: pieces of the analyses that do the same computation however the recording
+// looks or sounds, so that their time per unit says how fast this computer is (the time of
+// a whole analysis depends on the recording as much as on the computer). Each is timed
+// around a loop of pure arithmetic: no decoding, drawing, network or waiting inside.
+//   luma   160 x 90 colour pixels to brightness (lumaThumb, 64-slides.js): three multiplies,
+//          two adds and a shift per pixel, no branch on the values. Runs for every frame
+//          the chapter scan, its refinement and the slide reader look at.
+//   loud   two one-pole filters and a sum of squares per audio sample, a logarithm per
+//          0.1 s (Envelope.fill, 62-silence.js). The same operations for every sample;
+//          the one difference sound makes is that a stretch of exact digital silence
+//          passes through tiny (subnormal) numbers for a few hundred samples, which some
+//          processors handle slower: it can only make a batch slower, so the fastest
+//          batches (p10) are unaffected.
+// Runs are added up into batches of TELEMETRY_STEP_BATCH_MS or more (one run is shorter
+// than the timer's step: each reading is a whole number of steps, too long or too short by
+// chance, and the errors cancel out over a batch); a batch gives one time per million
+// units. A viewing reports per step: the version of the loop (its *_STEP_V constant;
+// timings of different versions are never compared), p10 / p50 / p90 of its batches, how
+// many, and what was going on as each finished. The p10 is the computer at its best; p50
+// and p90 what the analyses really got.
+const FIXED_STEPS = ['luma', 'loud'];
+// Measures of the real work (not fixed: they depend on the recording too), per viewing.
+//   scanFrame   ms to decode and reduce one keyframe of the chapter scan
+//   silenceMin  ms to decode and analyse one minute of audio
+//   ocrMpx      ms to read the text of a million pixels of screen
+//   pdfMpx      ms to draw a million pixels of a PDF page
+const WORK_MEASURES = ['scanFrame', 'silenceMin', 'ocrMpx', 'pdfMpx'];
+// What a failed request is counted as.
+function netClass(status) {
+  if (status === 'network' || status === 'timeout') return status;
+  if (status === 401 || status === 403) return String(status);
+  if (status >= 500) return '5xx';
+  if (status >= 400) return '4xx';
+  return 'other';
+}
+
+// Two significant digits: enough for comparing computers, too coarse to tell one apart.
+function sig2(x) {
+  return typeof x === 'number' && Number.isFinite(x) ? Number(x.toPrecision(2)) : undefined;
+}
+
+// Values of one measure, for percentiles: at most TELEMETRY_KEEP_VALUES of them (a uniform
+// random sample once there are more), with their count and largest.
+class TelemetryValues {
+  constructor() { this.v = []; this.n = 0; this.max = -Infinity; }
+
+  add(x) {
+    if (typeof x !== 'number' || !Number.isFinite(x)) return;
+    this.n++;
+    if (x > this.max) this.max = x;
+    if (this.v.length < TELEMETRY_KEEP_VALUES) this.v.push(x);
+    else {
+      const j = Math.floor(Math.random() * this.n);
+      if (j < this.v.length) this.v[j] = x;
+    }
+  }
+
+  // The p-quantile (nearest rank, 0 < p <= 1), or undefined without values.
+  q(p) {
+    if (!this.v.length) return undefined;
+    const a = this.v.slice().sort((x, y) => x - y);
+    return a[clamp(Math.ceil(p * a.length) - 1, 0, a.length - 1)];
+  }
+}
+
+// The step of performance.now() in microseconds: the smallest change seen over at most
+// TELEMETRY_TIMER_PROBE_MS (browsers coarsen it on purpose; it decides how short a timed
+// run can be).
+function timerStepUs() {
+  let last = performance.now();
+  const end = last + TELEMETRY_TIMER_PROBE_MS;
+  let min = Infinity;
+  for (let changes = 0; changes < 20;) {
+    const t = performance.now();
+    if (t !== last) { min = Math.min(min, t - last); last = t; changes++; }
+    if (t >= end) break;
+  }
+  return min === Infinity ? undefined : sig2(min * 1000);
+}
 
 // Key actions (42-keys.js) and the features they count as.
 const KEY_FEATURES = {
@@ -13323,10 +13495,51 @@ async function telemetryEnv() {
     const lose = c && c.getExtension('WEBGL_lose_context');
     if (lose) lose.loseContext();
   } catch (e) { /* no WebGL */ }
+  const within = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), 3000))]);
+  const word = (v) => (typeof v === 'string' && /^[\w .-]{1,40}$/.test(v) ? v : undefined);
   try {
     const gpu = /** @type {any} */ (navigator).gpu;
-    if (gpu) env.webgpu = !!(await Promise.race([gpu.requestAdapter(), new Promise((r) => setTimeout(() => r(null), 3000))]));
+    const adapter = gpu ? await within(gpu.requestAdapter()) : null;
+    env.webgpu = !!adapter;
+    if (adapter) {
+      const info = adapter.info || {};
+      env.gpuVendor = word(info.vendor);
+      env.gpuArch = word(info.architecture);
+      env.gpuFallback = !!(info.isFallbackAdapter || adapter.isFallbackAdapter);
+      env.gpuF16 = !!(adapter.features && adapter.features.has('shader-f16'));
+    }
   } catch (e) { /* not available */ }
+  // Whether the video decoding is done by the graphics hardware (power-efficient), for the
+  // renditions Echo360 serves (H.264 at 720p and 1080p).
+  try {
+    const mc = navigator.mediaCapabilities;
+    const ask = (codecs, width, height, bitrate) => within(mc.decodingInfo({ type: 'media-source', video: { contentType: 'video/mp4; codecs="' + codecs + '"', width, height, bitrate, framerate: 30 } }));
+    if (mc && mc.decodingInfo) {
+      const [a, b] = await Promise.all([ask('avc1.64001F', 1280, 720, 2e6), ask('avc1.640028', 1920, 1080, 4e6)]);
+      if (a) env.hw720 = !!a.powerEfficient;
+      if (b) env.hw1080 = !!b.powerEfficient;
+    }
+  } catch (e) { /* not known */ }
+  // Processor and system version (Chromium browsers say; the model is not asked for).
+  try {
+    const uad = /** @type {any} */ (navigator).userAgentData;
+    if (uad && uad.getHighEntropyValues) {
+      const h = await within(uad.getHighEntropyValues(['architecture', 'bitness', 'platformVersion']));
+      if (h) {
+        env.arch = h.architecture === 'x86' || h.architecture === 'arm' ? h.architecture : h.architecture ? 'other' : undefined;
+        env.bitness = h.bitness === '64' || h.bitness === '32' ? +h.bitness : undefined;
+        const major = parseInt(h.platformVersion, 10);
+        env.osV = Number.isInteger(major) && major >= 0 && major < 1000 ? major : undefined;
+      }
+      env.mobile = !!uad.mobile;
+    }
+  } catch (e) { /* not known */ }
+  try {
+    const b = /** @type {any} */ (navigator).getBattery ? await within(/** @type {any} */ (navigator).getBattery()) : null;
+    if (b) env.charging = !!b.charging;
+  } catch (e) { /* not known */ }
+  env.pressureApi = typeof (/** @type {any} */ (self)).PressureObserver === 'function';
+  env.timerUs = telemetry.timerUs;
   return env;
 }
 
@@ -13335,8 +13548,11 @@ const telemetry = {
   ids: null,           // Promise of { secret, uid }
   idNow: null,         // the same once known (a page that is closing cannot wait)
   current: null,       // the UsageSession of the player on the page
+  sessions: 0,         // viewings started on this page
   errors: new Map(),   // key -> error event, waiting to be sent
   errorTimer: 0,
+  batches: {},         // fixed step -> { v, ms, units } of the batch being added up
+  timerUs: undefined,  // the timer's step (timerStepUs), once measured
 
   enabled() {
     if (this.on === null) {
@@ -13389,12 +13605,61 @@ const telemetry = {
       if (!this.enabled()) return;
       const r = await platform.post(TELEMETRY_URL + '/v1/events', JSON.stringify({ uid, events }), TELEMETRY_TIMEOUT_MS, !!last);
       const k = attempt || 0;
+      if (r.status === 200) return;
       if ((r.status === 0 || r.status >= 500) && !last && k < TELEMETRY_RETRY_MS.length) {
         setTimeout(() => {
           if (!document.hidden && navigator.onLine !== false) this.send(events, false, k + 1);
         }, TELEMETRY_RETRY_MS[k]);
+        return;
       }
+      // Given up (a summary sent while the page closes is not waited for: not counted).
+      if (!last) this.selfCount('sendFail');
     } catch (e) { /* dropped */ }
+  },
+
+  // Failed sends and dropped errors: told with the current viewing, or kept for the next.
+  selfCount(what) {
+    try {
+      if (this.current) { this.current.self[what]++; return; }
+      const p = store.get(TELEMETRY_PENDING_KEY, null) || {};
+      p[what] = (+p[what] || 0) + 1;
+      store.set(TELEMETRY_PENDING_KEY, p);
+    } catch (e) { /* not counted */ }
+  },
+
+  // Counts not told yet, handed to a viewing (which then reports them).
+  takePending() {
+    const p = store.get(TELEMETRY_PENDING_KEY, null);
+    if (p) store.set(TELEMETRY_PENDING_KEY, null);
+    return { sendFail: p && +p.sendFail > 0 ? +p.sendFail : 0, dropped: p && +p.dropped > 0 ? +p.dropped : 0 };
+  },
+
+  // Something to count from code that does not know about usage data (usageNote).
+  note(kind, key, value) {
+    if (this.current && this.enabled()) this.current.note(kind, key, value);
+  },
+
+  // One timed run of a fixed step (usageStep): added to its batch; a full batch becomes one
+  // value of the current viewing.
+  step(name, v, units, ms) {
+    if (!this.current || !this.enabled() || !(units > 0) || !(ms >= 0)) return;
+    let b = this.batches[name];
+    if (!b || b.v !== v) b = this.batches[name] = { v, ms: 0, units: 0 };
+    b.ms += ms;
+    b.units += units;
+    if (b.ms < TELEMETRY_STEP_BATCH_MS) return;
+    const perMillion = (b.ms / b.units) * 1e6;
+    b.ms = 0;
+    b.units = 0;
+    this.current.stepDone(name, v, perMillion);
+  },
+
+  // The timer's step, measured once a page when the browser is idle.
+  measureTimer() {
+    if (this.timerUs !== undefined || this.timerAsked) return;
+    this.timerAsked = true;
+    const run = () => { try { this.timerUs = timerStepUs(); } catch (e) { /* not known */ } };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 5000 }); else setTimeout(run, 1000);
   },
 
   // A request with the secret (viewing or deleting one's data): { status, data }.
@@ -13435,7 +13700,7 @@ const telemetry = {
       const key = name + '\n' + type + '\n' + msg;
       const known = this.errors.get(key);
       if (known) { known.n++; return; }
-      if (this.errors.size >= TELEMETRY_MAX_ERRORS) return;
+      if (this.errors.size >= TELEMETRY_MAX_ERRORS) { this.selfCount('dropped'); return; }
       this.errors.set(key, { k: 'error', v: VERSION, feature: name, type, msg, n: 1 });
       if (!this.errorTimer) this.errorTimer = setTimeout(() => { this.errorTimer = 0; if (!document.hidden) this.flushErrors(false); }, TELEMETRY_ERROR_WAIT_MS);
     } catch (e) { /* not counted */ }
@@ -13466,23 +13731,32 @@ function newTelemetrySecret() {
   return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// One viewing: what it cost the computer, what was used, how the analyses did.
+// One viewing: what it cost the computer, how it went, what was used, how the analyses did.
+// Times are summed up as percentiles; no series of values is sent.
 //
 // deps: { root (the player's shadow root), video (the clock video), videos() (both),
 //         prefs, layout() ('side' | 'pip' | 'single' | 'pdf', as shown), slides(), deck(),
-//         silence() (the analyzer), emptyScreen(), session() (SessionKeeper), duration() }
+//         silence() (the analyzer), emptyScreen(), session() (SessionKeeper), duration(),
+//         startedAt (performance.now() when the player started), height() (rendition
+//         playing), bandwidth() (bits/s estimated by hls.js), played() ([[start, end]]) }
 class UsageSession {
   constructor(deps, disposer) {
     this.x = deps;
     this.d = disposer;
     this.sid = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
     this.opened = performance.now();
+    // The first viewing on a page is timed from the page's start, later ones (another
+    // recording opened in the page) from the player's.
+    this.fromLoad = telemetry.sessions++ === 0;
+    this.t0 = this.fromLoad ? 0 : deps.startedAt || this.opened;
+    this.readyMs = this.opened - this.t0;
     this.features = {};
     this.keys = 0;
     this.clicks = 0;
     this.playMs = 0;
     this.byRate = new Map();       // playback rate -> ms played
     this.byLayout = new Map();     // layout -> ms played
+    this.byHeight = new Map();     // rendition height -> ms played
     this.lastTick = 0;
     this.longTasks = 0;
     this.visibleMs = 0;
@@ -13491,18 +13765,41 @@ class UsageSession {
     this.rebufferN = 0;
     this.rebufferMs = 0;
     this.waitingSince = 0;
+    this.seekSince = 0;
     this.heap = 0;
     this.frames = new Map();       // video -> { dropped, total, base: { dropped, total } }
     this.lastReport = -Infinity;
+    this.vals = {};                // measure -> TelemetryValues
+    this.steps = {};               // fixed step -> { v, vals, cond: { condition: batches } }
+    this.counts = { net: {}, stream: {}, guardOff: {} };
+    this.levels = 0;
+    this.streamBytes = 0;
+    this.bgBytes = 0;
+    this.cacheHit = 0;
+    this.cacheMiss = 0;
+    this.skipped = { silence: 0, blank: 0 };
+    this.marks = {};               // 'chapters' | 'pdf' -> ms after the player started
+    this.originalAfter = null;     // seconds played when the user went to the original player
+    this.uncaught = 0;
+    this.inputs = 0;               // interactions (pointer presses and key presses)
+    this.inputMs = new Map();      // Event Timing interactionId -> longest duration
+    this.inputUndrawn = new Set(); // interactions whose answer was never drawn (left out)
+    this.pressure = null;          // { state, since } and ms per state:
+    this.pressureMs = {};
+    this.onBattery = null;         // null: not known
+    this.batterySince = 0;
+    this.batteryMs = { yes: 0, no: 0 };
+    this.self = telemetry.takePending();
     telemetry.current = this;
+    telemetry.measureTimer();
     // The id is worked out now: a summary sent as the page closes cannot wait for it.
     if (telemetry.enabled()) telemetry.identity().catch(() => {});
     disposer.add(() => { this.report(true); if (telemetry.current === this) telemetry.current = null; });
     const v = deps.video;
-    const on = (target, type, fn, opts) => disposer.listen(target, type, () => { try { fn(); } catch (e) { /* not counted */ } }, opts);
+    const on = (target, type, fn, opts) => disposer.listen(target, type, (e) => { try { fn(e); } catch (err) { /* not counted */ } }, opts);
     on(v, 'timeupdate', () => this.tick());
     on(v, 'pause', () => { this.tick(); this.lastTick = 0; });
-    on(v, 'loadeddata', () => { if (this.firstFrameMs == null) this.firstFrameMs = Math.round(performance.now()); });
+    on(v, 'loadeddata', () => { if (this.firstFrameMs == null) this.firstFrameMs = Math.round(performance.now() - this.t0); });
     on(v, 'waiting', () => { if (!v.seeking && !v.paused && this.firstFrameMs != null && !this.waitingSince) this.waitingSince = performance.now(); });
     const resumed = () => {
       if (!this.waitingSince) return;
@@ -13511,7 +13808,13 @@ class UsageSession {
       this.waitingSince = 0;
     };
     on(v, 'playing', resumed);
-    on(v, 'seeking', () => { this.waitingSince = 0; });
+    on(v, 'seeking', () => { this.waitingSince = 0; if (this.firstFrameMs != null) this.seekSince = performance.now(); });
+    on(v, 'seeked', () => {
+      if (this.seekSince) this.value('seek', performance.now() - this.seekSince);
+      this.seekSince = 0;
+    });
+    const MEDIA_ERRORS = ['', 'videoAborted', 'videoNetwork', 'videoDecode', 'videoUnsupported'];
+    for (const ve of deps.videos()) if (ve) on(ve, 'error', () => { if (ve.error) this.note('stream', MEDIA_ERRORS[ve.error.code] || 'videoOther'); });
     on(document, 'visibilitychange', () => {
       if (document.hidden) {
         if (this.visibleSince) this.visibleMs += performance.now() - this.visibleSince;
@@ -13520,6 +13823,10 @@ class UsageSession {
       } else this.visibleSince = performance.now();
     });
     on(window, 'pagehide', () => this.report(true));
+    // Uncaught errors of this script (the page's own are not ours to count).
+    const ours = (e) => /lite[ %_-]*player/i.test(String((e && (e.filename || (e.error && e.error.stack) || (e.reason && e.reason.stack))) || ''));
+    on(window, 'error', (e) => { if (ours(e)) this.uncaught++; });
+    on(window, 'unhandledrejection', (e) => { if (ours(e)) this.uncaught++; });
     // Clicks on the player's controls (before their own handlers: counted even when a
     // handler stops the event).
     disposer.listen(deps.root, 'click', (e) => {
@@ -13529,20 +13836,110 @@ class UsageSession {
         for (const [sel, f] of CLICK_FEATURES) if (t.closest(sel)) { this.use(f, 'click'); return; }
       } catch (err) { /* not counted */ }
     }, true);
-    if (typeof PerformanceObserver === 'function' && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) {
+    // Interactions: every press is counted; Event Timing reports those that took
+    // TELEMETRY_INPUT_MIN_MS or longer (the player is all there is on the page).
+    on(document, 'pointerdown', () => { this.inputs++; }, { capture: true, passive: true });
+    on(document, 'keydown', (e) => { if (!e.repeat) this.inputs++; }, { capture: true, passive: true });
+    const types = (typeof PerformanceObserver === 'function' && PerformanceObserver.supportedEntryTypes) || [];
+    if (types.includes('longtask')) {
       const po = new PerformanceObserver((list) => { this.longTasks += list.getEntries().length; });
       po.observe({ type: 'longtask' });
       disposer.observe(po);
     }
+    if (types.includes('event')) {
+      const po = new PerformanceObserver((list) => {
+        for (const en of /** @type {any[]} */ (list.getEntries())) {
+          if (!en.interactionId) continue;
+          if (en.duration > TELEMETRY_INPUT_MAX_MS) { if (this.inputUndrawn.size < TELEMETRY_KEEP_VALUES) this.inputUndrawn.add(en.interactionId); continue; }
+          if (this.inputMs.size >= TELEMETRY_KEEP_VALUES && !this.inputMs.has(en.interactionId)) continue;
+          this.inputMs.set(en.interactionId, Math.max(this.inputMs.get(en.interactionId) || 0, en.duration));
+        }
+      });
+      po.observe(/** @type {any} */ ({ type: 'event', durationThreshold: TELEMETRY_INPUT_MIN_MS }));
+      disposer.observe(po);
+    }
+    // CPU pressure (Chromium browsers) and whether the computer runs on battery.
+    const PO = /** @type {any} */ (self).PressureObserver;
+    if (typeof PO === 'function') {
+      try {
+        const po = new PO((records) => { try { this.setPressure(records[records.length - 1].state); } catch (e) { /* not counted */ } });
+        po.observe('cpu', { sampleInterval: TELEMETRY_PRESSURE_SAMPLE_MS }).catch(() => {});
+        disposer.add(() => { try { po.disconnect(); } catch (e) { /* gone */ } });
+      } catch (e) { /* not available */ }
+    }
+    const nav = /** @type {any} */ (navigator);
+    if (nav.getBattery) {
+      nav.getBattery().then((b) => {
+        if (disposer.disposed) return;
+        const set = () => this.setBattery(!b.charging);
+        set();
+        disposer.listen(b, 'chargingchange', set);
+      }).catch(() => {});
+    }
     disposer.interval(() => { if (!document.hidden) this.sample(); }, TELEMETRY_SAMPLE_MS);
+  }
+
+  value(name, x) {
+    (this.vals[name] || (this.vals[name] = new TelemetryValues())).add(x);
+  }
+
+  setPressure(state) {
+    const now = performance.now();
+    if (this.pressure) this.pressureMs[this.pressure.state] = (this.pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
+    this.pressure = ['nominal', 'fair', 'serious', 'critical'].includes(state) ? { state, since: now } : null;
+  }
+
+  setBattery(onBattery) {
+    const now = performance.now();
+    if (this.onBattery !== null) this.batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
+    this.onBattery = onBattery;
+    this.batterySince = now;
+  }
+
+  // From usageNote (00-util.js).
+  note(kind, key, value) {
+    const c = this.counts;
+    const inc = (map, k) => { if (map[k] || Object.keys(map).length < 20) map[k] = (map[k] || 0) + 1; };
+    if (kind === 'net') inc(c.net, netClass(key));
+    else if (kind === 'stream' && typeof key === 'string' && /^[A-Za-z]{1,40}$/.test(key)) inc(c.stream, key);
+    else if (kind === 'guardOff' && typeof key === 'string') inc(c.guardOff, key.toLowerCase().replace(/[^a-z ()-]/g, '').slice(0, 40) || 'player');
+    else if (kind === 'level') this.levels++;
+    else if (kind === 'streamBytes') this.streamBytes += +value || 0;
+    else if (kind === 'bgBytes') this.bgBytes += +value || 0;
+    else if (kind === 'cache') { if (key === 'hit') this.cacheHit++; else this.cacheMiss++; }
+    else if (kind === 'skip' && value > 0) this.skipped[key === 'silence' ? 'silence' : 'blank'] += value;
+    else if (kind === 'drift') this.value('sync', value);
+    else if (kind === 'work' && WORK_MEASURES.includes(key)) this.value(key, value);
+  }
+
+  // A batch of a fixed step finished (telemetry.step): its time per million units, and what
+  // was going on.
+  stepDone(name, v, perMillion) {
+    let st = this.steps[name];
+    if (!st || st.v !== v) st = this.steps[name] = { v, vals: new TelemetryValues(), cond: {} };
+    st.vals.add(perMillion);
+    const video = this.x.video;
+    const conds = [
+      video.paused ? 'paused' : 'playing',
+      'rate:' + video.playbackRate,
+      'cpu:' + (this.pressure ? this.pressure.state : 'unknown'),
+      'power:' + (this.onBattery === null ? 'unknown' : this.onBattery ? 'battery' : 'ac'),
+    ];
+    for (const k of conds) st.cond[k] = (st.cond[k] || 0) + 1;
+  }
+
+  // The first time something became available ('chapters', 'pdf'), after the player started.
+  mark(name) {
+    if (this.marks[name] == null) this.marks[name] = performance.now() - (this.x.startedAt || this.opened);
   }
 
   use(feature, via) {
     this.features[feature] = (this.features[feature] || 0) + 1;
     if (via === 'key') this.keys++; else if (via === 'click') this.clicks++;
+    if (feature === 'original' && this.originalAfter == null) { this.tick(); this.originalAfter = Math.round(this.playMs / 1000); }
   }
 
-  // Playing time, by rate and layout (from timeupdate, about four times a second).
+  // Playing time, by rate, layout and rendition (from timeupdate, about four times a second).
   tick() {
     const v = this.x.video;
     const now = performance.now();
@@ -13554,12 +13951,15 @@ class UsageSession {
         this.byRate.set(r, (this.byRate.get(r) || 0) + dt);
         const l = this.x.layout();
         this.byLayout.set(l, (this.byLayout.get(l) || 0) + dt);
+        const h = this.x.height ? this.x.height() : 0;
+        if (h) this.byHeight.set(h, (this.byHeight.get(h) || 0) + dt);
       }
     }
     this.lastTick = v.paused ? 0 : now;
   }
 
-  // Dropped frames (counters start again when a video loads another stream) and memory.
+  // Dropped frames (counters start again when a video loads another stream), memory and the
+  // estimated bandwidth while playing.
   sample() {
     for (const v of this.x.videos()) {
       if (!v || typeof v.getVideoPlaybackQuality !== 'function') continue;
@@ -13572,50 +13972,140 @@ class UsageSession {
     }
     const mem = /** @type {any} */ (performance).memory;
     if (mem && mem.usedJSHeapSize > this.heap) this.heap = mem.usedJSHeapSize;
+    const bw = this.x.bandwidth ? this.x.bandwidth() : NaN;
+    if (!this.x.video.paused && bw > 0) this.value('bw', bw / 1000);
   }
 
   summary() {
     const x = this.x;
     this.tick();
     this.sample();
+    const now = performance.now();
     let dropped = 0;
     let total = 0;
     for (const f of this.frames.values()) { dropped += f.base.dropped + f.dropped; total += f.base.total + f.total; }
-    const visibleMs = this.visibleMs + (this.visibleSince ? performance.now() - this.visibleSince : 0);
+    const visibleMs = this.visibleMs + (this.visibleSince ? now - this.visibleSince : 0);
     const top = (m) => { let best = null; let most = 0; for (const [k, ms] of m) if (ms > most) { most = ms; best = k; } return best; };
+    // { key: percent of the total } of a Map or object of times (at most 12 keys).
+    const shares = (m) => {
+      const entries = (m instanceof Map ? [...m] : Object.entries(m)).filter(([, ms]) => ms > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      const sum = entries.reduce((a, [, ms]) => a + ms, 0);
+      if (!sum) return undefined;
+      const out = {};
+      for (const [k, ms] of entries) out[String(k)] = sig2((ms / sum) * 100);
+      return out;
+    };
+    const some = (o) => (Object.keys(o).length ? Object.assign({}, o) : undefined);
     const slides = x.slides();
     const deck = x.deck();
     const silence = x.silence();
     const ocr = deck && deck.ocr;
     const ses = x.session();
     const dur = x.duration();
+    const q = (name, p) => (this.vals[name] ? sig2(this.vals[name].q(p)) : undefined);
+    const n = (name) => (this.vals[name] ? this.vals[name].n : undefined);
+    // Interactions: those Event Timing did not report were faster than its threshold, and
+    // count as TELEMETRY_INPUT_MIN_MS (so a percentile of 16 means "16 ms or less").
+    const timed = [...this.inputMs].filter(([id]) => !this.inputUndrawn.has(id)).map(([, ms]) => ms).sort((a, b) => a - b);
+    const fast = Math.max(0, this.inputs - timed.length - this.inputUndrawn.size);
+    const inputQ = (p) => {
+      const all = fast + timed.length;
+      if (!all) return undefined;
+      const r = clamp(Math.ceil(p * all), 1, all);
+      return r <= fast ? TELEMETRY_INPUT_MIN_MS : sig2(timed[r - fast - 1]);
+    };
+    const slow = timed.filter((ms) => ms > TELEMETRY_SLOW_INPUT_MS).length;
+    const pressureMs = Object.assign({}, this.pressureMs);
+    if (this.pressure) pressureMs[this.pressure.state] = (pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
+    const batteryMs = Object.assign({}, this.batteryMs);
+    if (this.onBattery !== null) batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
+    const batteryKnown = batteryMs.yes + batteryMs.no;
+    let watched = 0;
+    try { for (const [a, b] of x.played ? x.played() : []) watched += Math.max(0, b - a); } catch (e) { watched = 0; }
     const s = {
       k: 'session', v: VERSION, sid: this.sid,
-      playSec: Math.round(this.playMs / 1000),
-      openSec: Math.round((performance.now() - this.opened) / 1000),
+      // Watching
+      fromLoad: this.fromLoad,
+      readyMs: Math.round(this.readyMs),
+      firstFrameMs: this.firstFrameMs == null ? undefined : this.firstFrameMs,
+      seekN: n('seek'), seekMs50: q('seek', 0.5), seekMs90: q('seek', 0.9),
+      rebufferN: this.rebufferN,
+      rebufferSec: Math.round(this.rebufferMs / 100) / 10,
+      rebufferPct: this.playMs > 0 ? sig2((this.rebufferMs / (this.playMs + this.rebufferMs)) * 100) : undefined,
+      quality: shares(this.byHeight),
+      levelSwitches: this.levels,
+      bwKbps: q('bw', 0.5),
+      syncMs50: q('sync', 0.5),
+      syncMsMax: this.vals.sync ? sig2(this.vals.sync.max) : undefined,
+      // Responsiveness and load
+      inputN: fast + timed.length || undefined,
+      inputMs50: inputQ(0.5),
+      inputMs90: inputQ(0.9),
+      inputSlow: fast + timed.length ? slow : undefined,
+      longTasks: this.longTasks,
       longTasksPerMin: visibleMs > 60000 ? Math.round(this.longTasks / (visibleMs / 60000) * 10) / 10 : undefined,
       droppedPct: total > 0 ? Math.round(dropped / total * 10000) / 100 : undefined,
       heapMb: this.heap ? Math.round(this.heap / 1e5) / 10 : undefined,
-      firstFrameMs: this.firstFrameMs == null ? undefined : this.firstFrameMs,
-      rebufferN: this.rebufferN,
-      rebufferSec: Math.round(this.rebufferMs / 100) / 10,
+      pressure: shares(pressureMs),
+      batteryPct: batteryKnown > 0 ? sig2((batteryMs.yes / batteryKnown) * 100) : undefined,
+      // Background analyses
+      streamMbPerHour: this.playMs >= 60000 ? sig2(this.streamBytes / 1e6 / (this.playMs / 3.6e6)) : undefined,
+      bgMbPerHour: dur > 60 ? sig2(this.bgBytes / 1e6 / (dur / 3600)) : undefined,
+      cacheHit: this.cacheHit, cacheMiss: this.cacheMiss,
+      chaptersMs: this.marks.chapters == null ? undefined : sig2(this.marks.chapters),
+      pdfMs: this.marks.pdf == null ? undefined : sig2(this.marks.pdf),
       scanMs: slides && slides.took != null ? slides.took : undefined,
       ocrFrameMs: ocr && ocr.stats && ocr.stats.read ? Math.round(ocr.stats.ms / ocr.stats.read) : undefined,
       silenceMs: silence && silence.took != null ? silence.took : undefined,
+      // Stability
+      guardOff: some(this.counts.guardOff),
+      uncaught: this.uncaught,
+      netErrors: some(this.counts.net),
+      streamErrors: some(this.counts.stream),
+      renewOk: ses ? ses.renewals : undefined,
+      renewFail: ses ? ses.failures : undefined,
+      frontend: echoFrontend() || undefined,
+      // Habits
+      playSec: Math.round(this.playMs / 1000),
+      openSec: Math.round((now - this.opened) / 1000),
+      watchedPct: dur > 0 ? sig2(Math.min(100, (watched / dur) * 100)) : undefined,
       speed: top(this.byRate) == null ? undefined : top(this.byRate),
+      speeds: shares(this.byRate),
       layout: top(this.byLayout) || undefined,
+      skipSilenceSec: Math.round(this.skipped.silence),
+      skipBlankSec: Math.round(this.skipped.blank),
       keys: this.keys, clicks: this.clicks,
-      features: this.features,
+      features: some(this.features),
       changed: changedPrefs(x.prefs),
+      lang: uiLang(),
+      theme: x.prefs && x.prefs.theme,
+      originalAfterSec: this.originalAfter == null ? undefined : this.originalAfter,
+      // Analyses' results
       screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
       chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
       pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
       pageFixes: deck ? deck.corrections || 0 : undefined,
       layoutUndos: x.emptyScreen() ? x.emptyScreen().undos : undefined,
-      renewOk: ses ? ses.renewals : undefined,
-      renewFail: ses ? ses.failures : undefined,
-      frontend: echoFrontend() || undefined,
+      // The usage data itself
+      sendFail: this.self.sendFail,
+      dropped: this.self.dropped,
+      timerUs: telemetry.timerUs,
     };
+    for (const m of WORK_MEASURES) {
+      s[m + 'Ms50'] = q(m, 0.5);
+      s[m + 'Ms90'] = q(m, 0.9);
+      s[m + 'N'] = n(m);
+    }
+    for (const name of FIXED_STEPS) {
+      const st = this.steps[name];
+      if (!st) continue;
+      s[name + 'V'] = st.v;
+      s[name + 'P10'] = sig2(st.vals.q(0.1));
+      s[name + 'P50'] = sig2(st.vals.q(0.5));
+      s[name + 'P90'] = sig2(st.vals.q(0.9));
+      s[name + 'N'] = st.vals.n;
+      s[name + 'Cond'] = Object.assign({}, st.cond);
+    }
     return s;
   }
 
@@ -13686,7 +14176,7 @@ class UsageSession {
           startOriginal(callOriginal, handoff, null);
         },
       });
-      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv }; } // development only
+      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2 }; } // development only
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;

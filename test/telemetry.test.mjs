@@ -14,7 +14,9 @@ import worker, { LIMITS } from '../telemetry-worker/src/index.js';
 import { KINDS, cleanEvent, plainMessage } from '../telemetry-worker/src/schema.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const migration = readFileSync(join(root, 'telemetry-worker', 'migrations', '0001_init.sql'), 'utf8');
+// Every migration, in order (as wrangler applies them).
+const migrationDir = join(root, 'telemetry-worker', 'migrations');
+const migration = readdirSync(migrationDir).filter((f) => f.endsWith('.sql')).sort().map((f) => readFileSync(join(migrationDir, f), 'utf8')).join('\n');
 
 // ---- the Worker ----
 
@@ -357,4 +359,173 @@ test('telemetry: the summary goes out while the page closes, at once and with ke
   p.destroy();
   await pg.w.happyDOM.abort();
   pg.w.close();
+});
+
+test('telemetry worker: the newer fields keep only known keys and two significant digits', async () => {
+  const env = envOf();
+  const r = await worker.fetch(post('/v1/events', {
+    uid,
+    events: [
+      { k: 'env', v: '1.0.0', gpuVendor: 'nvidia', gpuArch: 'ampere', hw720: true, arch: 'arm', bitness: 64, osV: 15, charging: false, timerUs: 100.4, gpuF16: true },
+      {
+        k: 'session', v: '1.0.0', sid: 'cccccccccccccccc', seekMs50: 123.456, inputMs90: 248.7,
+        quality: { 720: 87.5, 360: 12.5, '<b>': 1 }, pressure: { nominal: 90, fair: 10, hot: 5 },
+        netErrors: { 403: 2, network: 1, 'G_abc': 3 }, streamErrors: { fragLoadError: 4, 'frag load': 1 },
+        guardOff: { 'slide chapters': 1, 'Jane Doe': 1 },
+        lumaV: 1, lumaP10: 0.8123, lumaP50: 1.234, lumaN: 3,
+        lumaCond: { playing: 2, paused: 1, 'rate:1.5': 3, 'cpu:nominal': 3, 'power:ac': 3, 'lesson:x': 1 },
+        scanFrameMs50: 7.8912, scanFrameN: 120,
+      },
+    ],
+  }), env);
+  assert.equal(r.status, 200);
+  const db = env.DB.db;
+  const e = db.prepare('SELECT * FROM env').get();
+  assert.deepEqual([e.gpu_vendor, e.gpu_arch, e.hw720, e.arch, e.bitness, e.os_v, e.charging, e.timer_us, e.gpu_f16], ['nvidia', 'ampere', 1, 'arm', 64, 15, 0, 100, 1]);
+  const s = db.prepare('SELECT * FROM sessions').get();
+  assert.equal(s.seek_ms50, 120);
+  assert.equal(s.input_ms90, 250);
+  assert.deepEqual(JSON.parse(s.quality), { 720: 88, 360: 13 });
+  assert.deepEqual(JSON.parse(s.pressure), { nominal: 90, fair: 10 });
+  assert.deepEqual(JSON.parse(s.net_errors), { 403: 2, network: 1 });
+  assert.deepEqual(JSON.parse(s.stream_errors), { fragLoadError: 4 });
+  // "Jane Doe" fits the pattern of a feature name but not a known one... it is lower-case
+  // letters only that pass: a capitalised name does not.
+  assert.deepEqual(JSON.parse(s.guard_off), { 'slide chapters': 1 });
+  assert.deepEqual([s.luma_v, s.luma_p10, s.luma_p50, s.luma_n], [1, 0.81, 1.2, 3]);
+  assert.deepEqual(JSON.parse(s.luma_cond), { playing: 2, paused: 1, 'rate:1.5': 3, 'cpu:nominal': 3, 'power:ac': 3 });
+  assert.deepEqual([s.scan_frame_ms50, s.scan_frame_n], [7.9, 120]);
+});
+
+test('telemetry: percentiles, two significant digits, and a bounded sample of values', async () => {
+  const pg = page();
+  const { TelemetryValues, sig2 } = pg.dev();
+  assert.deepEqual([sig2(0.012345), sig2(123.4), sig2(98765), sig2(0), sig2(NaN)], [0.012, 120, 99000, 0, undefined]);
+  const v = new TelemetryValues();
+  for (let i = 1; i <= 10; i++) v.add(i);
+  assert.deepEqual([v.q(0.1), v.q(0.5), v.q(0.9), v.n, v.max], [1, 5, 9, 10, 10]);
+  for (let i = 0; i < 5000; i++) v.add(i % 100);
+  assert.ok(v.v.length <= 400, 'at most 400 values kept');
+  assert.equal(v.n, 5010);
+  const mid = v.q(0.5);
+  assert.ok(mid >= 40 && mid <= 60, 'the sample keeps the distribution: median ' + mid);
+  pg.player().destroy();
+  await pg.w.happyDOM.abort();
+  pg.w.close();
+});
+
+test('telemetry: fixed steps are timed in batches of 20 ms, with their version and conditions', async () => {
+  const pg = page();
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  // 0.5 ms for 14 400 pixels: 39 runs are 19.5 ms, not yet a batch.
+  for (let i = 0; i < 39; i++) t.step('luma', 1, 14400, 0.5);
+  const sum = () => JSON.parse(JSON.stringify(p.usage.summary()));
+  assert.equal(sum().lumaN, undefined);
+  t.step('luma', 1, 14400, 0.5);
+  let s = sum();
+  // 20 ms / 576 000 pixels = 34.7 ms per million pixels.
+  assert.deepEqual([s.lumaV, s.lumaN, s.lumaP10, s.lumaP50, s.lumaP90], [1, 1, 35, 35, 35]);
+  assert.deepEqual(s.lumaCond, { paused: 1, 'rate:1': 1, 'cpu:unknown': 1, 'power:unknown': 1 });
+  // A batch of another version starts again (versions are never mixed).
+  for (let i = 0; i < 10; i++) t.step('luma', 2, 1e6, 2);
+  s = sum();
+  assert.deepEqual([s.lumaV, s.lumaN, s.lumaP50], [2, 1, 2]);
+  // Several batches: the percentiles are of the batches.
+  for (const k of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) t.step('loud', 1, 1e6, 20 * k);
+  s = sum();
+  assert.deepEqual([s.loudN, s.loudP10, s.loudP50, s.loudP90], [10, 20, 100, 180]);
+  assertAccepted(s);
+  p.destroy();
+  await pg.w.happyDOM.abort();
+  pg.w.close();
+});
+
+test('telemetry: a viewing counts failures, downloads, skips, interactions and the work of the analyses', async () => {
+  const pg = page();
+  pg.w.localStorage.setItem('lite-player-for-echo360:telemetryPending', JSON.stringify({ sendFail: 2 }));
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  // A viewing started after the page loaded takes the counts left by earlier pages.
+  p.destroy();
+  const p2 = new (p.constructor)(p.lesson, p.opts);
+  await settle();
+  const u = p2.usage;
+  assert.equal(u.fromLoad, false, 'the second viewing on the page');
+  // (The test page has no network: what the player itself tried is not counted here.)
+  u.counts.net = {};
+  u.cacheHit = 0;
+  u.cacheMiss = 0;
+  for (const k of [403, 403, 503, 404, 'network', 'timeout']) t.note('net', k);
+  t.note('stream', 'fragLoadError');
+  t.note('stream', 'not a name!');
+  t.note('cache', 'hit');
+  t.note('cache', 'miss');
+  t.note('skip', 'silence', 12.4);
+  t.note('skip', 'black', 30);
+  t.note('bgBytes', null, 7.5e6);
+  for (const ms of [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]) t.note('work', 'scanFrame', ms);
+  t.note('work', 'made up', 5);
+  t.note('guardOff', 'slide chapters');
+  t.selfCount('dropped');
+  // Three presses; Event Timing reported one of them (the others took under 16 ms).
+  for (let i = 0; i < 3; i++) pg.w.document.dispatchEvent(new pg.w.Event('pointerdown'));
+  u.inputMs.set(7, 250);
+  // A fourth whose answer was never drawn (a window behind others): left out entirely.
+  pg.w.document.dispatchEvent(new pg.w.Event('pointerdown'));
+  u.inputUndrawn.add(8);
+  u.mark('chapters');
+  u.mark('chapters');
+  const s = JSON.parse(JSON.stringify(u.summary()));
+  assert.deepEqual(s.netErrors, { 403: 2, '5xx': 1, '4xx': 1, network: 1, timeout: 1 });
+  assert.deepEqual(s.streamErrors, { fragLoadError: 1 });
+  assert.deepEqual([s.cacheHit, s.cacheMiss, s.skipSilenceSec, s.skipBlankSec], [1, 1, 12, 30]);
+  assert.deepEqual([s.scanFrameN, s.scanFrameMs50, s.scanFrameMs90], [10, 50, 90]);
+  assert.deepEqual(s.guardOff, { 'slide chapters': 1 });
+  assert.deepEqual([s.inputN, s.inputMs50, s.inputMs90, s.inputSlow], [3, 16, 250, 1]);
+  assert.deepEqual([s.sendFail, s.dropped], [2, 1]);
+  assert.equal(pg.w.localStorage.getItem('lite-player-for-echo360:telemetryPending'), 'null', 'handed over once');
+  assert.ok(s.bgMbPerHour > 0);
+  assert.ok(s.chaptersMs >= 0);
+  assert.equal(s.lang, 'en');
+  assert.equal(s.theme, 'system');
+  assertAccepted(s);
+  p2.destroy();
+  await pg.w.happyDOM.abort();
+  pg.w.close();
+});
+
+test('telemetry: a send that is given up is counted, and told with the viewing', async () => {
+  const pg = page();
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  pg.w.fetch = async () => new pg.w.Response('{"error":"format"}', { status: 400 });
+  await t.send([{ k: 'fallback', v: '1.0.0', reason: 'user' }]);
+  assert.equal(p.usage.summary().sendFail, 1);
+  p.destroy();
+  await pg.w.happyDOM.abort();
+  pg.w.close();
+});
+
+test('telemetry queries: computers in tiers by their fixed-step time, and how well the steps follow the real work', () => {
+  const db = fakeD1().db;
+  const now = Date.now();
+  const add = db.prepare("INSERT INTO sessions (uid, at, sid, version, play_sec, luma_v, luma_p10, dropped_pct, input_ms90, scan_frame_ms50, ocr_mpx_ms50, pressure) VALUES ('u', ?, ?, '1.0.0', 600, ?, ?, ?, ?, ?, ?, ?)");
+  // Eight viewings, slower computers dropping more frames; one of an older step version
+  // (left out), whose time would otherwise land in the fastest tier.
+  for (let i = 1; i <= 8; i++) add.run(now, 's' + i, 2, i, i * 0.5, 20 * i, 3 * i, 100 / i, i > 6 ? '{"nominal":50,"serious":30,"critical":20}' : '{"nominal":100}');
+  add.run(now, 'old', 1, 0.01, 99, 999, 1, 1, null);
+  const dir = join(root, 'telemetry-worker', 'queries');
+  const tiers = db.prepare(readFileSync(join(dir, 'device-tiers.sql'), 'utf8')).all();
+  const row = (tier, metric) => tiers.find((r) => r.tier === tier && r.metric === metric);
+  assert.deepEqual([row(1, 'dropped_pct').sessions, row(1, 'dropped_pct').luma_p10_from, row(1, 'dropped_pct').luma_p10_to, row(1, 'dropped_pct').median], [2, 1, 2, 0.5]);
+  assert.equal(row(4, 'dropped_pct').median, 3.5);
+  assert.equal(row(4, 'cpu_serious_pct').median, 50);
+  assert.equal(row(1, 'cpu_serious_pct').median, 0);
+  const rho = Object.fromEntries(db.prepare(readFileSync(join(dir, 'work-vs-steps.sql'), 'utf8')).all().map((r) => [r.pair, r.spearman]));
+  assert.equal(rho['luma~scan_frame'], 1, 'same order');
+  assert.equal(rho['luma~ocr_mpx'], -1, 'opposite order');
 });

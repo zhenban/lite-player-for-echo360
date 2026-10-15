@@ -156,6 +156,7 @@ class HlsVideoReader {
     this.info = null;
     this.bytes = 0;          // downloaded so far
     this.lastNeed = 0;       // bytes the last keyframe needed (header included)
+    this.decodeMs = 0;       // how long decoding the last keyframe took, with onFrame (usage data)
   }
 
   static supported() {
@@ -267,7 +268,9 @@ class HlsVideoReader {
     const ts = this.info.timescale;
     const chunk = new EncodedVideoChunk({ type: 'key', timestamp: Math.round((k.time / ts) * 1e6), data: new Uint8Array(buf, k.offset, k.size) });
     let got = false;
+    const t0 = performance.now();
     await this.decode([chunk], (f) => { if (!got) { got = true; fn(f, k.time / ts); } });
+    this.decodeMs = performance.now() - t0;
     if (!got) throw new Error('no frame decoded');
   }
 
@@ -297,11 +300,18 @@ class HlsVideoReader {
 
 
 // Brightness of a frame at THUMB_W x THUMB_H, drawn with the 2D context g.
+// The conversion loop is timed for the usage data (a fixed step: the same arithmetic for
+// every pixel whatever the picture, see FIXED_STEPS in 87-telemetry.js). LUMA_STEP_V
+// names this loop: change it whenever the loop changes, so that timings of different
+// code are never compared.
+const LUMA_STEP_V = 1;
 function lumaThumb(g, img) {
   g.drawImage(img, 0, 0, THUMB_W, THUMB_H);
   const d = g.getImageData(0, 0, THUMB_W, THUMB_H).data;
   const out = new Uint8Array(THUMB_W * THUMB_H);
+  const t0 = performance.now();
   for (let i = 0, j = 0; i < out.length; i++, j += 4) out[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+  usageStep('luma', LUMA_STEP_V, out.length, performance.now() - t0);
   return out;
 }
 
@@ -648,7 +658,9 @@ class SlideAnalyzer {
     const cached = id ? await idbCache.get(key) : undefined;
     if (signal.aborted) return;
     // A result for another view than the one chosen by hand is made again.
-    if (cacheValid('slides', cached) && Array.isArray(cached.chapters) && (this.manualScreen == null || cached.screen === this.manualScreen)) {
+    const hit = cacheValid('slides', cached) && Array.isArray(cached.chapters) && (this.manualScreen == null || cached.screen === this.manualScreen);
+    if (id) usageNote('cache', hit ? 'hit' : 'miss');
+    if (hit) {
       cacheTouch(key);
       this.uniform = Array.isArray(cached.uniform) ? cached.uniform : [];
       this.screenIndex = cached.screen;
@@ -870,6 +882,7 @@ class SlideAnalyzer {
       // the analysis: it counts as "same picture as before"; only several in a row do.
       try {
         await reader.keyframe(i, signal, (f) => { luma = frameLuma(f); pic = smallBitmap(f, CHAPTER_THUMB_W); });
+        usageNote('work', 'scanFrame', reader.decodeMs);
         fails = 0;
       } catch (e) {
         if (signal.aborted) throw e;

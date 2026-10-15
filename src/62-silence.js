@@ -108,6 +108,7 @@ class HlsAudioTrack {
     let o = 0;
     for (const p of parts) { bytes.set(new Uint8Array(p), o); o += p.byteLength; }
     const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const t0 = performance.now();
     const ab = await new Offline(1, sampleRate, sampleRate).decodeAudioData(bytes.buffer);
     let pcm = ab.getChannelData(0);
     if (ab.numberOfChannels > 1) {
@@ -118,6 +119,7 @@ class HlsAudioTrack {
       }
       for (let k = 0; k < pcm.length; k++) pcm[k] /= ab.numberOfChannels;
     }
+    this.decodeMs = performance.now() - t0;   // usage data
     const last = segs[segs.length - 1];
     return { start: segs[0].start, end: last.start + last.dur, rate: ab.sampleRate, pcm };
   }
@@ -127,6 +129,10 @@ class HlsAudioTrack {
 
 // Speech-band level (roughly 150 Hz to 4 kHz, so air-conditioning rumble counts as quiet)
 // per ENV_STEP seconds, stored as one byte: 0 = not analysed yet, 1..255 = -100..0 dBFS.
+// The filter loop of fill() is timed for the usage data (a fixed step: the same
+// arithmetic for every sample whatever the sound, see FIXED_STEPS in 87-telemetry.js).
+// LOUD_STEP_V names that loop: change it whenever the loop changes.
+const LOUD_STEP_V = 1;
 class Envelope {
   constructor(duration, data) {
     this.step = ENV_STEP;
@@ -157,6 +163,7 @@ class Envelope {
     let hpPrevOut = c ? c.hpOut : 0;
     let lp = c ? c.lp : 0;
     let f = 0;
+    const t0 = performance.now();
     for (; (f + 1) * per <= pcm.length; f++) {
       const i = first + f;
       let sum = 0;
@@ -172,6 +179,7 @@ class Envelope {
       const db = 10 * Math.log10(sum / per + 1e-12);
       this.data[i] = 1 + Math.round((clamp(db, -100, 0) + 100) * 2.54);
     }
+    if (f) usageStep('loud', LOUD_STEP_V, f * per, performance.now() - t0);
     this.carry = { at: first + f, hpIn: hpPrevIn, hpOut: hpPrevOut, lp };
   }
 
@@ -419,6 +427,7 @@ class SilenceAnalyzer {
     this.track = track;
     const data = cacheValid('silence-env', cached) && cached.step === ENV_STEP ? cached.data : null;
     if (data) cacheTouch(key);
+    if (this.lesson.mediaId) usageNote('cache', data ? 'hit' : 'miss');
     this.env = new Envelope(track.duration, data);
     this.progress = this.env.coverage();
     this.recompute();
@@ -450,7 +459,9 @@ class SilenceAnalyzer {
       }
       await idle();
       if (signal.aborted) return;
+      const f0 = performance.now();
       this.env.fill(chunk.start, chunk.pcm, chunk.rate);
+      if (chunk.end > chunk.start) usageNote('work', 'silenceMin', (track.decodeMs + performance.now() - f0) / ((chunk.end - chunk.start) / 60));
       read++;
       this.progress = this.env.coverage();
       if (++sinceSave >= 5) {

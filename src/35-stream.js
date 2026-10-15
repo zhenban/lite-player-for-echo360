@@ -144,7 +144,10 @@ class Stream {
         this.applyQuality(true);
         if (onReady) onReady();
       }));
-      hls.on(platform.Hls.Events.LEVEL_SWITCHED, guardCore(() => { if (this.onLevel) this.onLevel(); }));
+      // The first switch is the start; later ones are counted (usage data).
+      let switches = 0;
+      hls.on(platform.Hls.Events.LEVEL_SWITCHED, guardCore(() => { if (switches++) usageNote('level'); if (this.onLevel) this.onLevel(); }));
+      hls.on(platform.Hls.Events.FRAG_LOADED, (e, data) => { usageNote('streamBytes', null, data && data.frag && data.frag.stats ? data.frag.stats.loaded : 0); });
       // hls.js resets the MediaSource after some failed appends (refused segments can cause
       // them) and then starts over at startPosition: keep the position and play state.
       hls.on(platform.Hls.Events.MEDIA_DETACHING, guardCore(() => {
@@ -190,6 +193,9 @@ class Stream {
   onError(data) {
     if (!data || !this.hls) return;
     const code = data.response && data.response.code;
+    // Usage data: what went wrong (hls.js's name for it) and, for requests, how.
+    usageNote('stream', data.details);
+    if (data.type === platform.Hls.ErrorTypes.NETWORK_ERROR) usageNote('net', code || (/TimeOut$/.test(data.details || '') ? 'timeout' : 'network'));
     // Refused: hls.js would keep retrying for half a minute; renew the access now so that
     // one of its retries succeeds.
     if ((code === 401 || code === 403) && !data.fatal && this.onAuth) { this.onAuth(); return; }

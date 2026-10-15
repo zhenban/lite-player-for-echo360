@@ -222,7 +222,9 @@ class SlideTextReader {
     const lumaOf = this.shared && this.shared.shareLumas(true, this.source) ? (t) => this.shared.lumaAt(t) : () => null;
     const n = this.times.length;
     const cached = this.lesson.mediaId ? await idbCache.get(this.key) : undefined;
-    if (cacheValid('ocr', cached) && cached.height === this.reader.info.height && Array.isArray(cached.at) && cached.at.length === n) {
+    const hit = cacheValid('ocr', cached) && cached.height === this.reader.info.height && Array.isArray(cached.at) && cached.at.length === n;
+    if (this.lesson.mediaId) usageNote('cache', hit ? 'hit' : 'miss');
+    if (hit) {
       cacheTouch(this.key);
       this.texts = cached.texts;
       this.at = Int32Array.from(cached.at);
@@ -290,6 +292,7 @@ class SlideTextReader {
         ref = thumb;
         this.stats.read++;
         this.stats.ms += Math.round(ms);
+        usageNote('work', 'ocrMpx', ms / (canvas.width * canvas.height / 1e6));
         // Half pace while playing: rest as long as the reading took.
         if (!this.video.paused) await this.gate.wait(ms);
       }

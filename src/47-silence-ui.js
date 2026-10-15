@@ -43,7 +43,7 @@ class SilenceUi {
       e.stopPropagation();
       const s = this.skips[this.idx];
       this.hideSkip();
-      if (s) x.seek(s.end);
+      if (s) { usageNote('skip', s.kind, s.end - x.video.currentTime); x.seek(s.end); }
     });
   }
 
@@ -126,6 +126,7 @@ class SilenceUi {
       this.autoSkipped.add(s.start);
       const from = ct;
       this.hideSkip();
+      usageNote('skip', s.kind, s.end - from);
       x.seek(s.end);
       x.toast(tr(s.kind === 'blank' ? 'skippedBlank' : 'skippedSilence', { time: fmtTime(s.end - from) }), tr('undo'), () => x.seek(from));
       return;

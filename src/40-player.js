@@ -39,6 +39,7 @@ class LitePlayer {
   }
 
   init(lesson, opts) {
+    this.startedAt = performance.now();   // usage data: times are measured from here
     this.lesson = lesson;
     this.opts = opts;
     // A feature that fails is announced once (playback goes on).
@@ -129,7 +130,9 @@ class LitePlayer {
         layout: () => (this.pdfMode ? 'pdf' : this.layout),
         slides: () => this.slides || null, deck: () => this.deck || null,
         silence: () => (this.silence && this.silence.analyzer) || null, emptyScreen: () => this.emptyScreen,
-        session: () => this.session, duration: () => this.duration(),
+        session: () => this.session, duration: () => this.duration(), startedAt: this.startedAt,
+        height: () => this.clock.height, bandwidth: () => (this.clock.hls ? this.clock.hls.bandwidthEstimate : NaN),
+        played: () => this.played.merged(this.video.played),
       }, this.d.child());
       telemetry.envDaily();
     });
@@ -980,6 +983,7 @@ class LitePlayer {
     }
     if (empty && this.emptyScreen) this.emptyScreen.tick(this.clock.position());
     this.renderChapterMarks();
+    if (a.chapters.length && this.usage) this.usage.mark('chapters');
     // The tab also holds the slide reader: it is there once the analysis has an answer,
     // even when no chapters were found.
     if (!this.slidesPane && !a.chapters.length && a.state !== 'done' && a.state !== 'unavailable') return;
@@ -1013,6 +1017,7 @@ class LitePlayer {
         // The PDF view appears (pages loaded) or goes (files removed) with the deck.
         if (this.pdfMode !== this.shownPdfMode) { this.shownPdfMode = this.pdfMode; this.applyLayout(); }
         if (this.reader.active) this.reader.update(this.video.currentTime, true);
+        if (this.deck && this.deck.decided && this.usage) this.usage.mark('pdf');
       },
     });
     this.deck.restore().catch((e) => log.warn('slide files:', e && e.message ? e.message : e));

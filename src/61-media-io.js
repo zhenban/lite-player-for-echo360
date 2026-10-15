@@ -65,19 +65,25 @@ function parseMediaPlaylist(text, base) {
 
 // A refused request (the video access has expired) renews the session once and retries
 // (see 36-session.js), so background work continues where it was.
+// Failures are counted for the usage data (the status, or 'network' for no answer).
 function fetchOk(url, init, renewed) {
   return fetch(url, Object.assign({ credentials: 'include' }, init)).then((r) => {
+    if (!r.ok) usageNote('net', r.status);
     if ((r.status === 401 || r.status === 403) && !renewed && mediaSession.renew) {
       return mediaSession.renew().then(() => fetchOk(url, init, true));
     }
     if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url.split('?')[0]);
     return r;
+  }, (e) => {
+    if (!(e && e.name === 'AbortError')) usageNote('net', 'network');
+    throw e;
   });
 }
 
+// Used by the background analyses only: what they download is counted (usage data).
 function fetchRange(url, offset, length, signal) {
   const headers = length === null ? {} : { Range: 'bytes=' + offset + '-' + (offset + length - 1) };
-  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer());
+  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer()).then((b) => { usageNote('bgBytes', null, b.byteLength); return b; });
 }
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot

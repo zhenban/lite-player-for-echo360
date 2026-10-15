@@ -72,7 +72,11 @@ function renderPdfPage(page, width) {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.floor(bw * scale));
   c.height = Math.max(1, Math.floor(bh * scale));
-  return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => c);
+  const t0 = performance.now();
+  return page.render({ canvas: c, canvasContext: c.getContext('2d'), viewport: vp }).promise.then(() => {
+    usageNote('work', 'pdfMpx', (performance.now() - t0) / (c.width * c.height / 1e6));
+    return c;
+  });
 }
 
 // The page to show at each sample while following. pages[i]: from followLecture (a page,

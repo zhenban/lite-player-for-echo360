@@ -60,6 +60,7 @@ class FollowerSync {
     if (c.paused || c.seeking || f.seeking || f.readyState < 2) return;
     const base = c.playbackRate;
     const drift = f.currentTime - c.currentTime;
+    usageNote('drift', null, Math.abs(drift) * 1000);
     if (Math.abs(drift) >= SYNC_SEEK_AT) {
       // Aim slightly ahead so the follower lands in sync once its seek completes.
       f.currentTime = c.currentTime + 0.1 * base;

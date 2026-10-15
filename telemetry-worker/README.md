@@ -14,7 +14,10 @@ holds no secrets.
   with their checks. Unknown fields are dropped, and invalid values are stored as NULL. The
   main repository's `test/telemetry.test.mjs` runs the Worker against SQLite and checks that
   the player sends only listed fields.
-- `migrations/` holds the tables and indexes (uid, time, version).
+- `migrations/` holds the tables and indexes (uid, time, version), one file per change
+  (`npm run migrate` applies the ones not applied yet).
+- Fixed steps (`luma_*`, `loud_*`): `*_v` is the version of the timed code. Compare only
+  rows of the same version; the queries use the newest.
 - `queries/` holds the usual questions, see below.
 
 Nothing is logged. The Worker writes nothing to the console, and `observability` is off in
@@ -60,12 +63,17 @@ npx wrangler d1 execute telemetry --remote --command="$(cat queries/active-users
 | `active-users.sql` | active users per day and week |
 | `versions-browsers.sql` | script versions, browsers, systems, script managers, desktop/touch |
 | `regions.sql` | countries, regions, network providers |
-| `performance.sql` | load per version: median and 90th percentile of long tasks, dropped frames, memory, first picture, rebuffering, analysis times |
+| `performance.sql` | load and watching per version: median and 90th percentile of long tasks, dropped frames, memory, start, seeking, rebuffering, sync, interaction delay, analysis times and their time per unit of work |
+| `device-tiers.sql` | computers in four tiers by the fixed step `luma` (10th percentile): dropped frames, interaction delay, long tasks and CPU pressure per tier |
+| `fixed-steps.sql` | the fixed steps by browser, system and cores: median of the viewings' 10th percentile and median, per step version |
+| `work-vs-steps.sql` | rank correlation between the fixed steps and the measures of real work (do the steps say how fast the work goes?) |
+| `stability.sql` | features turned off, failed requests by kind, video stream errors, the usage data's own failures |
+| `habits.sql` | time at each speed and resolution, theme, language, share watched, silence and empty screen skipped, switches to the original player |
 | `errors.sql` | most frequent errors |
 | `fallbacks.sql` | why pages went to the original player, with Echo360 front-end versions |
 | `features.sql` | share of users using each feature |
 | `changed-defaults.sql` | share of users who changed each setting |
-| `webgpu.sql` | WebGPU, WebCodecs and built-in AI availability by browser |
+| `webgpu.sql` | WebGPU, WebCodecs, built-in AI, CPU pressure readings and hardware video decoding by browser |
 | `algorithms.sql` | screen detection, chapters per hour, PDF follower, corrections, layout undos, access renewals |
 | `check-columns.sql` | the columns of every table (only the listed fields exist) |
 

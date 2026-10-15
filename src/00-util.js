@@ -68,6 +68,19 @@ function clamp(v, lo, hi) {
 const unexpected = { handler: null };
 const featureErrors = { notify: null, seen: new Set() };
 
+// Usage data (87-telemetry.js) from code that knows nothing about it: never throws, and
+// costs a call when usage data is off.
+//   usageNote(kind, key, value)   something happened (a failed request, bytes loaded, ...)
+//   usageStep(step, version, units, ms)
+//                                 one run of a fixed amount of pure computation took ms
+//                                 (see FIXED_STEPS in 87-telemetry.js)
+function usageNote(kind, key, value) {
+  try { telemetry.note(kind, key, value); } catch (e) { /* not counted */ }
+}
+function usageStep(step, version, units, ms) {
+  try { telemetry.step(step, version, units, ms); } catch (e) { /* not counted */ }
+}
+
 function reportUnexpected(err) {
   console.error(TAG, 'unexpected error', err);
   try { telemetry.error('player core', err); } catch (e) { /* not counted */ }
@@ -83,6 +96,7 @@ function reportFeatureError(name, err) {
   try { telemetry.error(what, err); } catch (e) { /* not counted */ }
   if (featureErrors.seen.has(what)) return;
   featureErrors.seen.add(what);
+  usageNote('guardOff', what);
   if (featureErrors.notify) { try { featureErrors.notify(what, err); } catch (e) { /* ignore */ } }
 }
 
