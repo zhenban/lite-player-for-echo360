@@ -85,6 +85,30 @@ test('busy: totals agree, versions compare, and the Echo360 change shows', async
   assert.deepEqual(v.versions.map((x) => x.version), ['0.23.0']);
 });
 
+test('slide sources and why the keyframe scan stopped, from the viewings that report them', async () => {
+  const STOPS = ['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'];
+  const { data } = await get('busy', 'range=30');
+  const f = data.features;
+  const total = f.slideSources.reduce((a, x) => a + x.sessions, 0);
+  assert.ok(total > 0 && total < data.overview.sessions, 'only viewings from 0.23.0 report it');
+  assert.ok(f.slideSources.find((x) => x.source === 'frames').sessions > total / 2);
+  assert.ok(f.slideStops.length > 0);
+  for (const x of f.slideStops) assert.ok(STOPS.includes(x.reason), x.reason);
+  // A scan that stopped early leaves the preview pictures (seeded so), never keyframes.
+  const thumbs = f.slideSources.find((x) => x.source === 'thumbs').sessions;
+  assert.equal(f.slideStops.reduce((a, x) => a + x.sessions, 0), thumbs);
+  // With the version filter: every 0.23.0 viewing reports it; 0.21.0 never did.
+  const v23 = (await get('busy', 'range=30&version=0.23.0')).data;
+  assert.equal(v23.features.slideSources.reduce((a, x) => a + x.sessions, 0), v23.overview.sessions);
+  const v21 = (await get('busy', 'range=90&version=0.21.0')).data;
+  assert.deepEqual([v21.features.slideSources, v21.features.slideStops], [[], []]);
+  const empty = (await get('empty')).data;
+  assert.deepEqual([empty.features.slideSources, empty.features.slideStops], [[], []]);
+  // WebCodecs is one of the device dimensions, split into available or not.
+  assert.equal(data.devices.dims.webcodecs.reduce((a, x) => a + x.users, 0), data.devices.users);
+  for (const x of data.devices.dims.webcodecs) assert.ok(['yes', 'no'].includes(x.value));
+});
+
 test('HEAD answers without a body', async () => {
   const db = makeDb('busy');
   const res = await handle(req('/api/summary', { method: 'HEAD', token }), makeEnv(db), {}, deps);

@@ -47,7 +47,7 @@ const perfValue = `CASE m.value
 const VERSION_METRICS = ['dropped_pct', 'input_ms90', 'long_tasks_pm'];
 
 export const DEVICE_DIMS = ['browser', 'os', 'manager', 'form', 'screen', 'cores', 'memory', 'gpu', 'hwdecode', 'webgpu',
-  'country', 'region', 'network'];
+  'webcodecs', 'country', 'region', 'network'];
 
 const SQL = {
   // Totals for the range and the period before it.
@@ -151,6 +151,7 @@ SELECT d.value AS dim,
     WHEN 'gpu' THEN l.gpu_vendor
     WHEN 'hwdecode' THEN CASE l.hw1080 WHEN 1 THEN 'yes' WHEN 0 THEN 'no' END
     WHEN 'webgpu' THEN CASE l.webgpu WHEN 1 THEN 'yes' WHEN 0 THEN 'no' END
+    WHEN 'webcodecs' THEN CASE l.webcodecs WHEN 1 THEN 'yes' WHEN 0 THEN 'no' END
     WHEN 'country' THEN l.country
     WHEN 'region' THEN CASE WHEN l.region IS NOT NULL THEN COALESCE(l.country, '?') || ' ' || l.region END
     WHEN 'network' THEN l.asorg
@@ -250,6 +251,17 @@ SELECT j.key AS speed, SUM(j.value * s.play_sec) / 100.0 AS sec
 FROM sessions s, json_each(s.speeds) j
 WHERE ${scope('s')} AND s.play_sec > 0
 GROUP BY j.key`,
+
+  // Where each viewing's slide chapters came from (frames: the video's keyframes; thumbs:
+  // Echo360's per-minute preview pictures only; none), and why the keyframe scan stopped
+  // early when it did. Viewings that did not report it (before 0.23.0) are left out.
+  slides: `
+SELECT 'src' AS kind, s.slide_src AS bucket, COUNT(*) AS sessions FROM sessions s
+WHERE ${scope('s')} AND s.slide_src IS NOT NULL GROUP BY s.slide_src
+UNION ALL
+SELECT 'stop', s.slide_stop, COUNT(*) FROM sessions s
+WHERE ${scope('s')} AND s.slide_stop IS NOT NULL GROUP BY s.slide_stop
+ORDER BY kind, sessions DESC`,
 
   // Echo360's page code versions (its script file names): when each was first seen at all,
   // how many were seen before it (0: the first ever seen, so not a change), and in the range its viewings, pages that went to the original player, and users.

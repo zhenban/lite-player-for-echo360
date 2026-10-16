@@ -13,7 +13,7 @@ const rules = {
 };
 
 export default [
-  { ignores: ['node_modules/', '.wrangler/', 'src/assets.gen.js', 'src/page/'] },
+  { ignores: ['node_modules/', '.wrangler/', 'src/assets.gen.js', 'src/page/', 'dev/out/bundle/'] },
   js.configs.recommended,
   { files: ['src/**/*.js'], languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: { ...globals.serviceworker } }, rules },
   { files: ['test/**/*.mjs', 'dev/**/*.mjs', '*.mjs'], languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: { ...globals.node } }, rules },

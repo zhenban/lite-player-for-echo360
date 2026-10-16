@@ -19,14 +19,16 @@ English, with Chinese as the second language (`中文` button).
   - **Users**: daily active users, script versions, new users, share of each recording
     watched, silence skipped, keyboard use, country / region / network;
   - **Devices**: browser, system, device type, script manager, screen width, CPU cores,
-    memory, graphics, 1080p decoding, WebGPU;
+    memory, graphics, 1080p decoding, WebGPU, WebCodecs;
   - **Performance**: dropped frames, click response (slowest 10 %), long tasks, start-up
     and seek times, buffering, memory and CPU load, with medians against their limits and a
     per-version table;
   - **Stability**: viewings with a problem per day, what went wrong, the most frequent
     errors (feature, message, count, versions, last seen);
   - **Features**: share of users who used each feature, features never used, settings
-    changed from the default, playback speeds;
+    changed from the default, playback speeds, where slide chapters came from (the video's
+    keyframes, or only Echo360's per-minute preview pictures) and why the keyframe scan
+    stopped early;
   - **Echo360 compatibility**: page loads sent to the original player and why, the
     versions of Echo360's page code seen (a new one usually means Echo360 changed its
     player), and how the script started.
@@ -85,6 +87,9 @@ off. The font is bundled, so the page loads nothing from other sites.
   (generated, not committed); `npm test`, `npm run dev` and `npm run deploy` run it first.
 - `test/`: access control, read-only, summary and page tests.
 - `dev/`: made-up data (`seed.mjs`), local preview (`serve.mjs`), screenshots (`shoot.mjs`).
+  `dev/migrations/` holds copies of telemetry Worker migrations this branch's
+  `telemetry-worker/` does not have yet; the test schema skips a copy once the Worker's own
+  file of the same name is present, so they can be deleted after a merge.
 
 ## Tests and local preview
 

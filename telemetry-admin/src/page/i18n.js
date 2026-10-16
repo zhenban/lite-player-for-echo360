@@ -75,11 +75,11 @@ const STRINGS = {
 
     // Devices
     dim_browser: 'Browser', dim_os: 'System', dim_manager: 'Script manager', dim_form: 'Device type', dim_screen: 'Screen width',
-    dim_cores: 'CPU cores', dim_memory: 'Memory', dim_gpu: 'Graphics', dim_hwdecode: '1080p video decoding', dim_webgpu: 'WebGPU',
+    dim_cores: 'CPU cores', dim_memory: 'Memory', dim_gpu: 'Graphics', dim_hwdecode: '1080p video decoding', dim_webgpu: 'WebGPU', dim_webcodecs: 'WebCodecs (frame decoding)',
     form_desktop: 'Desktop', form_touch: 'Touch screen', form_phone: 'Phone or tablet',
     screen_s: 'Under 768 px', screen_m: '768 to 1279 px', screen_l: '1280 to 1919 px', screen_xl: '1920 px or wider',
     memory_lt4: 'Under 4 GB', memory_4: '4 to 7 GB', memory_8: '8 GB or more',
-    hwdecode_yes: 'Hardware', hwdecode_no: 'Software only', webgpu_yes: 'Available', webgpu_no: 'Not available',
+    hwdecode_yes: 'Hardware', hwdecode_no: 'Software only', webgpu_yes: 'Available', webgpu_no: 'Not available', webcodecs_yes: 'Available', webcodecs_no: 'Not available',
     cores_n: '{v} cores',
 
     // Performance
@@ -104,6 +104,11 @@ const STRINGS = {
     // Features
     featureUse: 'Share of users who used each feature', neverUsed: 'Never used in this range',
     changedSettings: 'Settings changed from the default', speedsPlayed: 'Playback time by speed', speedX: '{v}×',
+    slideSources: 'Where slide chapters came from', src_frames: 'Video keyframes (exact)', src_thumbs: 'Echo360 preview pictures only',
+    src_none: 'No slide chapters', slideStops: 'Why the keyframe scan stopped early',
+    stop_noWebCodecs: 'Browser can’t decode frames (no WebCodecs)', stop_noFrame: 'Decoder returned no picture', stop_decoder: 'Decoder error',
+    stop_playlist: 'Couldn’t read the video playlist', stop_network: 'Network error', stop_other: 'Other',
+    noSlideSource: 'No viewing in this range reported where its slide chapters came from.',
     noneChanged: 'Nobody changed a setting.',
 
     // Compatibility
@@ -189,11 +194,11 @@ const STRINGS = {
     tipUsers: '活跃用户', tipViews: '次观看', tipPlayed: '播放时长',
 
     dim_browser: '浏览器', dim_os: '系统', dim_manager: '脚本管理器', dim_form: '设备类型', dim_screen: '屏幕宽度',
-    dim_cores: 'CPU 核数', dim_memory: '内存', dim_gpu: '显卡', dim_hwdecode: '1080p 视频解码', dim_webgpu: 'WebGPU',
+    dim_cores: 'CPU 核数', dim_memory: '内存', dim_gpu: '显卡', dim_hwdecode: '1080p 视频解码', dim_webgpu: 'WebGPU', dim_webcodecs: 'WebCodecs（画面解码）',
     form_desktop: '桌面', form_touch: '触摸屏', form_phone: '手机或平板',
     screen_s: '小于 768 px', screen_m: '768–1279 px', screen_l: '1280–1919 px', screen_xl: '1920 px 及以上',
     memory_lt4: '小于 4 GB', memory_4: '4–7 GB', memory_8: '8 GB 及以上',
-    hwdecode_yes: '硬件', hwdecode_no: '仅软件', webgpu_yes: '可用', webgpu_no: '不可用',
+    hwdecode_yes: '硬件', hwdecode_no: '仅软件', webgpu_yes: '可用', webgpu_no: '不可用', webcodecs_yes: '可用', webcodecs_no: '不可用',
     cores_n: '{v} 核',
 
     perfIntro: '统计至少播放一分钟的观看：中位数和最慢的 10%。竖线是限值。',
@@ -215,6 +220,11 @@ const STRINGS = {
 
     featureUse: '用过各功能的用户比例', neverUsed: '这段时间没人用过',
     changedSettings: '改过默认值的设置', speedsPlayed: '各播放速度的时长', speedX: '{v}×',
+    slideSources: '幻灯片章节的来源', src_frames: '视频关键帧（精确）', src_thumbs: '仅 Echo360 每分钟预览图',
+    src_none: '没有幻灯片章节', slideStops: '关键帧扫描提前停止的原因',
+    stop_noWebCodecs: '浏览器无法解码画面（没有 WebCodecs）', stop_noFrame: '解码器没有返回画面', stop_decoder: '解码器出错',
+    stop_playlist: '无法读取视频播放列表', stop_network: '网络错误', stop_other: '其他',
+    noSlideSource: '这段时间内没有观看报告幻灯片章节的来源。',
     noneChanged: '没有人改过设置。',
 
     dailyFallbacks: '退回原播放器的页面', dailyFallbacksCap: '每天；不含用户主动切换',
