@@ -2,14 +2,19 @@
 // The library files loaded when first needed, by npm path, with their SHA-256 (hex).
 // platform.libBlobUrl / importLib refuse a file whose bytes differ, so a changed file on
 // the CDN is never run; Tesseract's language data is checked in its Worker
-// (tessWorkerGuard, 66-slide-ocr.js). hls.js comes through @require instead (meta.txt).
+// (tessWorkerGuard, 66-slide-ocr.js). hls.js is one of them: loaded when a player is about
+// to start (platform.loadHls), never at start-up, so that the trap for the page's player
+// (00-boot.js) never waits for a download.
 //
 // Each hash was taken from the CDN and matched against the package on registry.npmjs.org.
 // `npm run check-requires` checks them against the CDN again (CI). A new version of a
 // library means new paths and new hashes here.
 // ===================================================================================
 
+const HLS_LIB = 'hls.js@1.7.3/dist/hls.min.js';
+
 const LIB_SHA256 = {
+  'hls.js@1.7.3/dist/hls.min.js': 'a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e',
   'pdfjs-dist@6.4.299/build/pdf.min.mjs': '57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2',
   'pdfjs-dist@6.4.299/build/pdf.worker.min.mjs': '9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18',
   'tesseract.js@7.0.0/dist/tesseract.esm.min.js': '64871d76c75609fd5413b88a8171e2ef40deedd77d5875ba23df104b2d05eb29',

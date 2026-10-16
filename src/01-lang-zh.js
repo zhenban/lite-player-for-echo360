@@ -324,6 +324,8 @@ STRINGS.zh = {
   diagInfo: '用于报告问题：版本、各功能的状态和最近的警告。不含登录信息，网址和邮箱地址已隐去；分享前请先看一遍。下面就是会被复制的全部内容：',
   diagCopy: '复制',
   diagCopied: '已复制诊断信息',
+  copyDiagnostics: '复制诊断信息',
+  noticeReason: '原因：{why}',
   keyExport: '导出笔记和书签、备份',
   exportNotes: '导出笔记和备份',
   exportMenu: '导出…',

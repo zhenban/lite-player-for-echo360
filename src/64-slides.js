@@ -555,13 +555,13 @@ function chapterIndexAt(chapters, t) {
 function smallBitmap(img, w) {
   const iw = img.displayWidth || img.width || 16;
   const ih = img.displayHeight || img.height || 9;
-  const c = new OffscreenCanvas(w, Math.max(1, Math.round((w * ih) / iw)));
+  const c = makeCanvas(w, Math.max(1, Math.round((w * ih) / iw)));
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
 
 function bitmapToBlob(canvas) {
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+  return canvasBlob(canvas, 'image/jpeg', 0.8);
 }
 
 // The screen among scored views [{ vals, ... }] (see findScreen): the one with the lowest
@@ -615,7 +615,7 @@ class SlideAnalyzer {
   // step and never writes into the new one's results.
   start() {
     const signal = this.ac.signal;
-    this.run(signal, this.gate).catch((e) => {
+    bgWork.track(this.run(signal, this.gate)).catch((e) => {
       if (signal.aborted) return;
       log.warn('slide detection stopped:', e && e.message ? e.message : e);
       if (!this.chapters.length) { this.state = 'unavailable'; this.onChange(); }

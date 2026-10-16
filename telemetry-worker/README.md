@@ -64,9 +64,10 @@ npx wrangler d1 execute telemetry --remote --command="$(cat queries/active-users
 | `versions-browsers.sql` | script versions, browsers, systems, script managers, desktop/touch |
 | `regions.sql` | countries, regions, network providers |
 | `performance.sql` | load and watching per version: median and 90th percentile of long tasks, dropped frames, memory, start, seeking, rebuffering, sync, interaction delay, analysis times and their time per unit of work |
-| `device-tiers.sql` | computers in four tiers by the fixed step `luma` (10th percentile): dropped frames, interaction delay, long tasks and CPU pressure per tier |
+| `device-tiers.sql` | devices (user ids) in four tiers by their fixed-step time (`luma`, the median over the device's viewings of the 10th percentile; `loud` alongside): dropped frames, interaction delay, long tasks and CPU pressure with and without background analyses, per tier |
 | `fixed-steps.sql` | the fixed steps by browser, system and cores: median of the viewings' 10th percentile and median, per step version |
-| `work-vs-steps.sql` | rank correlation between the fixed steps and the measures of real work (do the steps say how fast the work goes?) |
+| `work-vs-steps.sql` | rank correlation over devices between the fixed steps and the measures of real work (do the steps say how fast the work goes?) |
+| `startup.sql` | how the script started, per browser and script manager: caught the page's player, took it over, or left it; the page's state then, time until the player was shown, watch reports stopped |
 | `stability.sql` | features turned off, failed requests by kind, video stream errors, the usage data's own failures |
 | `habits.sql` | time at each speed and resolution, theme, language, share watched, silence and empty screen skipped, switches to the original player |
 | `errors.sql` | most frequent errors |

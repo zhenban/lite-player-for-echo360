@@ -327,6 +327,8 @@ const STRINGS = {
     diagInfo: 'For a bug report: versions, the state of each feature and recent warnings. Sign-in data is left out and web and email addresses are hidden; read it before you share it. This is exactly what will be copied:',
     diagCopy: 'Copy',
     diagCopied: 'Diagnostics copied',
+    copyDiagnostics: 'Copy diagnostics',
+    noticeReason: 'Reason: {why}',
     keyExport: 'Export notes and bookmarks, backup',
     exportNotes: 'Export notes and backup',
     exportMenu: 'Export…',

@@ -136,6 +136,7 @@ class Stream {
         abrBandWidthUpFactor: STREAM_BW_FACTOR[this.priority === 'low' ? 'low' : 'main'][1],
         backBufferLength: STREAM_BACK_BUFFER_SEC,
         maxBufferLength: STREAM_MAX_BUFFER_SEC,
+        maxMaxBufferLength: STREAM_MAX_AHEAD_SEC,
         xhrSetup: (xhr) => { xhr.withCredentials = true; },
       });
       this.hls = hls;

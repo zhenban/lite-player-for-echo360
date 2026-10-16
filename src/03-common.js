@@ -49,9 +49,62 @@ function confirmButton(label, onConfirm) {
   return b;
 }
 
+// The value of the JavaScript string literal starting at text[at] (a quote), or null if
+// there is none there. Every escape a string literal can hold is decoded.
+function readJsString(text, at) {
+  const q = text[at];
+  if (q !== '"' && q !== "'") return null;
+  let out = '';
+  let i = at + 1;
+  for (;;) {
+    let j = i;
+    while (j < text.length && text[j] !== q && text[j] !== '\\' && text[j] !== '\n' && text[j] !== '\r') j++;
+    out += text.slice(i, j);
+    if (j >= text.length || text[j] === '\n' || text[j] === '\r') return null;
+    if (text[j] === q) return out;
+    const c = text[j + 1];
+    i = j + 2;
+    const hex = (n) => {
+      const h = text.slice(i, i + n);
+      if (!new RegExp('^[0-9a-fA-F]{' + n + '}$').test(h)) return null;
+      i += n;
+      return parseInt(h, 16);
+    };
+    if (c === undefined) return null;
+    const simple = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v' }[c];
+    if (simple) { out += simple; continue; }
+    if (c === 'x') { const n = hex(2); if (n == null) return null; out += String.fromCharCode(n); continue; }
+    if (c === 'u') {
+      if (text[i] === '{') {
+        const end = text.indexOf('}', i);
+        const n = end > i + 1 && /^[0-9a-fA-F]{1,6}$/.test(text.slice(i + 1, end)) ? parseInt(text.slice(i + 1, end), 16) : NaN;
+        if (!(n <= 0x10ffff)) return null;
+        out += String.fromCodePoint(n);
+        i = end + 1;
+        continue;
+      }
+      const n = hex(4);
+      if (n == null) return null;
+      out += String.fromCharCode(n);
+      continue;
+    }
+    if (c === '0' && !/[0-9]/.test(text[i] || '')) { out += '\0'; continue; }
+    if (c === '\r') { if (text[i] === '\n') i++; continue; }      // line continuation
+    if (c === '\n' || c === '\u2028' || c === '\u2029') continue;
+    if (/[0-9]/.test(c)) return null;                                  // octal escapes: not expected
+    out += c;                                                          // \" \' \\ \/ and the like
+  }
+}
+
 // A canvas to draw on off screen (an OffscreenCanvas where there is one).
 function makeCanvas(w, h) {
   return typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+}
+
+// A picture file of a canvas made by makeCanvas (OffscreenCanvas or a page canvas).
+function canvasBlob(canvas, type, quality) {
+  if (typeof canvas.convertToBlob === 'function') return canvas.convertToBlob({ type, quality });
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas could not be saved'))), type, quality));
 }
 
 // Path segment as the original player builds it: Echo360 ids are used verbatim (they

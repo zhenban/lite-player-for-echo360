@@ -139,7 +139,8 @@ class LitePlayer {
 
     const start = this.pickStart();
     this.startAt = start;
-    this.loadClock(this.clockPos, start, false);
+    // A page taken over goes on as the original player was: there, playing or not.
+    this.loadClock(this.clockPos, start, !!(opts.takeover && opts.takeover.playing));
     this.applyLayout();
     if (start > 1) this.toast(tr('resumedAt', { time: fmtTime(start) }), tr('startOver'), () => this.seek(0));
   }
@@ -241,6 +242,9 @@ class LitePlayer {
   }
 
   pickStart() {
+    // Taken over from the original player (90-main.js): where it was.
+    const took = this.opts.takeover;
+    if (took && took.at != null) return took.at;
     const link = this.linkTime();
     if (link != null) return link;
     // Back from a reload the player made (reloadHere): where it was, once.
@@ -280,8 +284,13 @@ class LitePlayer {
     this.clock.priority = this.quality.roleOf(pos) === 'camera' ? 'low' : 'high';
     this.clock.load(source.av, startAt, () => {
       v.playbackRate = this.prefs.rate;
-      if (this.clock.playing()) v.play().catch(() => {});
+      // Refused by the browser (autoplay not allowed): no longer meant to play, so the button
+      // says Play again. Interrupted by another load: that load carries the intent on.
+      if (this.clock.playing()) {
+        v.play().catch((e) => { if (e && e.name === 'NotAllowedError') { this.clock.intend(null, false); this.renderPlay(); } });
+      }
     }, autoplay);
+    this.renderPlay();
   }
 
   ensureFollower() {
@@ -664,15 +673,13 @@ class LitePlayer {
       this.session.wake();
       // Play is normally user-initiated; also recovers a context the browser suspended.
       if (this.audio) { this.audio.resume(); this.audio.syncTimer(); }
-      stage.classList.remove('paused');
-      this.setButton('.play', 'pause', tr('pause'), tr('pauseKey'));
+      this.renderPlay();
       if (this.reporter) this.reporter.onPlay();
       this.armIdle();
     });
     on('pause', () => {
       if (this.audio) this.audio.syncTimer();
-      stage.classList.add('paused');
-      this.setButton('.play', 'play', tr('play'), tr('playKey'));
+      this.renderPlay();
       if (this.reporter) this.reporter.onPause();
       this.savePosition();
       this.wake();
@@ -779,6 +786,17 @@ class LitePlayer {
     const play = this.clock.starting ? !this.clock.playing() : v.paused || v.ended;
     this.clock.intend(null, play);
     if (play) v.play().catch(() => {}); else v.pause();
+    this.renderPlay();
+  }
+
+  // The play button (and the paused look) show what playback is meant to do: while a stream
+  // (re)loads the element says paused, though it is about to play (a takeover of a playing
+  // original, a switch of views made while playing).
+  renderPlay() {
+    const play = this.clock.starting ? this.clock.playing() : !this.video.paused;
+    this.stage.classList.toggle('paused', !play);
+    if (play) this.setButton('.play', 'pause', tr('pause'), tr('pauseKey'));
+    else this.setButton('.play', 'play', tr('play'), tr('playKey'));
   }
 
   setRate(r) {

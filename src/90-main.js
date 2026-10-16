@@ -1,6 +1,35 @@
 // ===================================================================================
-// Bootstrap
+// Bootstrap. Two ways in (boot.path, 00-boot.js):
+//   intercept  the page's own player was caught before it started (the trap in 00-boot.js):
+//              it never runs.
+//   takeover   the page had started its player before this script ran (a manager that
+//              injects late): the bootstrap data is read from the page, the original
+//              player is stopped (its position and play state carried over) and its watch
+//              reports are stopped at the network layer (15-takeover.js).
+// Either way the same parser makes the lesson, and hls.js is loaded only then. Anything
+// that does not work out leaves (or gives back) the page to the original player, with a
+// notice saying why (fallback); a browser that cannot run the player is turned away
+// before anything starts.
 // ===================================================================================
+
+// Why this browser cannot run the player ('' if it can): checked before anything starts.
+// iPhone is not supported. The rest are what the player needs; CSS aspect-ratio and
+// createImageBitmap set the oldest browsers that pass (Safari 15, iPadOS 15).
+function unsupportedReason() {
+  if (/iPhone|iPod/.test(navigator.userAgent)) return 'iPhone';
+  const need = [
+    ['Proxy', typeof Proxy === 'function'],
+    ['fetch', typeof fetch === 'function'],
+    ['AbortController', typeof AbortController === 'function'],
+    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
+    ['ResizeObserver', typeof ResizeObserver === 'function'],
+    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
+    ['createImageBitmap', typeof createImageBitmap === 'function'],
+    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
+  ];
+  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
+  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
+}
 
 (function main() {
   // Rejections nobody handled: logged when they come from this script (the page's own are
@@ -13,9 +42,20 @@
   if (courseList.matches()) { try { courseList.start(); } catch (e) { /* the page works without it */ } return; }
   const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
   if (!adapter) return;
+  if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
 
   let booted = false;
   let player = null;
+  // Why the page goes to the original player (usage data): the player's reasons.
+  const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
+
+  // The page goes to (or stays with) the original player: why, for diagnostics.
+  function fellBack(reason, detail) {
+    boot.path = 'fallback';
+    boot.reason = reason + (detail ? ': ' + detail : '');
+    log.info('using the original player (' + boot.reason + ')');
+    try { telemetry.fallback(reason); } catch (e) { /* not sent */ }
+  }
 
   // Hands the page to the original player. Each step is protected: an exception here would
   // otherwise travel into the page's own start-up code.
@@ -23,65 +63,128 @@
     if (player) { try { player.destroy(); } catch (e) { log.error('cleanup failed:', e); } player = null; }
     try { callOriginal(arg); } catch (e) { log.error('original player failed to start:', e); }
     try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
-    if (why) notice(why);
+    if (why) fallbackNotice(why);
   }
 
-  adapter.intercept((arg, callOriginal) => {
+  // The original player keeps the page (taken over late, and something did not work out
+  // before it was stopped).
+  function keepOriginal(why) {
+    try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
+    if (why) fallbackNotice(why);
+  }
+
+  // Our player for the page's bootstrap argument. takeover: the original player is running
+  // (not yet stopped) and callOriginal would start it again.
+  function launch(arg, callOriginal, takeover) {
     booted = true;
-    // Why the page goes to the original player (usage data): the player's reasons.
-    const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
     if (store.get('forceOriginal', false)) {
-      startOriginal(callOriginal, arg, null);
-      return undefined;
+      fellBack('user');
+      if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);
+      return;
     }
-    try {
-      const lesson = adapter.parse(arg);
+    const giveUp = (reason, e) => {
+      log.warn('could not start, using the original player:', e);
+      fellBack(reason, String((e && e.message) || e));
+      if (!takeover) startOriginal(callOriginal, arg, tr('fallbackNotice'));
+      else keepOriginal(tr('fallbackNotice'));
+    };
+    const why = unsupportedReason();
+    if (why) { giveUp('unsupported', why); return; }
+    try { adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
+    const go = () => {
       // Checked before anything is built: without a way to play HLS, the original player.
-      if (!canPlayHls()) throw new Error('this browser cannot play HLS here (hls.js missing and no native HLS)');
+      if (!canPlayHls()) { giveUp('noHls', new Error('this browser cannot play HLS here (no Media Source Extensions and no native HLS)')); return; }
+      start(arg, callOriginal, takeover);
+    };
+    // hls.js already there (a development build injects it): at once.
+    if (platform.Hls) go();
+    else platform.loadHls(HLS_LOAD_TIMEOUT_MS).then(go, (e) => giveUp('libFailed', e));
+  }
+
+  function start(arg, callOriginal, takeover) {
+    let stopped = null;
+    let original = callOriginal;
+    try {
+      if (takeover) {
+        // From here on the original player is stopped; going back to it starts it again.
+        netGuard.start((m, u) => adapter.isWatchReport(m, u), null);
+        original = (a) => { netGuard.stop(); if (stopped) stopped.restore(); return callOriginal(a); };
+        stopped = adapter.stopOriginal(arg);
+        boot.took = { at: stopped.at, playing: stopped.playing, unmounted: stopped.unmounted };
+        if (!stopped.unmounted) {
+          const box = stopped.container;
+          netGuard.isOriginalMedia = (m) => !!box && box.contains(m);
+          try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
+        }
+        log.info('took over the original player (' + (stopped.unmounted ? 'unmounted' : 'removed from the page') + ', at '
+          + (stopped.at == null ? '-' : fmtTime(stopped.at, true)) + ', ' + (stopped.playing ? 'playing' : 'paused') + ')');
+      }
+      const lesson = adapter.parse(arg);
       player = new LitePlayer(lesson, {
         fetchCues: adapter.fetchCues ? (l) => adapter.fetchCues(l) : null,
         api: adapter.api ? (l) => adapter.api(l) : null,
+        takeover: stopped ? { at: stopped.at, playing: stopped.playing } : null,
         onFallback(reason) {
-          log.info('switching to the original player (' + reason + ')');
-          telemetry.fallback(FALLBACK_REASON[reason] || 'user');
+          fellBack(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
           try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
-          startOriginal(callOriginal, handoff, null);
+          startOriginal(original, handoff, null);
         },
       });
-      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2 }; } // development only
+      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2, boot, bgWork, netGuard, OWN_REQUEST }; } // development only
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
-        telemetry.fallback('coreError');
+        fellBack('coreError');
         let handoff = arg;
         try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
-        startOriginal(callOriginal, handoff, tr('errorNotice'));
+        startOriginal(original, handoff, tr('errorNotice'));
       };
-      console.info(TAG, 'v' + VERSION + ' active (' + adapter.id + ', ' + lesson.sources.length + ' sources, reporting '
-        + (lesson.analytics ? 'on' : 'off') + ')');
+      boot.path = takeover ? 'takeover' : 'intercept';
+      boot.readyAt = performance.now();
+      console.info(TAG, 'v' + VERSION + ' active (' + adapter.id + ', ' + boot.path + ', injected at ' + boot.readyState + ', '
+        + lesson.sources.length + ' sources, reporting ' + (lesson.analytics ? 'on' : 'off') + ')');
     } catch (e) {
       log.warn('could not start, using the original player:', e);
-      try { telemetry.fallback(canPlayHls() ? 'startFailed' : 'noHls'); } catch (err) { /* not sent */ }
-      startOriginal(callOriginal, arg, tr('fallbackNotice'));
+      fellBack(canPlayHls() ? 'startFailed' : 'noHls', String((e && e.message) || e));
+      if (takeover && !stopped) { netGuard.stop(); keepOriginal(tr('fallbackNotice')); return; }
+      let handoff = arg;
+      try { if (stopped && stopped.at != null) handoff = adapter.withStartTime(arg, stopped.at); } catch (err) { /* keep original arg */ }
+      startOriginal(original, handoff, tr('fallbackNotice'));
     }
-    return undefined;
-  });
+  }
+
+  adapter.intercept((arg, callOriginal) => { launch(arg, callOriginal, false); return undefined; });
+
+  // Started late: the page has started (or tried to start) its own player already, and will
+  // not call the bootstrap again. Take it over.
+  if (document.readyState === 'complete' && !boot.called) {
+    const arg = adapter.bootArg();
+    const callOriginal = adapter.original();
+    if (arg == null || !callOriginal) {
+      booted = true;
+      fellBack('noBootData', arg == null ? 'the start-up data was not found on the page' : 'the page\'s player was not found');
+      keepOriginal(tr('fallbackNotice'));
+    } else {
+      launch(arg, callOriginal, true);
+    }
+  }
 
   // If the page never calls the bootstrap we trapped (Echo360 changed how it starts), the
   // original player runs untouched: apply the CPU fix and say so once. A slow page may still
   // start late, so the notice waits until the original player is visibly there (a video on
   // the page), checking again for up to half a minute.
-  window.addEventListener('load', () => {
+  const checkBootstrap = () => {
     let tries = 0;
     const check = () => {
       if (booted) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
-      log.info('player bootstrap not seen; leaving the original player in place');
-      telemetry.fallback('noBootstrap');
+      fellBack('noBootstrap');
       cpuFix.start();
-      notice(tr('fallbackNotice'));
+      fallbackNotice(tr('fallbackNotice'));
     };
     setTimeout(check, BOOT_CHECK_MS);
-  });
+  };
+  if (document.readyState === 'complete') checkBootstrap();
+  else window.addEventListener('load', checkBootstrap, { once: true });
 })();

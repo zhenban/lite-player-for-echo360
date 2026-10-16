@@ -38,7 +38,8 @@ export function assemble() {
   // an extension can provide its own. Echo360's own sign-in token lives in the page's
   // storage whatever runs the player, so the reporter reads it there.
   const PLATFORM_ONLY = [[/\blocalStorage\b/, 'localStorage'], [/\bindexedDB\b/, 'indexedDB'], [/\bimport\(/, 'import()'], [/\bGM_\w+/, 'GM_ functions'], [/\bunsafeWindow\b/, 'unsafeWindow'], [/(?<![.\w])Hls\b/, 'Hls']];
-  const PLATFORM_ALLOWED = { '05-platform.js': /./, '20-reporter.js': /^localStorage$/ };
+  // 00-boot.js finds the page's window itself: its trap is set before `platform` exists.
+  const PLATFORM_ALLOWED = { '05-platform.js': /./, '20-reporter.js': /^localStorage$/, '00-boot.js': /^unsafeWindow$/ };
   for (const f of files) {
     readFileSync(join(srcDir, f), 'utf8').split('\n').forEach((line, i) => {
       if (/^\s*(\/\/|\*)/.test(line)) return;

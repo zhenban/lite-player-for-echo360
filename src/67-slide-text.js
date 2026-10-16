@@ -182,7 +182,7 @@ function scoreModel(ts, pageSim) {
     const mean = sw ? sx / sw : 0;
     return { mean, sd: Math.max(Math.sqrt(Math.max(0, sxx / (sw || 1) - mean * mean)), EVIDENCE_MIN_SD), w: sw };
   };
-  const pdf = (d, x) => Math.exp(-0.5 * ((x - d.mean) / d.sd) ** 2) / d.sd;
+  const pdf = (d, x) => Math.exp(-0.5 * ((x - d.mean) / d.sd) ** 2) / (d.sd * Math.sqrt(2 * Math.PI));
   const fit2 = (xs, ws) => [fit(xs, ws, 0), fit(xs, ws, 1)];
   const pdf2 = (m, x) => pdf(m[0], x[0]) * pdf(m[1], x[1]);
   let wrong = fit2(second);
@@ -209,7 +209,8 @@ function scoreModel(ts, pageSim) {
     const g = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const x = Math.min(i / (n - 1), r.mean);
-      const v = share > 0 ? Math.log(pdf(r, x)) - Math.log(pdf(q, x)) : EVIDENCE_FLOOR;
+      // "right" with a share of outliers, uniform over 0-1 (EVIDENCE_OUTLIER).
+      const v = share > 0 ? Math.log((1 - EVIDENCE_OUTLIER) * pdf(r, x) + EVIDENCE_OUTLIER) - Math.log(pdf(q, x)) : EVIDENCE_FLOOR;
       g[i] = Math.max(i ? g[i - 1] : -Infinity, isFinite(v) ? v : EVIDENCE_FLOOR);
     }
     return g;
@@ -377,6 +378,7 @@ function slideTextWorkerSource() {
     + 'const EVIDENCE_MIN_SD = ' + EVIDENCE_MIN_SD + ';\n'
     + 'const EVIDENCE_FLOOR = ' + EVIDENCE_FLOOR + ';\n'
     + 'const EVIDENCE_EM_ROUNDS = ' + EVIDENCE_EM_ROUNDS + ';\n'
+    + 'const EVIDENCE_OUTLIER = ' + EVIDENCE_OUTLIER + ';\n'
     + 'const FORCE_OFF = ' + FORCE_OFF + ';\n'
     + fns.map((f) => f.toString()).join('\n\n') + '\n'
     + 'self.onmessage = (e) => {\n'

@@ -17,6 +17,33 @@ function maskUrls(s) {
   return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[^\s@<>()'",;:]+@[^\s@<>()'",;:]+\.[^\s@<>()'",;:]+/g, '<email>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
 }
 
+// How the script started (00-boot.js, 90-main.js): the way in, the page's state when the
+// script ran, how long until the player was shown, the original player's watch reports
+// stopped (taken over) and why the original player is used (if it is).
+function startupLines() {
+  const lines = [];
+  const add = (k, val) => lines.push(k + ': ' + val);
+  add('Start-up', (boot.path || 'waiting for the page') + (boot.reason ? ' (' + maskUrls(boot.reason) + ')' : ''));
+  add('Page state when the script ran', boot.readyState);
+  add('Player shown after', boot.readyAt ? Math.round(boot.readyAt - boot.at) + ' ms (from when the script ran)' : '-');
+  if (boot.took) {
+    add('Original player when taken over', (boot.took.at == null ? 'not started' : fmtTime(boot.took.at, true)) + ', ' + (boot.took.playing ? 'playing' : 'paused')
+      + ', ' + (boot.took.unmounted ? 'unmounted' : 'removed from the page'));
+  }
+  if (boot.path === 'takeover' || boot.blocked) add('Original player watch reports stopped', boot.blocked);
+  return lines;
+}
+
+// What "Copy diagnostics" in the notice copies when the original player is used (our
+// player, and its diagnostics, are not there).
+function startupDiagnosticsText() {
+  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Script manager: ' + platform.manager(),
+    'Page: ' + location.hostname, ...startupLines(), '', 'Recent warnings and errors:'];
+  if (!eventLog.length) lines.push('  none');
+  for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
+  return lines.join('\n');
+}
+
 function diagnosticsText(p) {
   const v = p.video;
   const q = (st) => (st && st.hls && st.hls.levels && st.hls.levels.length ? st.height + 'p of ' + Math.max(...st.hls.levels.map((l) => l.height)) + 'p' : '-');
@@ -26,6 +53,7 @@ function diagnosticsText(p) {
   add('Browser', browserName());
   add('Script manager', platform.manager());
   add('Page', location.hostname + ' (lesson page)');
+  lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));
   add('Playback', (v.paused ? 'paused' : 'playing') + ' at ' + fmtTime(v.currentTime, true) + ', speed ' + v.playbackRate + ', layout ' + p.layout
     + (p.pdfMode ? ' (PDF view)' : '') + ', quality ' + q(p.clock) + ' / ' + q(p.follower)

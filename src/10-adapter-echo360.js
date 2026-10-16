@@ -5,8 +5,13 @@
 // Adapter interface:
 //   id                       string
 //   matches()                -> boolean, is this page handled by the adapter
-//   intercept(onBoot)        install hooks; call onBoot(arg, callOriginal) when the page
-//                            would start its own player
+//   intercept(onBoot)        call onBoot(arg, callOriginal) when the page would start its
+//                            own player (the trap itself is set first, by 00-boot.js)
+//   bootArg()                -> the bootstrap argument of a page that already started its
+//                            player (taken over), or null
+//   original()               -> a function starting the page's own player, or null
+//   stopOriginal(arg)        stop the page's own player: -> { at, playing, unmounted, restore() }
+//   isWatchReport(method, url)  a watch report of the original player (stopped while taken over)
 //   parse(arg)               -> lesson (throws if the page is not understood)
 //   withStartTime(arg, sec)  -> arg with the resume point moved (for handing over)
 // ===================================================================================
@@ -18,64 +23,84 @@ const echo360ClassroomAdapter = {
     return isEcho360Host() && /^\/lesson\//.test(location.pathname);
   },
 
-  // The page bootstraps its React player with an inline call
-  //   Echo["echoPlayerV2FullApp"]("<json>")
-  // once the document is complete. We catch that function so we receive the JSON and can
-  // decide whether the original ever runs. The Echo object is wrapped in a Proxy, so the
-  // function is caught however it gets there: assigned, defined with defineProperty (as
-  // bundlers do), or already present when this runs; and so is an Echo object assigned
-  // later. Only a call made through a reference to the object kept from before it was
-  // assigned to window.Echo would pass by; the page's inline bootstrap uses the global.
+  // The page's bootstrap call is trapped by 00-boot.js, set before anything else; onBoot
+  // receives it from there.
   intercept(onBoot) {
-    const NAME = 'echoPlayerV2FullApp';
-    let original = null;
+    boot.handler = onBoot;
+  },
 
-    function launcher(arg) {
-      const self = this;
-      return onBoot(arg, (a) => (original ? original.call(self, a) : undefined));
+  // The bootstrap argument of a page that started its player before this script ran: the
+  // same text the page passed, read from its inline script. null if it is not there.
+  bootArg() {
+    const call = /Echo\s*(?:\[\s*(["'])echoPlayerV2FullApp\1\s*\]|\.echoPlayerV2FullApp)\s*\(\s*(?=["'])/g;
+    for (const s of document.scripts) {
+      if (s.src) continue;
+      const text = s.textContent || '';
+      call.lastIndex = 0;
+      const m = call.exec(text);
+      if (!m) continue;
+      const arg = readJsString(text, m.index + m[0].length);
+      if (arg != null) return arg;
     }
-    function wrap(obj) {
-      if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return obj;
-      if (typeof obj[NAME] === 'function') original = obj[NAME];
-      return new Proxy(obj, {
-        get(target, key, receiver) {
-          if (key === NAME) {
-            // Defined on the object itself by code holding it directly: adopted now, when
-            // the page calls it through the global Echo.
-            const own = Reflect.get(target, key);
-            if (typeof own === 'function' && own !== launcher) original = own;
-            return original ? launcher : undefined;
-          }
-          return Reflect.get(target, key, receiver);
-        },
-        set(target, key, value) {
-          if (key === NAME) { original = value; return true; }
-          return Reflect.set(target, key, value);
-        },
-        defineProperty(target, key, desc) {
-          if (key === NAME && ('value' in desc || desc.get)) {
-            original = 'value' in desc ? desc.value : desc.get.call(target);
-            return true;
-          }
-          return Reflect.defineProperty(target, key, desc);
-        },
-        has(target, key) { return key === NAME ? !!original : Reflect.has(target, key); },
-        getOwnPropertyDescriptor(target, key) {
-          if (key === NAME) return original ? { value: launcher, writable: true, enumerable: true, configurable: true } : undefined;
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-      });
-    }
+    return null;
+  },
 
-    // On the page's own window: the inline bootstrap reads the page's global.
-    const page = platform.page;
-    let echo = wrap(page.Echo || {});
-    Object.defineProperty(page, 'Echo', {
-      configurable: true,
-      enumerable: true,
-      get() { return echo; },
-      set(v) { echo = wrap(v); },
-    });
+  // A call to the page's own bootstrap function (for a page taken over: the trap was set
+  // after the page had started, and found it on window.Echo).
+  original() {
+    const fn = boot.original();
+    if (typeof fn !== 'function') return null;
+    return (a) => fn.call(platform.page.Echo, a);
+  },
+
+  // Stops the original player of a page taken over: where it was and whether it was
+  // playing, then its videos are paused and muted at once, its React tree is unmounted (as
+  // its own bootstrap does before it renders again), and any video left is emptied, so
+  // nothing plays, downloads or sends timeupdates. Where React cannot be reached, its
+  // container is taken out of the page instead (put back by restore()).
+  // -> { at (seconds, or null), playing, unmounted, container, restore() }
+  stopOriginal(arg) {
+    let id = null;
+    try { id = (typeof arg === 'string' ? JSON.parse(arg) : arg).id; } catch (e) { id = null; }
+    const container = typeof id === 'string' && id ? document.getElementById(id) : null;
+    /** @type {HTMLMediaElement[]} */
+    const media = [...document.querySelectorAll('video, audio')].map((m) => /** @type {HTMLMediaElement} */ (m));
+    let at = null;
+    let playing = false;
+    for (const v of media) {
+      if (at == null && v.readyState > 0 && v.currentTime > 0) at = v.currentTime;
+      if (!v.paused && !v.ended) playing = true;
+    }
+    for (const v of media) { try { v.muted = true; v.pause(); } catch (e) { /* gone */ } }
+    let unmounted = false;
+    const root = container && /** @type {any} */ (container)._reactRootContainer;
+    if (root && typeof root.unmount === 'function') {
+      try {
+        root.unmount();
+        /** @type {any} */ (container)._reactRootContainer = null;
+        unmounted = !container.querySelector('video, audio');
+      } catch (e) { log.warn('the original player could not be unmounted:', e); }
+    }
+    for (const v of media) {
+      try { v.removeAttribute('src'); v.load(); } catch (e) { /* gone */ }
+    }
+    let removed = null;
+    if (!unmounted && container && container.parentNode) {
+      removed = { parent: container.parentNode, next: container.nextSibling };
+      container.remove();
+    }
+    return {
+      at, playing, unmounted, container,
+      restore() {
+        if (!removed || container.isConnected) return;
+        removed.parent.insertBefore(container, removed.next && removed.next.parentNode === removed.parent ? removed.next : null);
+      },
+    };
+  },
+
+  // The original player's watch reports (what 20-reporter.js sends for ours).
+  isWatchReport(method, url) {
+    return method === 'POST' && /^https:\/\/api\.[^/]+\/a\/player\/(session|beacon)(\?|$)/.test(url);
   },
 
   withStartTime(arg, sec) {

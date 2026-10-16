@@ -37,7 +37,10 @@ export const PREFS = [
   'silence.min', 'silence.sens', 'copySpan', 'pdfMain', 'pdfFirst', 'emptyCamera', 'quality.screen',
   'quality.camera', 'theme', 'lang',
 ];
-export const FALLBACK_REASONS = ['startFailed', 'noHls', 'noBootstrap', 'coreError', 'playbackError', 'auth', 'user', 'extras', 'attachment'];
+export const FALLBACK_REASONS = ['startFailed', 'noHls', 'noBootstrap', 'coreError', 'playbackError', 'auth', 'user', 'extras', 'attachment',
+  'unsupported', 'libFailed', 'noBootData'];
+// The page's state when the script ran (document.readyState).
+const READY_STATES = ['loading', 'interactive', 'complete'];
 
 // { name: count } with known names and whole counts only.
 const counts = (names) => (v) => {
@@ -101,7 +104,7 @@ export const KINDS = {
     ['browser', 'browser', oneOf(['Chrome', 'Edge', 'Firefox', 'Safari', 'Opera', 'other'])],
     ['browserV', 'browser_v', int(1, 999)],
     ['os', 'os', oneOf(['Windows', 'macOS', 'Linux', 'ChromeOS', 'Android', 'iOS', 'other'])],
-    ['manager', 'manager', oneOf(['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'other', 'none'])],
+    ['manager', 'manager', oneOf(['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay', 'other', 'none'])],
     ['managerV', 'manager_v', text(/^[\w.-]+$/, 20)],
     ['lang', 'lang', text(/^[a-z]{2}$/, 2)],
     ['browserLang', 'browser_lang', text(/^[a-z]{2,3}$/, 3)],
@@ -127,6 +130,7 @@ export const KINDS = {
     ['bitness', 'bitness', oneOf([32, 64])],
     ['osV', 'os_v', int(0, 999)],
     ['mobile', 'mobile', bool],
+    ['model', 'model', text(/^[\w ()+.,/-]+$/, 40)],
     ['charging', 'charging', bool],
     ['pressureApi', 'pressure_api', bool],
     ['timerUs', 'timer_us', num2(0, 1000000)],
@@ -162,6 +166,10 @@ export const KINDS = {
     // Watching
     ['fromLoad', 'from_load', bool],
     ['readyMs', 'ready_ms', int(0, 3600000)],
+    ['bootPath', 'boot_path', oneOf(['intercept', 'takeover', 'fallback'])],
+    ['injectState', 'inject_state', oneOf(READY_STATES)],
+    ['bootMs', 'boot_ms', int(0, 3600000)],
+    ['blockedReports', 'blocked_reports', int(0, 100000)],
     ['seekN', 'seek_n', int(0, 1000000)],
     ['seekMs50', 'seek_ms50', num2(0, 3600000)],
     ['seekMs90', 'seek_ms90', num2(0, 3600000)],
@@ -177,8 +185,9 @@ export const KINDS = {
     ['inputMs90', 'input_ms90', num2(0, 600000)],
     ['inputSlow', 'input_slow', int(0, 1000000)],
     ['longTasks', 'long_tasks', int(0, 10000000)],
-    ['pressure', 'pressure', shares(/^(nominal|fair|serious|critical)$/)],
-    ['batteryPct', 'battery_pct', num2(0, 100)],
+    ['pressureBg', 'pressure_bg', shares(/^(nominal|fair|serious|critical)$/)],
+    ['pressureIdle', 'pressure_idle', shares(/^(nominal|fair|serious|critical)$/)],
+    ['power', 'power', oneOf(['ac', 'battery', 'mixed'])],
     // Background analyses
     ['streamMbPerHour', 'stream_mb_ph', num2(0, 100000)],
     ['bgMbPerHour', 'bg_mb_ph', num2(0, 100000)],
@@ -228,6 +237,7 @@ export const KINDS = {
     ['v', 'version', text(VERSION, 11)],
     ['reason', 'reason', oneOf(FALLBACK_REASONS)],
     ['frontend', 'frontend', text(/^[\w.,-]+$/, 160)],
+    ['injectState', 'inject_state', oneOf(READY_STATES)],
   ],
 };
 // Without these an event is dropped.

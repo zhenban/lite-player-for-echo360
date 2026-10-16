@@ -1,7 +1,7 @@
 // Declarations for the type checker (npm run typecheck): what the page, the browser or
 // the userscript manager provide that TypeScript's DOM types do not know.
 
-declare const Hls: any;                 // hls.js, loaded by the userscript manager (@require)
+declare const Hls: any;                 // hls.js when a development page provides it (otherwise platform.loadHls)
 declare const GM_info: any;             // the userscript manager's script info
 declare const GM_xmlhttpRequest: any;   // requests to the telemetry Worker (05-platform.js)
 declare const GM_getValue: any;         // values kept by the userscript manager (the telemetry secret)

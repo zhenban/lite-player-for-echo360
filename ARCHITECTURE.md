@@ -31,14 +31,16 @@ runs immediately must come after what it uses.
 
 | Files | What they are |
 |---|---|
+| `00-boot.js` | Runs first: the trap for the page's start-up call (`boot`, a Proxy on `window.Echo`), using nothing else from the script, so it is never late; the start-up record for diagnostics |
 | `00-util.js` | Logging, errors (`guard`, `featureGuard`, `reportUnexpected`), `Disposer` (cleaning up), settings store (`store`), small maths and time helpers |
 | `01-i18n.js` | Every text the user sees, and `tr(key, values)` |
 | `02-tuning.js` | Every tuning number (thresholds, sizes, timings) with its unit and why it holds |
 | `03-common.js` | Small shared helpers: `el()` (make an element), `confirmButton`, `makeCanvas`, Echo360 URLs, `mediaDuration`, `fetchSyllabus`, `SITE_HOSTS` |
 | `04-types.js` | Descriptions of the data passed around (JSDoc typedefs; no code) |
-| `05-platform.js` | Everything that depends on how the player is run (userscript now, an extension later): settings storage, the IndexedDB database, where libraries come from and loading them, hls.js, saving a file, the manager's name, sending to the telemetry Worker, the private store for the telemetry secret, and the page's own window (`page`: with any `@grant` the manager's `window` is a wrapper the page does not see). Other files use only `platform` for these; the build refuses direct `localStorage`, `indexedDB`, `import()`, `GM_`, `unsafeWindow` or `Hls` elsewhere |
+| `05-platform.js` | Everything that depends on how the player is run (userscript now, an extension later): settings storage, the IndexedDB database, where libraries come from and loading them, hls.js, saving a file, the manager's name, sending to the telemetry Worker, the private store for the telemetry secret, and the page's own window (`page`: with any `@grant` the manager's `window` is a wrapper the page does not see). Other files use only `platform` for these; the build refuses direct `localStorage`, `indexedDB`, `import()`, `GM_`, `unsafeWindow` or `Hls` elsewhere (`unsafeWindow` also in `00-boot.js`, which runs before `platform` exists) |
 | `10-adapter-echo360.js` | Everything that knows Echo360's lesson page: catching its start-up call, reading it into a `Lesson` |
 | `11-echo360-api.js` | Echo360's data API: notes, bookmarks, flags, discussion; refuses writes without a user action |
+| `15-takeover.js` | Taking over a page whose own player started first: while ours plays, the original's watch reports are stopped at the network layer (`netGuard`: `fetch`, `XMLHttpRequest.prototype`, `Navigator.prototype.sendBeacon`); ours carry `OWN_REQUEST` |
 | `20-reporter.js` | Watch reporting (what the original player sends Echo360 about viewing) |
 | `30-ui-assets.js` | Icons, the stylesheet and the player's HTML template |
 | `35-stream.js` | One `<video>` fed by hls.js, with retries and recovery (`Stream`) |
@@ -67,26 +69,36 @@ runs immediately must come after what it uses.
 ## 3. Start-up
 
 ```
-page loads ──► 90-main.js main()
+script runs ──► 00-boot.js: window.Echo trapped (nothing else needed; boot.readyState noted)
                 │
+                ▼
+           90-main.js main()
                 ├─ course page (/section/<id>/home)? ──► courseList.start()   (80) ── done
                 │
                 └─ lesson page: adapter.intercept(onBoot)                      (10)
-                     Echo360's own start-up call, Echo["echoPlayerV2FullApp"](json),
-                     is caught (the Echo object is wrapped in a Proxy)
-                                  │
-                     page calls it ▼
-                   onBoot(json, callOriginal)
-                     ├─ settings say "use the original player" ──► callOriginal(json)
-                     ├─ adapter.parse(json) ──► Lesson   (throws: live lecture, copyright
-                     │                                     acknowledgement, no stream...)
-                     ├─ the browser cannot play HLS ──► throw
-                     └─ new LitePlayer(lesson, { fetchCues, api, onFallback })
-                           any throw above ──► startOriginal(): callOriginal(json),
-                                               CPU fix, a short notice
+                     │
+     ┌───────────────┴──────────────────────────────┐
+     │ page calls Echo["echoPlayerV2FullApp"](json) │ document already complete, call missed
+     │ after the trap: path "intercept"             │ (a manager that injects late): path
+     │                                              │ "takeover": json read from the page's
+     │                                              │ inline script (adapter.bootArg); none ──►
+     │                                              │ original stays (noBootData)
+     └───────────────┬──────────────────────────────┘
+                     ▼
+                launch(json, callOriginal, takeover)
+                  ├─ settings say "use the original player" ──► original
+                  ├─ browser too old / iPhone (unsupportedReason) ──► original, notice
+                  ├─ adapter.parse(json) ──► Lesson   (throws: live lecture, copyright...)
+                  ├─ hls.js loaded now (platform.loadHls, hash checked; fails ──► original)
+                  └─ start(): takeover? netGuard.start(), adapter.stopOriginal() (unmount
+                       its React root, else take its container out; position and play
+                       state carried over) ──► new LitePlayer(lesson, {..., takeover})
+                       any throw ──► the original (started again where we were), CPU fix,
+                       a notice with the reason and "Copy diagnostics"
 
    If the page never makes its start-up call (Echo360 changed), the original player stays,
-   with the CPU fix and a notice (checked a few seconds after load).
+   with the CPU fix and a notice (checked a few seconds after load). Going back to the
+   original after a takeover lifts the network stop and puts its container back.
 ```
 
 Inside `new LitePlayer` (`40-player.js`, `init()`), in this order:
@@ -243,14 +255,17 @@ npm test             # unit tests and whole-page tests (test/*.test.mjs)
 npm run lint         # ESLint; no-shadow keeps locals from hiding shared names
 npm run typecheck    # TypeScript checks the JavaScript (tsconfig.json, types/)
 npm run ci           # all of the above, plus "dist/ matches src/" (what GitHub runs)
-npm run check-requires   # each @require matches its SHA-256 hash (needs the network; CI runs it)
+npm run check-requires   # each pinned library file (LIB_SHA256) matches the CDN (needs the network; CI runs it)
 ```
 
 - **Releasing:** set `VERSION`, add the version's section to `CHANGELOG.md`, build, commit,
   then push a tag `vX.Y.Z`. The Release workflow checks everything again and publishes a
   GitHub release with `lite-player-for-echo360.user.js` and that CHANGELOG section.
-- **A new `@require`:** add `#sha256-<base64>` of the exact file (`openssl dgst -sha256
-  -binary file | base64`); `check-requires` fails without it.
+- **A new library:** load it through `platform.libBlobUrl`/`importLib` and add its path and
+  SHA-256 (hex: `sha256sum file`) to `LIB_SHA256` in `src/04-libs.js`, taken from the CDN
+  and matched against the npm package. There are no `@require` lines (hls.js too is loaded
+  and checked by the script, so the trap in `00-boot.js` waits for no download); one added
+  later must carry `#sha256-<base64>`, or `check-requires` fails.
 
 - **Tests** load the sources into a sandbox (`loadSources`), or the whole script into a
   simulated page (`test/player.test.mjs`). Labelled lectures are replayed in the tests from

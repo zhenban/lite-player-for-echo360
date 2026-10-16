@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.21.0
+// @version      0.22.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
 // @license      GPL-3.0-or-later
 // @match        https://echo360.net.au/lesson/*
 // @match        https://echo360.net.au/section/*/home
-// @require      https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js#sha256-oS5+4c1kpp3NsxQVfkXa/LpwW/sLFEC3k1yyZdN0Qj4=
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -24,7 +23,106 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.21.0';
+  const VERSION = '0.22.0';
+
+// ---- 00-boot.js ----
+// ===================================================================================
+// Start-up, before anything else: the trap for the page's player bootstrap is set first,
+// using nothing else from this script (no library, no settings), so that the time the
+// rest takes to set up can never make it late. 90-main.js decides what a trapped call
+// does (boot.handler); until it has, and if it never does (the script failed to start),
+// the call goes to the original player.
+//
+// A userscript manager can still run the script after the page has started its player
+// (Stay on iPadOS did, even with @run-at document-start): 90-main.js then takes the page
+// over (boot.path 'takeover'), see 15-takeover.js.
+// ===================================================================================
+
+const boot = {
+  at: performance.now(),            // when this script started (ms since the page started)
+  readyState: document.readyState,  // the page's state then: loading | interactive | complete
+  path: '',                         // intercept | takeover | fallback (90-main.js)
+  reason: '',                       // why the original player is used (fallback)
+  readyAt: 0,                       // when our player was shown (performance.now())
+  blocked: 0,                       // the original player's watch reports stopped (takeover)
+  took: null,                       // takeover: { at (seconds or null), playing, unmounted } of the original player
+  handler: null,                    // (arg, callOriginal) => void, set by 90-main.js
+  called: false,                    // the page called its bootstrap after the trap was set
+  original: () => null,             // the page's own bootstrap function, once known
+};
+
+// The page's own window. With any @grant other than none, managers give the script a
+// wrapper as `window`, whose properties the page's scripts do not see (platform.page is
+// this same window).
+function pageWindow() {
+  return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window;
+}
+
+// Echo360 lesson pages bootstrap their React player with an inline call
+//   Echo["echoPlayerV2FullApp"]("<json>")
+// once the document is complete. The Echo object is wrapped in a Proxy, so the function is
+// caught however it gets there: assigned, defined with defineProperty (as bundlers do), or
+// already present when this runs; and so is an Echo object assigned later. Only a call
+// made through a reference to the object kept from before it was assigned to window.Echo
+// would pass by; the page's inline bootstrap uses the global.
+(function trapEcho360() {
+  if (!/^\/lesson\//.test(location.pathname)) return;
+  const NAME = 'echoPlayerV2FullApp';
+  let original = null;
+  boot.original = () => original;
+
+  function launcher(arg) {
+    const self = this;
+    const callOriginal = (a) => (original ? original.call(self, a) : undefined);
+    boot.called = true;
+    if (!boot.handler) return callOriginal(arg);
+    return boot.handler(arg, callOriginal);
+  }
+  function wrap(obj) {
+    if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return obj;
+    if (typeof obj[NAME] === 'function') original = obj[NAME];
+    return new Proxy(obj, {
+      get(target, key, receiver) {
+        if (key === NAME) {
+          // Defined on the object itself by code holding it directly: adopted now, when
+          // the page calls it through the global Echo.
+          const own = Reflect.get(target, key);
+          if (typeof own === 'function' && own !== launcher) original = own;
+          return original ? launcher : undefined;
+        }
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value) {
+        if (key === NAME) { original = value; return true; }
+        return Reflect.set(target, key, value);
+      },
+      defineProperty(target, key, desc) {
+        if (key === NAME && ('value' in desc || desc.get)) {
+          original = 'value' in desc ? desc.value : desc.get.call(target);
+          return true;
+        }
+        return Reflect.defineProperty(target, key, desc);
+      },
+      has(target, key) { return key === NAME ? !!original : Reflect.has(target, key); },
+      getOwnPropertyDescriptor(target, key) {
+        if (key === NAME) return original ? { value: launcher, writable: true, enumerable: true, configurable: true } : undefined;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+  }
+
+  // On the page's own window: the inline bootstrap reads the page's global.
+  const page = pageWindow();
+  let echo = wrap(page.Echo || {});
+  try {
+    Object.defineProperty(page, 'Echo', {
+      configurable: true,
+      enumerable: true,
+      get() { return echo; },
+      set(v) { echo = wrap(v); },
+    });
+  } catch (e) { /* not trapped: the page starts its own player, and 90-main.js says so */ }
+})();
 
 // ---- 00-util.js ----
 // ===================================================================================
@@ -174,6 +272,14 @@ function logText(x) { return x && x.message ? x.message : typeof x === 'string' 
 // Recent warnings and errors (no content, no addresses), for "copy diagnostics".
 const LOG_KEEP = 40;
 const eventLog = [];
+// An AbortSignal that aborts after ms (AbortSignal.timeout where there is one: Safari 16+).
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), ms);
+  return ac.signal;
+}
+
 function logEvent(level, text) {
   eventLog.push({ t: new Date().toISOString().slice(11, 19), level, text: String(text).slice(0, 300) });
   if (eventLog.length > LOG_KEEP) eventLog.shift();
@@ -609,6 +715,8 @@ const STRINGS = {
     diagInfo: 'For a bug report: versions, the state of each feature and recent warnings. Sign-in data is left out and web and email addresses are hidden; read it before you share it. This is exactly what will be copied:',
     diagCopy: 'Copy',
     diagCopied: 'Diagnostics copied',
+    copyDiagnostics: 'Copy diagnostics',
+    noticeReason: 'Reason: {why}',
     keyExport: 'Export notes and bookmarks, backup',
     exportNotes: 'Export notes and backup',
     exportMenu: 'Export…',
@@ -1096,6 +1204,8 @@ STRINGS.zh = {
   diagInfo: '用于报告问题：版本、各功能的状态和最近的警告。不含登录信息，网址和邮箱地址已隐去；分享前请先看一遍。下面就是会被复制的全部内容：',
   diagCopy: '复制',
   diagCopied: '已复制诊断信息',
+  copyDiagnostics: '复制诊断信息',
+  noticeReason: '原因：{why}',
   keyExport: '导出笔记和书签、备份',
   exportNotes: '导出笔记和备份',
   exportMenu: '导出…',
@@ -1294,6 +1404,13 @@ const EVIDENCE_GRID = 101;
 const EVIDENCE_MIN_SD = 1 / (EVIDENCE_GRID - 1);
 const EVIDENCE_FLOOR = -25;
 const EVIDENCE_EM_ROUNDS = 200;
+// The share of right pictures the fitted "right" distribution does not describe: a slide
+// mostly made of a photo or a screenshot (OCR noise, words the PDF does not have), a page
+// with a few words. Lectures of clean slides fit a very narrow "right" distribution; without
+// this, such a page reads as further from it than from a wrong page and is taken for "not
+// a slide" (COMP1521 2026-06-01: two such pages, 70 s). Chosen on the labelled lectures and
+// COMP1521 (PROGRESS.md, 2026-10-15): the same results from 0.02 to 0.1.
+const EVIDENCE_OUTLIER = 0.05;
 // How lecturers move through slides: prior chances for the sequence model, per step from
 // one picture to the next different one (so independent of how often the screen is
 // sampled). They describe lecturing, not a course: mostly staying or moving on,
@@ -1382,6 +1499,12 @@ const STREAM_START_BPS = () => {
   return c && c.downlink > 0 ? c.downlink * 1e6 : 5e6;
 };
 const STREAM_MAX_BUFFER_SEC = 30;      // ahead of the playhead (hls.js default)
+// The most hls.js may buffer ahead. It buffers until maxBufferSize (60 MB) at the bitrate a
+// playlist declares, and Echo360 declares far less than its streams use (29 kbps for 117,
+// measured 2026-10-15 on six lectures): without this, its own cap of 600 s, so ten minutes of
+// each view downloaded at the start and after every jump, and the browser's SourceBuffer
+// limit reached (bufferFullError). Twice STREAM_MAX_BUFFER_SEC: room for a slow patch.
+const STREAM_MAX_AHEAD_SEC = 60;
 const STREAM_BACK_BUFFER_SEC = 60;     // kept behind it, for short jumps back
 // Share of the measured bandwidth the quality may use (stay below, step up): hls.js'
 // defaults for the main view; the second view leaves room for it.
@@ -1439,6 +1562,7 @@ const LIST_CONCURRENT = 2;             // course page: player requests at a time
 const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
+const HLS_LOAD_TIMEOUT_MS = 20000;    // hls.js (about 600 KB from jsDelivr, cached afterwards) not loaded by then: the original player is used (a slow mobile link of 0.3 Mbit/s still gets it in time)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -1512,9 +1636,62 @@ function confirmButton(label, onConfirm) {
   return b;
 }
 
+// The value of the JavaScript string literal starting at text[at] (a quote), or null if
+// there is none there. Every escape a string literal can hold is decoded.
+function readJsString(text, at) {
+  const q = text[at];
+  if (q !== '"' && q !== "'") return null;
+  let out = '';
+  let i = at + 1;
+  for (;;) {
+    let j = i;
+    while (j < text.length && text[j] !== q && text[j] !== '\\' && text[j] !== '\n' && text[j] !== '\r') j++;
+    out += text.slice(i, j);
+    if (j >= text.length || text[j] === '\n' || text[j] === '\r') return null;
+    if (text[j] === q) return out;
+    const c = text[j + 1];
+    i = j + 2;
+    const hex = (n) => {
+      const h = text.slice(i, i + n);
+      if (!new RegExp('^[0-9a-fA-F]{' + n + '}$').test(h)) return null;
+      i += n;
+      return parseInt(h, 16);
+    };
+    if (c === undefined) return null;
+    const simple = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v' }[c];
+    if (simple) { out += simple; continue; }
+    if (c === 'x') { const n = hex(2); if (n == null) return null; out += String.fromCharCode(n); continue; }
+    if (c === 'u') {
+      if (text[i] === '{') {
+        const end = text.indexOf('}', i);
+        const n = end > i + 1 && /^[0-9a-fA-F]{1,6}$/.test(text.slice(i + 1, end)) ? parseInt(text.slice(i + 1, end), 16) : NaN;
+        if (!(n <= 0x10ffff)) return null;
+        out += String.fromCodePoint(n);
+        i = end + 1;
+        continue;
+      }
+      const n = hex(4);
+      if (n == null) return null;
+      out += String.fromCharCode(n);
+      continue;
+    }
+    if (c === '0' && !/[0-9]/.test(text[i] || '')) { out += '\0'; continue; }
+    if (c === '\r') { if (text[i] === '\n') i++; continue; }      // line continuation
+    if (c === '\n' || c === '\u2028' || c === '\u2029') continue;
+    if (/[0-9]/.test(c)) return null;                                  // octal escapes: not expected
+    out += c;                                                          // \" \' \\ \/ and the like
+  }
+}
+
 // A canvas to draw on off screen (an OffscreenCanvas where there is one).
 function makeCanvas(w, h) {
   return typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+}
+
+// A picture file of a canvas made by makeCanvas (OffscreenCanvas or a page canvas).
+function canvasBlob(canvas, type, quality) {
+  if (typeof canvas.convertToBlob === 'function') return canvas.convertToBlob({ type, quality });
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas could not be saved'))), type, quality));
 }
 
 // Path segment as the original player builds it: Echo360 ids are used verbatim (they
@@ -1594,14 +1771,19 @@ function hiddenFor(node) {
 // The library files loaded when first needed, by npm path, with their SHA-256 (hex).
 // platform.libBlobUrl / importLib refuse a file whose bytes differ, so a changed file on
 // the CDN is never run; Tesseract's language data is checked in its Worker
-// (tessWorkerGuard, 66-slide-ocr.js). hls.js comes through @require instead (meta.txt).
+// (tessWorkerGuard, 66-slide-ocr.js). hls.js is one of them: loaded when a player is about
+// to start (platform.loadHls), never at start-up, so that the trap for the page's player
+// (00-boot.js) never waits for a download.
 //
 // Each hash was taken from the CDN and matched against the package on registry.npmjs.org.
 // `npm run check-requires` checks them against the CDN again (CI). A new version of a
 // library means new paths and new hashes here.
 // ===================================================================================
 
+const HLS_LIB = 'hls.js@1.7.3/dist/hls.min.js';
+
 const LIB_SHA256 = {
+  'hls.js@1.7.3/dist/hls.min.js': 'a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e',
   'pdfjs-dist@6.4.299/build/pdf.min.mjs': '57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2',
   'pdfjs-dist@6.4.299/build/pdf.worker.min.mjs': '9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18',
   'tesseract.js@7.0.0/dist/tesseract.esm.min.js': '64871d76c75609fd5413b88a8171e2ef40deedd77d5875ba23df104b2d05eb29',
@@ -1804,7 +1986,8 @@ const LIB_SHA256 = {
 //     build/...'). A userscript fetches them from a CDN and runs a file only after its
 //     bytes match LIB_SHA256 (04-libs.js); an extension ships them (Manifest V3 does not
 //     allow code from elsewhere).
-//   - Hls: hls.js (the userscript manager loads it through @require)
+//   - Hls / loadHls: hls.js, loaded when a player is about to start (a pinned file like the
+//     others); a copy already on the page (development builds inject one) is used as is
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
 //   - post: send JSON to the telemetry Worker (87-telemetry.js)
@@ -1818,7 +2001,7 @@ const platform = {
   name: 'userscript',
   // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
   // wrapper as `window`: a property defined on it is not seen by the page's scripts.
-  page: typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window,
+  page: pageWindow(),
   kv: {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
@@ -1837,11 +2020,11 @@ const platform = {
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it
   // again, and it is a few files of 0.1 to 4 MB.
-  libBlobUrl(path, prefix) {
-    const key = path + (prefix ? '\n' + prefix : '');
+  libBlobUrl(path, prefix, suffix) {
+    const key = path + (prefix ? '\n' + prefix : '') + (suffix ? '\n' + suffix : '');
     let p = libBlobUrls.get(key);
     if (!p) {
-      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob(prefix ? [prefix, buf] : [buf], { type: 'text/javascript' })));
+      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
       libBlobUrls.set(key, p);
       p.catch(() => libBlobUrls.delete(key));
     }
@@ -1859,6 +2042,27 @@ const platform = {
   },
   importLib(path) { return this.libBlobUrl(path).then((u) => import(u)); },
   Hls: typeof Hls !== 'undefined' ? Hls : window.Hls,
+  hlsLoading: null,
+  // Resolves to hls.js, or rejects (the file could not be had in timeoutMs, or differs).
+  // hls.min.js is a UMD file: run as a module, it is given `module` and `exports` to fill
+  // (so it sets no global on the page) and its export is passed on.
+  loadHls(timeoutMs) {
+    if (this.Hls) return Promise.resolve(this.Hls);
+    if (!this.hlsLoading) {
+      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n')
+        .then((u) => import(u))
+        .then((m) => {
+          const lib = m && m.default;
+          if (!lib || typeof lib.isSupported !== 'function') throw new Error('hls.js did not load');
+          this.Hls = lib;
+          return lib;
+        });
+      this.hlsLoading.catch(() => { this.hlsLoading = null; });
+    }
+    let timer = 0;
+    const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('hls.js not loaded in ' + Math.round(timeoutMs / 1000) + ' s')), timeoutMs); });
+    return Promise.race([this.hlsLoading, late]).finally(() => clearTimeout(timer));
+  },
   save(blob, fileName) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1886,7 +2090,7 @@ const platform = {
           });
           return;
         }
-        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : AbortSignal.timeout(timeoutMs) })
+        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : timeoutSignal(timeoutMs) })
           .then((r) => r.text().then((t) => done(r.status, t)), () => done(0));
       } catch (e) {
         done(0);
@@ -1921,8 +2125,13 @@ const platform = {
 // Adapter interface:
 //   id                       string
 //   matches()                -> boolean, is this page handled by the adapter
-//   intercept(onBoot)        install hooks; call onBoot(arg, callOriginal) when the page
-//                            would start its own player
+//   intercept(onBoot)        call onBoot(arg, callOriginal) when the page would start its
+//                            own player (the trap itself is set first, by 00-boot.js)
+//   bootArg()                -> the bootstrap argument of a page that already started its
+//                            player (taken over), or null
+//   original()               -> a function starting the page's own player, or null
+//   stopOriginal(arg)        stop the page's own player: -> { at, playing, unmounted, restore() }
+//   isWatchReport(method, url)  a watch report of the original player (stopped while taken over)
 //   parse(arg)               -> lesson (throws if the page is not understood)
 //   withStartTime(arg, sec)  -> arg with the resume point moved (for handing over)
 // ===================================================================================
@@ -1934,64 +2143,84 @@ const echo360ClassroomAdapter = {
     return isEcho360Host() && /^\/lesson\//.test(location.pathname);
   },
 
-  // The page bootstraps its React player with an inline call
-  //   Echo["echoPlayerV2FullApp"]("<json>")
-  // once the document is complete. We catch that function so we receive the JSON and can
-  // decide whether the original ever runs. The Echo object is wrapped in a Proxy, so the
-  // function is caught however it gets there: assigned, defined with defineProperty (as
-  // bundlers do), or already present when this runs; and so is an Echo object assigned
-  // later. Only a call made through a reference to the object kept from before it was
-  // assigned to window.Echo would pass by; the page's inline bootstrap uses the global.
+  // The page's bootstrap call is trapped by 00-boot.js, set before anything else; onBoot
+  // receives it from there.
   intercept(onBoot) {
-    const NAME = 'echoPlayerV2FullApp';
-    let original = null;
+    boot.handler = onBoot;
+  },
 
-    function launcher(arg) {
-      const self = this;
-      return onBoot(arg, (a) => (original ? original.call(self, a) : undefined));
+  // The bootstrap argument of a page that started its player before this script ran: the
+  // same text the page passed, read from its inline script. null if it is not there.
+  bootArg() {
+    const call = /Echo\s*(?:\[\s*(["'])echoPlayerV2FullApp\1\s*\]|\.echoPlayerV2FullApp)\s*\(\s*(?=["'])/g;
+    for (const s of document.scripts) {
+      if (s.src) continue;
+      const text = s.textContent || '';
+      call.lastIndex = 0;
+      const m = call.exec(text);
+      if (!m) continue;
+      const arg = readJsString(text, m.index + m[0].length);
+      if (arg != null) return arg;
     }
-    function wrap(obj) {
-      if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return obj;
-      if (typeof obj[NAME] === 'function') original = obj[NAME];
-      return new Proxy(obj, {
-        get(target, key, receiver) {
-          if (key === NAME) {
-            // Defined on the object itself by code holding it directly: adopted now, when
-            // the page calls it through the global Echo.
-            const own = Reflect.get(target, key);
-            if (typeof own === 'function' && own !== launcher) original = own;
-            return original ? launcher : undefined;
-          }
-          return Reflect.get(target, key, receiver);
-        },
-        set(target, key, value) {
-          if (key === NAME) { original = value; return true; }
-          return Reflect.set(target, key, value);
-        },
-        defineProperty(target, key, desc) {
-          if (key === NAME && ('value' in desc || desc.get)) {
-            original = 'value' in desc ? desc.value : desc.get.call(target);
-            return true;
-          }
-          return Reflect.defineProperty(target, key, desc);
-        },
-        has(target, key) { return key === NAME ? !!original : Reflect.has(target, key); },
-        getOwnPropertyDescriptor(target, key) {
-          if (key === NAME) return original ? { value: launcher, writable: true, enumerable: true, configurable: true } : undefined;
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-      });
-    }
+    return null;
+  },
 
-    // On the page's own window: the inline bootstrap reads the page's global.
-    const page = platform.page;
-    let echo = wrap(page.Echo || {});
-    Object.defineProperty(page, 'Echo', {
-      configurable: true,
-      enumerable: true,
-      get() { return echo; },
-      set(v) { echo = wrap(v); },
-    });
+  // A call to the page's own bootstrap function (for a page taken over: the trap was set
+  // after the page had started, and found it on window.Echo).
+  original() {
+    const fn = boot.original();
+    if (typeof fn !== 'function') return null;
+    return (a) => fn.call(platform.page.Echo, a);
+  },
+
+  // Stops the original player of a page taken over: where it was and whether it was
+  // playing, then its videos are paused and muted at once, its React tree is unmounted (as
+  // its own bootstrap does before it renders again), and any video left is emptied, so
+  // nothing plays, downloads or sends timeupdates. Where React cannot be reached, its
+  // container is taken out of the page instead (put back by restore()).
+  // -> { at (seconds, or null), playing, unmounted, container, restore() }
+  stopOriginal(arg) {
+    let id = null;
+    try { id = (typeof arg === 'string' ? JSON.parse(arg) : arg).id; } catch (e) { id = null; }
+    const container = typeof id === 'string' && id ? document.getElementById(id) : null;
+    /** @type {HTMLMediaElement[]} */
+    const media = [...document.querySelectorAll('video, audio')].map((m) => /** @type {HTMLMediaElement} */ (m));
+    let at = null;
+    let playing = false;
+    for (const v of media) {
+      if (at == null && v.readyState > 0 && v.currentTime > 0) at = v.currentTime;
+      if (!v.paused && !v.ended) playing = true;
+    }
+    for (const v of media) { try { v.muted = true; v.pause(); } catch (e) { /* gone */ } }
+    let unmounted = false;
+    const root = container && /** @type {any} */ (container)._reactRootContainer;
+    if (root && typeof root.unmount === 'function') {
+      try {
+        root.unmount();
+        /** @type {any} */ (container)._reactRootContainer = null;
+        unmounted = !container.querySelector('video, audio');
+      } catch (e) { log.warn('the original player could not be unmounted:', e); }
+    }
+    for (const v of media) {
+      try { v.removeAttribute('src'); v.load(); } catch (e) { /* gone */ }
+    }
+    let removed = null;
+    if (!unmounted && container && container.parentNode) {
+      removed = { parent: container.parentNode, next: container.nextSibling };
+      container.remove();
+    }
+    return {
+      at, playing, unmounted, container,
+      restore() {
+        if (!removed || container.isConnected) return;
+        removed.parent.insertBefore(container, removed.next && removed.next.parentNode === removed.parent ? removed.next : null);
+      },
+    };
+  },
+
+  // The original player's watch reports (what 20-reporter.js sends for ours).
+  isWatchReport(method, url) {
+    return method === 'POST' && /^https:\/\/api\.[^/]+\/a\/player\/(session|beacon)(\?|$)/.test(url);
   },
 
   withStartTime(arg, sec) {
@@ -2408,6 +2637,112 @@ function dryRunResult(method, path, body) {
 
 echo360ClassroomAdapter.api = (lesson) => new Echo360Api(lesson);
 
+// ---- 15-takeover.js ----
+// ===================================================================================
+// Taking over a page whose original player started before this script ran (a manager
+// that injects late; see 00-boot.js). The adapter stops the original player
+// (stopOriginal); while ours plays, the original's watch reports are also stopped at the
+// network layer, so a viewing is never reported twice, whatever the original still has
+// running (a timer, a listener for the page closing):
+//   - window.fetch is wrapped: Echo360 looks fetch up at every call;
+//   - XMLHttpRequest.prototype.open/send and Navigator.prototype.sendBeacon are wrapped:
+//     every request object and every call through navigator is covered, including those
+//     of code that kept the constructor or the navigator object from before.
+// The browser's own fetch, send or sendBeacon function itself, if code kept it from before
+// this ran, cannot be reached by any script: that is why the original player is stopped
+// at its source first (unmounted, its videos emptied).
+// Our own reports pass: they carry OWN_REQUEST in their fetch options (20-reporter.js).
+// When the original player could not be unmounted, its media elements are also kept from
+// playing (HTMLMediaElement.prototype.play), so there is never a second sound.
+// Each request stopped is counted (boot.blocked) and logged (diagnostics).
+// Turned off when the user goes back to the original player; the wrappers then only pass
+// calls on.
+// ===================================================================================
+
+const OWN_REQUEST = Symbol('lite-player-own-request');
+
+const netGuard = {
+  on: false,
+  installed: false,
+  isReport: (method, url) => false,
+  isOriginalMedia: null,   // (element) => boolean while the original's media are held
+
+  start(isReport, isOriginalMedia) {
+    this.isReport = isReport;
+    this.isOriginalMedia = isOriginalMedia || null;
+    this.on = true;
+    if (!this.installed) this.install(platform.page);
+  },
+
+  stop() {
+    this.on = false;
+    this.isOriginalMedia = null;
+  },
+
+  // A request of the original player that must not go out: counted and logged.
+  blocks(method, input) {
+    if (!this.on) return false;
+    let url = '';
+    try { url = new URL(typeof input === 'string' ? input : (input && input.url) || String(input), location.href).href; } catch (e) { return false; }
+    let hit = false;
+    try { hit = this.isReport(String(method || 'GET').toUpperCase(), url); } catch (e) { hit = false; }
+    if (hit) {
+      boot.blocked++;
+      logEvent('info', 'stopped a watch report of the original player (' + boot.blocked + ')');
+    }
+    return hit;
+  },
+
+  install(page) {
+    this.installed = true;
+    const g = this;
+    const fetch0 = page.fetch;
+    if (typeof fetch0 === 'function') {
+      page.fetch = function fetch(input, init) {
+        const method = (init && init.method) || (input && typeof input === 'object' && input.method) || 'GET';
+        if (!(init && init[OWN_REQUEST]) && g.blocks(method, input)) return Promise.resolve(new page.Response(null, { status: 204 }));
+        return fetch0.apply(this, arguments);
+      };
+    }
+    const xhr = page.XMLHttpRequest && page.XMLHttpRequest.prototype;
+    if (xhr) {
+      const open0 = xhr.open;
+      const send0 = xhr.send;
+      const opened = new WeakMap();
+      xhr.open = function open(method, url) {
+        opened.set(this, [method, url]);
+        return open0.apply(this, arguments);
+      };
+      xhr.send = function send() {
+        const r = opened.get(this);
+        if (r && g.blocks(r[0], r[1])) return undefined;
+        return send0.apply(this, arguments);
+      };
+    }
+    const nav = page.Navigator && page.Navigator.prototype;
+    if (nav && typeof nav.sendBeacon === 'function') {
+      const beacon0 = nav.sendBeacon;
+      nav.sendBeacon = function sendBeacon(url) {
+        if (g.blocks('POST', url)) return true;
+        return beacon0.apply(this, arguments);
+      };
+    }
+    const media = page.HTMLMediaElement && page.HTMLMediaElement.prototype;
+    if (media) {
+      const play0 = media.play;
+      /** @this {HTMLMediaElement} */
+      media.play = function play() {
+        if (g.on && g.isOriginalMedia && g.isOriginalMedia(this)) {
+          try { this.muted = true; this.pause(); } catch (e) { /* gone */ }
+          logEvent('info', 'kept a video of the original player from playing');
+          return Promise.resolve();
+        }
+        return play0.apply(this, arguments);
+      };
+    }
+  },
+};
+
 // ---- 20-reporter.js ----
 // ===================================================================================
 // Watch reporting. Mirrors what the original player sends: a session record when playback
@@ -2482,9 +2817,12 @@ class Reporter {
   }
 
   post(path, body, retried) {
-    return fetch(this.info.gatewayUrl + path, {
-      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body),
-    }).then((r) => {
+    // OWN_REQUEST: ours, let through while the original player's reports are stopped
+    // (15-takeover.js).
+    const sent = fetch(this.info.gatewayUrl + path, /** @type {RequestInit} */ ({
+      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), [OWN_REQUEST]: true,
+    }));
+    return sent.then((r) => {
       if (r.status === 401 && !retried) {
         return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false) })
           .then((rr) => this.saveToken(rr))
@@ -3773,6 +4111,7 @@ class Stream {
         abrBandWidthUpFactor: STREAM_BW_FACTOR[this.priority === 'low' ? 'low' : 'main'][1],
         backBufferLength: STREAM_BACK_BUFFER_SEC,
         maxBufferLength: STREAM_MAX_BUFFER_SEC,
+        maxMaxBufferLength: STREAM_MAX_AHEAD_SEC,
         xhrSetup: (xhr) => { xhr.withCredentials = true; },
       });
       this.hls = hls;
@@ -4345,7 +4684,8 @@ class LitePlayer {
 
     const start = this.pickStart();
     this.startAt = start;
-    this.loadClock(this.clockPos, start, false);
+    // A page taken over goes on as the original player was: there, playing or not.
+    this.loadClock(this.clockPos, start, !!(opts.takeover && opts.takeover.playing));
     this.applyLayout();
     if (start > 1) this.toast(tr('resumedAt', { time: fmtTime(start) }), tr('startOver'), () => this.seek(0));
   }
@@ -4447,6 +4787,9 @@ class LitePlayer {
   }
 
   pickStart() {
+    // Taken over from the original player (90-main.js): where it was.
+    const took = this.opts.takeover;
+    if (took && took.at != null) return took.at;
     const link = this.linkTime();
     if (link != null) return link;
     // Back from a reload the player made (reloadHere): where it was, once.
@@ -4486,8 +4829,13 @@ class LitePlayer {
     this.clock.priority = this.quality.roleOf(pos) === 'camera' ? 'low' : 'high';
     this.clock.load(source.av, startAt, () => {
       v.playbackRate = this.prefs.rate;
-      if (this.clock.playing()) v.play().catch(() => {});
+      // Refused by the browser (autoplay not allowed): no longer meant to play, so the button
+      // says Play again. Interrupted by another load: that load carries the intent on.
+      if (this.clock.playing()) {
+        v.play().catch((e) => { if (e && e.name === 'NotAllowedError') { this.clock.intend(null, false); this.renderPlay(); } });
+      }
     }, autoplay);
+    this.renderPlay();
   }
 
   ensureFollower() {
@@ -4870,15 +5218,13 @@ class LitePlayer {
       this.session.wake();
       // Play is normally user-initiated; also recovers a context the browser suspended.
       if (this.audio) { this.audio.resume(); this.audio.syncTimer(); }
-      stage.classList.remove('paused');
-      this.setButton('.play', 'pause', tr('pause'), tr('pauseKey'));
+      this.renderPlay();
       if (this.reporter) this.reporter.onPlay();
       this.armIdle();
     });
     on('pause', () => {
       if (this.audio) this.audio.syncTimer();
-      stage.classList.add('paused');
-      this.setButton('.play', 'play', tr('play'), tr('playKey'));
+      this.renderPlay();
       if (this.reporter) this.reporter.onPause();
       this.savePosition();
       this.wake();
@@ -4985,6 +5331,17 @@ class LitePlayer {
     const play = this.clock.starting ? !this.clock.playing() : v.paused || v.ended;
     this.clock.intend(null, play);
     if (play) v.play().catch(() => {}); else v.pause();
+    this.renderPlay();
+  }
+
+  // The play button (and the paused look) show what playback is meant to do: while a stream
+  // (re)loads the element says paused, though it is about to play (a takeover of a playing
+  // original, a switch of views made while playing).
+  renderPlay() {
+    const play = this.clock.starting ? this.clock.playing() : !this.video.paused;
+    this.stage.classList.toggle('paused', !play);
+    if (play) this.setButton('.play', 'pause', tr('pause'), tr('pauseKey'));
+    else this.setButton('.play', 'play', tr('play'), tr('playKey'));
   }
 
   setRate(r) {
@@ -8873,27 +9230,54 @@ class MarkersLayer {
 
 // ---- 59-notice.js ----
 // ===================================================================================
-// Small, dismissible notice shown when we fall back to the original player.
+// Small, dismissible notice shown when we fall back to the original player. A fallback
+// notice also says why and offers the start-up diagnostics (our player, with its own
+// diagnostics, is not there).
 // ===================================================================================
 
-function notice(text) {
+function notice(text, more) {
   const show = () => {
     const host = document.createElement('div');
+    host.className = 'lite-player-for-echo360-notice';
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>div{position:fixed;left:16px;bottom:16px;z-index:2147483000;max-width:min(420px,calc(100vw - 32px));'
       + 'padding:10px 12px 10px 14px;border-radius:10px;background:rgba(20,20,24,.94);color:#eee;'
       + 'font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;'
       + 'box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;gap:10px;align-items:flex-start}'
-      + 'button{all:unset;cursor:pointer;opacity:.7;padding:0 4px}button:hover{opacity:1}</style>'
-      + '<div role="status"><span></span><button>✕</button></div>';
+      + 'p{margin:0}small{display:block;opacity:.75;margin-top:4px;overflow-wrap:anywhere}'
+      + 'button{all:unset;cursor:pointer;opacity:.7;padding:0 4px}button:hover{opacity:1}'
+      + '.act{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid rgba(255,255,255,.35);border-radius:6px;opacity:.9}'
+      + '@media (pointer: coarse){button{min-width:44px;min-height:44px;box-sizing:border-box;text-align:center}.act{display:inline-flex;align-items:center}}</style>'
+      + '<div role="status"><p><span></span><small hidden></small><button class="act" hidden></button></p><button class="x">✕</button></div>';
     root.querySelector('span').textContent = text;
-    const close = root.querySelector('button');
+    const small = /** @type {HTMLElement} */ (root.querySelector('small'));
+    if (more && more.detail) { small.textContent = more.detail; small.hidden = false; }
+    const act = /** @type {HTMLElement} */ (root.querySelector('.act'));
+    if (more && more.action) {
+      act.textContent = more.action[0];
+      act.hidden = false;
+      act.addEventListener('click', () => more.action[1]((msg) => { act.textContent = msg; }));
+    }
+    const close = root.querySelector('.x');
     close.setAttribute('aria-label', tr('close'));
     close.addEventListener('click', () => host.remove());
     document.body.appendChild(host);
-    setTimeout(() => host.remove(), 10000);
+    setTimeout(() => host.remove(), more && more.action ? 30000 : 10000);
   };
   if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
+}
+
+// The original player has the page: says so, why (boot.reason), and offers the start-up
+// diagnostics.
+function fallbackNotice(text) {
+  notice(text, {
+    detail: boot.reason ? tr('noticeReason', { why: boot.reason }) : '',
+    action: [tr('copyDiagnostics'), (done) => {
+      let text2 = '';
+      try { text2 = startupDiagnosticsText(); } catch (e) { text2 = String(e); }
+      navigator.clipboard.writeText(text2).then(() => done(tr('diagCopied')), (e) => done(tr('copyFailed', { msg: (e && e.message) || e })));
+    }],
+  });
 }
 
 // ---- 60-audio.js ----
@@ -9203,6 +9587,18 @@ const idbCache = {
 // Background downloads must never compete with playback: turn() resolves only when the
 // video is paused or has at least minBuffer seconds buffered ahead, after a pause of
 // playingMs (pausedMs while paused). Everything rejects once the signal aborts.
+// Background analyses running now (chapter scan, silence from the audio, slide text): the
+// usage data tells CPU pressure with them apart from without (87-telemetry.js).
+const bgWork = {
+  n: 0,
+  track(promise) {
+    this.n++;
+    const done = () => { this.n--; };
+    promise.then(done, done);
+    return promise;
+  },
+};
+
 class BackgroundGate {
   constructor(video, signal) {
     this.video = video;
@@ -9631,7 +10027,7 @@ class SilenceAnalyzer {
     }
     if (!this.masterUrl) { this.fail('noAudio'); return; }
     this.source = 'audio';
-    this.runAudio().catch((e) => {
+    bgWork.track(this.runAudio()).catch((e) => {
       if (this.ac.signal.aborted) return;
       log.warn('silence analysis stopped:', e && e.message ? e.message : e);
       this.fail('error');
@@ -10386,13 +10782,13 @@ function chapterIndexAt(chapters, t) {
 function smallBitmap(img, w) {
   const iw = img.displayWidth || img.width || 16;
   const ih = img.displayHeight || img.height || 9;
-  const c = new OffscreenCanvas(w, Math.max(1, Math.round((w * ih) / iw)));
+  const c = makeCanvas(w, Math.max(1, Math.round((w * ih) / iw)));
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
 
 function bitmapToBlob(canvas) {
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+  return canvasBlob(canvas, 'image/jpeg', 0.8);
 }
 
 // The screen among scored views [{ vals, ... }] (see findScreen): the one with the lowest
@@ -10446,7 +10842,7 @@ class SlideAnalyzer {
   // step and never writes into the new one's results.
   start() {
     const signal = this.ac.signal;
-    this.run(signal, this.gate).catch((e) => {
+    bgWork.track(this.run(signal, this.gate)).catch((e) => {
       if (signal.aborted) return;
       log.warn('slide detection stopped:', e && e.message ? e.message : e);
       if (!this.chapters.length) { this.state = 'unavailable'; this.onChange(); }
@@ -11419,7 +11815,7 @@ class SlideTextReader {
   }
 
   start() {
-    this.run().catch((e) => {
+    bgWork.track(this.run()).catch((e) => {
       if (this.ac.signal.aborted) return;
       log.warn('slide text:', e && e.message ? e.message : e);
       this.state = 'unavailable';
@@ -11468,9 +11864,9 @@ class SlideTextReader {
     if (this.done() === n) { this.state = 'done'; if (this.shared) this.shared.shareLumas(false); this.onChange(); return; }
     this.state = 'reading';
     this.onChange();
-    const canvas = new OffscreenCanvas(this.reader.info.width, this.reader.info.height);
+    const canvas = makeCanvas(this.reader.info.width, this.reader.info.height);
     const g = canvas.getContext('2d');
-    const small = new OffscreenCanvas(THUMB_W, THUMB_H).getContext('2d', { willReadFrequently: true });
+    const small = makeCanvas(THUMB_W, THUMB_H).getContext('2d', { willReadFrequently: true });
     // The previous sample of this pass, and the thumbnail of the last one whose text was
     // read: changes are measured against that, so that slow changes (ink added a little at
     // a time) still add up.
@@ -11517,7 +11913,7 @@ class SlideTextReader {
         this.stats.same++;
       } else {
         fails = 0;
-        const blob = await canvas.convertToBlob({ type: 'image/png' });
+        const blob = await canvasBlob(canvas, 'image/png');
         const a = performance.now();
         const text = await this.recognize(blob);
         const ms = performance.now() - a;
@@ -11787,7 +12183,7 @@ function scoreModel(ts, pageSim) {
     const mean = sw ? sx / sw : 0;
     return { mean, sd: Math.max(Math.sqrt(Math.max(0, sxx / (sw || 1) - mean * mean)), EVIDENCE_MIN_SD), w: sw };
   };
-  const pdf = (d, x) => Math.exp(-0.5 * ((x - d.mean) / d.sd) ** 2) / d.sd;
+  const pdf = (d, x) => Math.exp(-0.5 * ((x - d.mean) / d.sd) ** 2) / (d.sd * Math.sqrt(2 * Math.PI));
   const fit2 = (xs, ws) => [fit(xs, ws, 0), fit(xs, ws, 1)];
   const pdf2 = (m, x) => pdf(m[0], x[0]) * pdf(m[1], x[1]);
   let wrong = fit2(second);
@@ -11814,7 +12210,8 @@ function scoreModel(ts, pageSim) {
     const g = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const x = Math.min(i / (n - 1), r.mean);
-      const v = share > 0 ? Math.log(pdf(r, x)) - Math.log(pdf(q, x)) : EVIDENCE_FLOOR;
+      // "right" with a share of outliers, uniform over 0-1 (EVIDENCE_OUTLIER).
+      const v = share > 0 ? Math.log((1 - EVIDENCE_OUTLIER) * pdf(r, x) + EVIDENCE_OUTLIER) - Math.log(pdf(q, x)) : EVIDENCE_FLOOR;
       g[i] = Math.max(i ? g[i - 1] : -Infinity, isFinite(v) ? v : EVIDENCE_FLOOR);
     }
     return g;
@@ -11982,6 +12379,7 @@ function slideTextWorkerSource() {
     + 'const EVIDENCE_MIN_SD = ' + EVIDENCE_MIN_SD + ';\n'
     + 'const EVIDENCE_FLOOR = ' + EVIDENCE_FLOOR + ';\n'
     + 'const EVIDENCE_EM_ROUNDS = ' + EVIDENCE_EM_ROUNDS + ';\n'
+    + 'const EVIDENCE_OUTLIER = ' + EVIDENCE_OUTLIER + ';\n'
     + 'const FORCE_OFF = ' + FORCE_OFF + ';\n'
     + fns.map((f) => f.toString()).join('\n\n') + '\n'
     + 'self.onmessage = (e) => {\n'
@@ -13251,6 +13649,33 @@ function maskUrls(s) {
   return String(s).replace(/(https?:)?\/\/[^\s'")]+/g, '<address>').replace(/[^\s@<>()'",;:]+@[^\s@<>()'",;:]+\.[^\s@<>()'",;:]+/g, '<email>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8) + '…');
 }
 
+// How the script started (00-boot.js, 90-main.js): the way in, the page's state when the
+// script ran, how long until the player was shown, the original player's watch reports
+// stopped (taken over) and why the original player is used (if it is).
+function startupLines() {
+  const lines = [];
+  const add = (k, val) => lines.push(k + ': ' + val);
+  add('Start-up', (boot.path || 'waiting for the page') + (boot.reason ? ' (' + maskUrls(boot.reason) + ')' : ''));
+  add('Page state when the script ran', boot.readyState);
+  add('Player shown after', boot.readyAt ? Math.round(boot.readyAt - boot.at) + ' ms (from when the script ran)' : '-');
+  if (boot.took) {
+    add('Original player when taken over', (boot.took.at == null ? 'not started' : fmtTime(boot.took.at, true)) + ', ' + (boot.took.playing ? 'playing' : 'paused')
+      + ', ' + (boot.took.unmounted ? 'unmounted' : 'removed from the page'));
+  }
+  if (boot.path === 'takeover' || boot.blocked) add('Original player watch reports stopped', boot.blocked);
+  return lines;
+}
+
+// What "Copy diagnostics" in the notice copies when the original player is used (our
+// player, and its diagnostics, are not there).
+function startupDiagnosticsText() {
+  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Script manager: ' + platform.manager(),
+    'Page: ' + location.hostname, ...startupLines(), '', 'Recent warnings and errors:'];
+  if (!eventLog.length) lines.push('  none');
+  for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
+  return lines.join('\n');
+}
+
 function diagnosticsText(p) {
   const v = p.video;
   const q = (st) => (st && st.hls && st.hls.levels && st.hls.levels.length ? st.height + 'p of ' + Math.max(...st.hls.levels.map((l) => l.height)) + 'p' : '-');
@@ -13260,6 +13685,7 @@ function diagnosticsText(p) {
   add('Browser', browserName());
   add('Script manager', platform.manager());
   add('Page', location.hostname + ' (lesson page)');
+  lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));
   add('Playback', (v.paused ? 'paused' : 'playing') + ' at ' + fmtTime(v.currentTime, true) + ', speed ' + v.playbackRate + ', layout ' + p.layout
     + (p.pdfMode ? ' (PDF view)' : '') + ', quality ' + q(p.clock) + ' / ' + q(p.follower)
@@ -13471,7 +13897,7 @@ async function telemetryEnv() {
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
     : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
-  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts'];
+  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
   const conn = /** @type {any} */ (navigator).connection;
   const env = {
@@ -13520,16 +13946,18 @@ async function telemetryEnv() {
       if (b) env.hw1080 = !!b.powerEfficient;
     }
   } catch (e) { /* not known */ }
-  // Processor and system version (Chromium browsers say; the model is not asked for).
+  // Processor, system version and device model (Chromium browsers say; the model is given
+  // by Android only, and is null elsewhere).
   try {
     const uad = /** @type {any} */ (navigator).userAgentData;
     if (uad && uad.getHighEntropyValues) {
-      const h = await within(uad.getHighEntropyValues(['architecture', 'bitness', 'platformVersion']));
+      const h = await within(uad.getHighEntropyValues(['architecture', 'bitness', 'platformVersion', 'model']));
       if (h) {
         env.arch = h.architecture === 'x86' || h.architecture === 'arm' ? h.architecture : h.architecture ? 'other' : undefined;
         env.bitness = h.bitness === '64' || h.bitness === '32' ? +h.bitness : undefined;
         const major = parseInt(h.platformVersion, 10);
         env.osV = Number.isInteger(major) && major >= 0 && major < 1000 ? major : undefined;
+        env.model = typeof h.model === 'string' && /^[\w ()+.,/-]{1,40}$/.test(h.model.trim()) ? h.model.trim() : null;
       }
       env.mobile = !!uad.mobile;
     }
@@ -13716,7 +14144,7 @@ const telemetry = {
 
   fallback(reason) {
     try {
-      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend() }]);
+      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend(), injectState: boot.readyState }]);
     } catch (e) { /* not sent */ }
   },
 
@@ -13784,11 +14212,11 @@ class UsageSession {
     this.inputs = 0;               // interactions (pointer presses and key presses)
     this.inputMs = new Map();      // Event Timing interactionId -> longest duration
     this.inputUndrawn = new Set(); // interactions whose answer was never drawn (left out)
-    this.pressure = null;          // { state, since } and ms per state:
-    this.pressureMs = {};
+    this.pressure = null;          // CPU pressure level now (null: not known or not watched)
+    this.pressureMs = { bg: {}, idle: {} };   // ms played at each level, with and without background analyses running
+    this.pressureObs = null;       // the PressureObserver while it watches
     this.onBattery = null;         // null: not known
-    this.batterySince = 0;
-    this.batteryMs = { yes: 0, no: 0 };
+    this.powerMs = { ac: 0, battery: 0 };     // ms played on each power source
     this.self = telemetry.takePending();
     telemetry.current = this;
     telemetry.measureTimer();
@@ -13798,7 +14226,8 @@ class UsageSession {
     const v = deps.video;
     const on = (target, type, fn, opts) => disposer.listen(target, type, (e) => { try { fn(e); } catch (err) { /* not counted */ } }, opts);
     on(v, 'timeupdate', () => this.tick());
-    on(v, 'pause', () => { this.tick(); this.lastTick = 0; });
+    on(v, 'pause', () => { this.tick(); this.lastTick = 0; this.watchPressure(); });
+    on(v, 'playing', () => this.watchPressure());
     on(v, 'loadeddata', () => { if (this.firstFrameMs == null) this.firstFrameMs = Math.round(performance.now() - this.t0); });
     on(v, 'waiting', () => { if (!v.seeking && !v.paused && this.firstFrameMs != null && !this.waitingSince) this.waitingSince = performance.now(); });
     const resumed = () => {
@@ -13821,6 +14250,7 @@ class UsageSession {
         this.visibleSince = 0;
         this.report(true);
       } else this.visibleSince = performance.now();
+      this.watchPressure();
     });
     on(window, 'pagehide', () => this.report(true));
     // Uncaught errors of this script (the page's own are not ours to count).
@@ -13858,15 +14288,9 @@ class UsageSession {
       po.observe(/** @type {any} */ ({ type: 'event', durationThreshold: TELEMETRY_INPUT_MIN_MS }));
       disposer.observe(po);
     }
-    // CPU pressure (Chromium browsers) and whether the computer runs on battery.
-    const PO = /** @type {any} */ (self).PressureObserver;
-    if (typeof PO === 'function') {
-      try {
-        const po = new PO((records) => { try { this.setPressure(records[records.length - 1].state); } catch (e) { /* not counted */ } });
-        po.observe('cpu', { sampleInterval: TELEMETRY_PRESSURE_SAMPLE_MS }).catch(() => {});
-        disposer.add(() => { try { po.disconnect(); } catch (e) { /* gone */ } });
-      } catch (e) { /* not available */ }
-    }
+    // CPU pressure (Chromium browsers; watched only while playing in a visible tab, see
+    // watchPressure) and whether the computer runs on battery.
+    disposer.add(() => { this.watchPressure(true); });
     const nav = /** @type {any} */ (navigator);
     if (nav.getBattery) {
       nav.getBattery().then((b) => {
@@ -13884,16 +14308,31 @@ class UsageSession {
   }
 
   setPressure(state) {
-    const now = performance.now();
-    if (this.pressure) this.pressureMs[this.pressure.state] = (this.pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
-    this.pressure = ['nominal', 'fair', 'serious', 'critical'].includes(state) ? { state, since: now } : null;
+    this.pressure = ['nominal', 'fair', 'serious', 'critical'].includes(state) ? state : null;
+  }
+
+  // CPU pressure is watched while the video plays in a visible tab, and not otherwise
+  // (paused or hidden: not what watching costs). stop: the viewing is over.
+  watchPressure(stop) {
+    const want = !stop && !this.x.video.paused && !document.hidden;
+    if (want === !!this.pressureObs) return;
+    if (!want) {
+      try { this.pressureObs.disconnect(); } catch (e) { /* gone */ }
+      this.pressureObs = null;
+      this.pressure = null;
+      return;
+    }
+    const PO = /** @type {any} */ (self).PressureObserver;
+    if (typeof PO !== 'function') return;
+    try {
+      const po = new PO((records) => { try { if (this.pressureObs === po) this.setPressure(records[records.length - 1].state); } catch (e) { /* not counted */ } });
+      po.observe('cpu', { sampleInterval: TELEMETRY_PRESSURE_SAMPLE_MS }).catch(() => {});
+      this.pressureObs = po;
+    } catch (e) { /* not available */ }
   }
 
   setBattery(onBattery) {
-    const now = performance.now();
-    if (this.onBattery !== null) this.batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
     this.onBattery = onBattery;
-    this.batterySince = now;
   }
 
   // From usageNote (00-util.js).
@@ -13922,7 +14361,7 @@ class UsageSession {
     const conds = [
       video.paused ? 'paused' : 'playing',
       'rate:' + video.playbackRate,
-      'cpu:' + (this.pressure ? this.pressure.state : 'unknown'),
+      'cpu:' + (this.pressure || 'unknown'),
       'power:' + (this.onBattery === null ? 'unknown' : this.onBattery ? 'battery' : 'ac'),
     ];
     for (const k of conds) st.cond[k] = (st.cond[k] || 0) + 1;
@@ -13953,6 +14392,11 @@ class UsageSession {
         this.byLayout.set(l, (this.byLayout.get(l) || 0) + dt);
         const h = this.x.height ? this.x.height() : 0;
         if (h) this.byHeight.set(h, (this.byHeight.get(h) || 0) + dt);
+        if (this.pressure && !document.hidden) {
+          const m = this.pressureMs[bgWork.n > 0 ? 'bg' : 'idle'];
+          m[this.pressure] = (m[this.pressure] || 0) + dt;
+        }
+        if (this.onBattery !== null) this.powerMs[this.onBattery ? 'battery' : 'ac'] += dt;
       }
     }
     this.lastTick = v.paused ? 0 : now;
@@ -14015,11 +14459,7 @@ class UsageSession {
       return r <= fast ? TELEMETRY_INPUT_MIN_MS : sig2(timed[r - fast - 1]);
     };
     const slow = timed.filter((ms) => ms > TELEMETRY_SLOW_INPUT_MS).length;
-    const pressureMs = Object.assign({}, this.pressureMs);
-    if (this.pressure) pressureMs[this.pressure.state] = (pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
-    const batteryMs = Object.assign({}, this.batteryMs);
-    if (this.onBattery !== null) batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
-    const batteryKnown = batteryMs.yes + batteryMs.no;
+    const power = this.powerMs;
     let watched = 0;
     try { for (const [a, b] of x.played ? x.played() : []) watched += Math.max(0, b - a); } catch (e) { watched = 0; }
     const s = {
@@ -14027,6 +14467,12 @@ class UsageSession {
       // Watching
       fromLoad: this.fromLoad,
       readyMs: Math.round(this.readyMs),
+      // How the script started (00-boot.js): the way in, the page's state when it ran, the
+      // time from then until the player was shown, the original's watch reports stopped.
+      bootPath: this.fromLoad ? boot.path || undefined : undefined,
+      injectState: this.fromLoad ? boot.readyState : undefined,
+      bootMs: this.fromLoad && boot.readyAt ? Math.round(boot.readyAt - boot.at) : undefined,
+      blockedReports: this.fromLoad && boot.path === 'takeover' ? boot.blocked : undefined,
       firstFrameMs: this.firstFrameMs == null ? undefined : this.firstFrameMs,
       seekN: n('seek'), seekMs50: q('seek', 0.5), seekMs90: q('seek', 0.9),
       rebufferN: this.rebufferN,
@@ -14046,8 +14492,9 @@ class UsageSession {
       longTasksPerMin: visibleMs > 60000 ? Math.round(this.longTasks / (visibleMs / 60000) * 10) / 10 : undefined,
       droppedPct: total > 0 ? Math.round(dropped / total * 10000) / 100 : undefined,
       heapMb: this.heap ? Math.round(this.heap / 1e5) / 10 : undefined,
-      pressure: shares(pressureMs),
-      batteryPct: batteryKnown > 0 ? sig2((batteryMs.yes / batteryKnown) * 100) : undefined,
+      pressureBg: shares(this.pressureMs.bg),
+      pressureIdle: shares(this.pressureMs.idle),
+      power: power.ac > 0 && power.battery > 0 ? 'mixed' : power.ac > 0 ? 'ac' : power.battery > 0 ? 'battery' : undefined,
       // Background analyses
       streamMbPerHour: this.playMs >= 60000 ? sig2(this.streamBytes / 1e6 / (this.playMs / 3.6e6)) : undefined,
       bgMbPerHour: dur > 60 ? sig2(this.bgBytes / 1e6 / (dur / 3600)) : undefined,
@@ -14126,8 +14573,37 @@ class UsageSession {
 
 // ---- 90-main.js ----
 // ===================================================================================
-// Bootstrap
+// Bootstrap. Two ways in (boot.path, 00-boot.js):
+//   intercept  the page's own player was caught before it started (the trap in 00-boot.js):
+//              it never runs.
+//   takeover   the page had started its player before this script ran (a manager that
+//              injects late): the bootstrap data is read from the page, the original
+//              player is stopped (its position and play state carried over) and its watch
+//              reports are stopped at the network layer (15-takeover.js).
+// Either way the same parser makes the lesson, and hls.js is loaded only then. Anything
+// that does not work out leaves (or gives back) the page to the original player, with a
+// notice saying why (fallback); a browser that cannot run the player is turned away
+// before anything starts.
 // ===================================================================================
+
+// Why this browser cannot run the player ('' if it can): checked before anything starts.
+// iPhone is not supported. The rest are what the player needs; CSS aspect-ratio and
+// createImageBitmap set the oldest browsers that pass (Safari 15, iPadOS 15).
+function unsupportedReason() {
+  if (/iPhone|iPod/.test(navigator.userAgent)) return 'iPhone';
+  const need = [
+    ['Proxy', typeof Proxy === 'function'],
+    ['fetch', typeof fetch === 'function'],
+    ['AbortController', typeof AbortController === 'function'],
+    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
+    ['ResizeObserver', typeof ResizeObserver === 'function'],
+    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
+    ['createImageBitmap', typeof createImageBitmap === 'function'],
+    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
+  ];
+  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
+  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
+}
 
 (function main() {
   // Rejections nobody handled: logged when they come from this script (the page's own are
@@ -14140,9 +14616,20 @@ class UsageSession {
   if (courseList.matches()) { try { courseList.start(); } catch (e) { /* the page works without it */ } return; }
   const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
   if (!adapter) return;
+  if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
 
   let booted = false;
   let player = null;
+  // Why the page goes to the original player (usage data): the player's reasons.
+  const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
+
+  // The page goes to (or stays with) the original player: why, for diagnostics.
+  function fellBack(reason, detail) {
+    boot.path = 'fallback';
+    boot.reason = reason + (detail ? ': ' + detail : '');
+    log.info('using the original player (' + boot.reason + ')');
+    try { telemetry.fallback(reason); } catch (e) { /* not sent */ }
+  }
 
   // Hands the page to the original player. Each step is protected: an exception here would
   // otherwise travel into the page's own start-up code.
@@ -14150,67 +14637,130 @@ class UsageSession {
     if (player) { try { player.destroy(); } catch (e) { log.error('cleanup failed:', e); } player = null; }
     try { callOriginal(arg); } catch (e) { log.error('original player failed to start:', e); }
     try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
-    if (why) notice(why);
+    if (why) fallbackNotice(why);
   }
 
-  adapter.intercept((arg, callOriginal) => {
+  // The original player keeps the page (taken over late, and something did not work out
+  // before it was stopped).
+  function keepOriginal(why) {
+    try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
+    if (why) fallbackNotice(why);
+  }
+
+  // Our player for the page's bootstrap argument. takeover: the original player is running
+  // (not yet stopped) and callOriginal would start it again.
+  function launch(arg, callOriginal, takeover) {
     booted = true;
-    // Why the page goes to the original player (usage data): the player's reasons.
-    const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
     if (store.get('forceOriginal', false)) {
-      startOriginal(callOriginal, arg, null);
-      return undefined;
+      fellBack('user');
+      if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);
+      return;
     }
-    try {
-      const lesson = adapter.parse(arg);
+    const giveUp = (reason, e) => {
+      log.warn('could not start, using the original player:', e);
+      fellBack(reason, String((e && e.message) || e));
+      if (!takeover) startOriginal(callOriginal, arg, tr('fallbackNotice'));
+      else keepOriginal(tr('fallbackNotice'));
+    };
+    const why = unsupportedReason();
+    if (why) { giveUp('unsupported', why); return; }
+    try { adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
+    const go = () => {
       // Checked before anything is built: without a way to play HLS, the original player.
-      if (!canPlayHls()) throw new Error('this browser cannot play HLS here (hls.js missing and no native HLS)');
+      if (!canPlayHls()) { giveUp('noHls', new Error('this browser cannot play HLS here (no Media Source Extensions and no native HLS)')); return; }
+      start(arg, callOriginal, takeover);
+    };
+    // hls.js already there (a development build injects it): at once.
+    if (platform.Hls) go();
+    else platform.loadHls(HLS_LOAD_TIMEOUT_MS).then(go, (e) => giveUp('libFailed', e));
+  }
+
+  function start(arg, callOriginal, takeover) {
+    let stopped = null;
+    let original = callOriginal;
+    try {
+      if (takeover) {
+        // From here on the original player is stopped; going back to it starts it again.
+        netGuard.start((m, u) => adapter.isWatchReport(m, u), null);
+        original = (a) => { netGuard.stop(); if (stopped) stopped.restore(); return callOriginal(a); };
+        stopped = adapter.stopOriginal(arg);
+        boot.took = { at: stopped.at, playing: stopped.playing, unmounted: stopped.unmounted };
+        if (!stopped.unmounted) {
+          const box = stopped.container;
+          netGuard.isOriginalMedia = (m) => !!box && box.contains(m);
+          try { cpuFix.start(); } catch (e) { log.warn('cpu fix failed:', e); }
+        }
+        log.info('took over the original player (' + (stopped.unmounted ? 'unmounted' : 'removed from the page') + ', at '
+          + (stopped.at == null ? '-' : fmtTime(stopped.at, true)) + ', ' + (stopped.playing ? 'playing' : 'paused') + ')');
+      }
+      const lesson = adapter.parse(arg);
       player = new LitePlayer(lesson, {
         fetchCues: adapter.fetchCues ? (l) => adapter.fetchCues(l) : null,
         api: adapter.api ? (l) => adapter.api(l) : null,
+        takeover: stopped ? { at: stopped.at, playing: stopped.playing } : null,
         onFallback(reason) {
-          log.info('switching to the original player (' + reason + ')');
-          telemetry.fallback(FALLBACK_REASON[reason] || 'user');
+          fellBack(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
           try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
-          startOriginal(callOriginal, handoff, null);
+          startOriginal(original, handoff, null);
         },
       });
-      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2 }; } // development only
+      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2, boot, bgWork, netGuard, OWN_REQUEST }; } // development only
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
-        telemetry.fallback('coreError');
+        fellBack('coreError');
         let handoff = arg;
         try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
-        startOriginal(callOriginal, handoff, tr('errorNotice'));
+        startOriginal(original, handoff, tr('errorNotice'));
       };
-      console.info(TAG, 'v' + VERSION + ' active (' + adapter.id + ', ' + lesson.sources.length + ' sources, reporting '
-        + (lesson.analytics ? 'on' : 'off') + ')');
+      boot.path = takeover ? 'takeover' : 'intercept';
+      boot.readyAt = performance.now();
+      console.info(TAG, 'v' + VERSION + ' active (' + adapter.id + ', ' + boot.path + ', injected at ' + boot.readyState + ', '
+        + lesson.sources.length + ' sources, reporting ' + (lesson.analytics ? 'on' : 'off') + ')');
     } catch (e) {
       log.warn('could not start, using the original player:', e);
-      try { telemetry.fallback(canPlayHls() ? 'startFailed' : 'noHls'); } catch (err) { /* not sent */ }
-      startOriginal(callOriginal, arg, tr('fallbackNotice'));
+      fellBack(canPlayHls() ? 'startFailed' : 'noHls', String((e && e.message) || e));
+      if (takeover && !stopped) { netGuard.stop(); keepOriginal(tr('fallbackNotice')); return; }
+      let handoff = arg;
+      try { if (stopped && stopped.at != null) handoff = adapter.withStartTime(arg, stopped.at); } catch (err) { /* keep original arg */ }
+      startOriginal(original, handoff, tr('fallbackNotice'));
     }
-    return undefined;
-  });
+  }
+
+  adapter.intercept((arg, callOriginal) => { launch(arg, callOriginal, false); return undefined; });
+
+  // Started late: the page has started (or tried to start) its own player already, and will
+  // not call the bootstrap again. Take it over.
+  if (document.readyState === 'complete' && !boot.called) {
+    const arg = adapter.bootArg();
+    const callOriginal = adapter.original();
+    if (arg == null || !callOriginal) {
+      booted = true;
+      fellBack('noBootData', arg == null ? 'the start-up data was not found on the page' : 'the page\'s player was not found');
+      keepOriginal(tr('fallbackNotice'));
+    } else {
+      launch(arg, callOriginal, true);
+    }
+  }
 
   // If the page never calls the bootstrap we trapped (Echo360 changed how it starts), the
   // original player runs untouched: apply the CPU fix and say so once. A slow page may still
   // start late, so the notice waits until the original player is visibly there (a video on
   // the page), checking again for up to half a minute.
-  window.addEventListener('load', () => {
+  const checkBootstrap = () => {
     let tries = 0;
     const check = () => {
       if (booted) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
-      log.info('player bootstrap not seen; leaving the original player in place');
-      telemetry.fallback('noBootstrap');
+      fellBack('noBootstrap');
       cpuFix.start();
-      notice(tr('fallbackNotice'));
+      fallbackNotice(tr('fallbackNotice'));
     };
     setTimeout(check, BOOT_CHECK_MS);
-  });
+  };
+  if (document.readyState === 'complete') checkBootstrap();
+  else window.addEventListener('load', checkBootstrap, { once: true });
 })();
 
 })();

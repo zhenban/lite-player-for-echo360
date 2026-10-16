@@ -8,7 +8,6 @@
 // @license      GPL-3.0-or-later
 // @match        https://echo360.net.au/lesson/*
 // @match        https://echo360.net.au/section/*/home
-// @require      https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js#sha256-oS5+4c1kpp3NsxQVfkXa/LpwW/sLFEC3k1yyZdN0Qj4=
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue

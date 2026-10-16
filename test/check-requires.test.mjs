@@ -42,3 +42,12 @@ test('check-requires: a changed or missing file fails the check without retrying
   assert.ok(files[1].error);
   assert.equal(files[2].url, 'https://cdn.jsdelivr.net/npm/x@1/y.js');
 });
+
+test('check-requires: no @require at all is fine (hls.js is checked by the script itself); no library list is not', async () => {
+  const lines = [];
+  const out = { log() {}, error: (s) => lines.push(s) };
+  assert.equal(await checkAll(pinnedFiles('// @grant        none\n', "  'x@1/y.js': '" + hex + "',\n"), async () => answer(200), noSleep, out), 0);
+  assert.deepEqual(lines, []);
+  assert.equal(await checkAll(pinnedFiles('// @grant        none\n', ''), async () => answer(200), noSleep, out), 1);
+  assert.ok(lines.some((s) => /no LIB_SHA256 entry/.test(s)));
+});

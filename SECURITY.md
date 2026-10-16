@@ -23,11 +23,13 @@ loads (hls.js, pdf.js, Tesseract.js) to those projects.
 
 ## What the script protects, and what it cannot
 
-- **Libraries.** hls.js is loaded by the userscript manager through `@require` with a
-  SHA-256 hash. pdf.js, Tesseract.js, its engine and its language data are loaded from
-  jsDelivr only when needed, at pinned versions, and each file's SHA-256 is checked before
-  it is run or used (`src/04-libs.js`; CI checks the hashes against the CDN). A changed
-  file on the CDN makes that feature fail; it is never run.
+- **Libraries.** hls.js, pdf.js, Tesseract.js, its engine and its language data are
+  loaded from jsDelivr only when needed (hls.js when a player is about to start), at
+  pinned versions, and each file's SHA-256 is checked by the script itself before it is
+  run or used, in every userscript manager (`src/04-libs.js`, `src/05-platform.js`; CI
+  checks the hashes against the CDN). A changed file on the CDN is never run: for hls.js
+  the page keeps Echo360's own player, with a note saying why; for the others that
+  feature fails.
 - **Writes to Echo360** (notes, discussion posts, flags) need a real click or key press
   by the user (`requireGesture`). This protects against the player writing by accident
   (from a timer or a bug). It is not a wall against other code in the page: the player

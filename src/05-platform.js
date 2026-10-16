@@ -11,7 +11,8 @@
 //     build/...'). A userscript fetches them from a CDN and runs a file only after its
 //     bytes match LIB_SHA256 (04-libs.js); an extension ships them (Manifest V3 does not
 //     allow code from elsewhere).
-//   - Hls: hls.js (the userscript manager loads it through @require)
+//   - Hls / loadHls: hls.js, loaded when a player is about to start (a pinned file like the
+//     others); a copy already on the page (development builds inject one) is used as is
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
 //   - post: send JSON to the telemetry Worker (87-telemetry.js)
@@ -25,7 +26,7 @@ const platform = {
   name: 'userscript',
   // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
   // wrapper as `window`: a property defined on it is not seen by the page's scripts.
-  page: typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window,
+  page: pageWindow(),
   kv: {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
@@ -44,11 +45,11 @@ const platform = {
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it
   // again, and it is a few files of 0.1 to 4 MB.
-  libBlobUrl(path, prefix) {
-    const key = path + (prefix ? '\n' + prefix : '');
+  libBlobUrl(path, prefix, suffix) {
+    const key = path + (prefix ? '\n' + prefix : '') + (suffix ? '\n' + suffix : '');
     let p = libBlobUrls.get(key);
     if (!p) {
-      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob(prefix ? [prefix, buf] : [buf], { type: 'text/javascript' })));
+      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
       libBlobUrls.set(key, p);
       p.catch(() => libBlobUrls.delete(key));
     }
@@ -66,6 +67,27 @@ const platform = {
   },
   importLib(path) { return this.libBlobUrl(path).then((u) => import(u)); },
   Hls: typeof Hls !== 'undefined' ? Hls : window.Hls,
+  hlsLoading: null,
+  // Resolves to hls.js, or rejects (the file could not be had in timeoutMs, or differs).
+  // hls.min.js is a UMD file: run as a module, it is given `module` and `exports` to fill
+  // (so it sets no global on the page) and its export is passed on.
+  loadHls(timeoutMs) {
+    if (this.Hls) return Promise.resolve(this.Hls);
+    if (!this.hlsLoading) {
+      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n')
+        .then((u) => import(u))
+        .then((m) => {
+          const lib = m && m.default;
+          if (!lib || typeof lib.isSupported !== 'function') throw new Error('hls.js did not load');
+          this.Hls = lib;
+          return lib;
+        });
+      this.hlsLoading.catch(() => { this.hlsLoading = null; });
+    }
+    let timer = 0;
+    const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('hls.js not loaded in ' + Math.round(timeoutMs / 1000) + ' s')), timeoutMs); });
+    return Promise.race([this.hlsLoading, late]).finally(() => clearTimeout(timer));
+  },
   save(blob, fileName) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -93,7 +115,7 @@ const platform = {
           });
           return;
         }
-        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : AbortSignal.timeout(timeoutMs) })
+        fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', keepalive: !!keepalive, signal: keepalive ? undefined : timeoutSignal(timeoutMs) })
           .then((r) => r.text().then((t) => done(r.status, t)), () => done(0));
       } catch (e) {
         done(0);

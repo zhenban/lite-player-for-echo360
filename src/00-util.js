@@ -145,6 +145,14 @@ function logText(x) { return x && x.message ? x.message : typeof x === 'string' 
 // Recent warnings and errors (no content, no addresses), for "copy diagnostics".
 const LOG_KEEP = 40;
 const eventLog = [];
+// An AbortSignal that aborts after ms (AbortSignal.timeout where there is one: Safari 16+).
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), ms);
+  return ac.signal;
+}
+
 function logEvent(level, text) {
   eventLog.push({ t: new Date().toISOString().slice(11, 19), level, text: String(text).slice(0, 300) });
   if (eventLog.length > LOG_KEEP) eventLog.shift();

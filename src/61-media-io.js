@@ -158,6 +158,18 @@ const idbCache = {
 // Background downloads must never compete with playback: turn() resolves only when the
 // video is paused or has at least minBuffer seconds buffered ahead, after a pause of
 // playingMs (pausedMs while paused). Everything rejects once the signal aborts.
+// Background analyses running now (chapter scan, silence from the audio, slide text): the
+// usage data tells CPU pressure with them apart from without (87-telemetry.js).
+const bgWork = {
+  n: 0,
+  track(promise) {
+    this.n++;
+    const done = () => { this.n--; };
+    promise.then(done, done);
+    return promise;
+  },
+};
+
 class BackgroundGate {
   constructor(video, signal) {
     this.video = video;

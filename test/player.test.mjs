@@ -53,8 +53,14 @@ function page({ granted = false } = {}) {
   const hlsLog = [];
   w.Hls = fakeHls(hlsLog);
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
+  // No usage data here (test/telemetry.test.mjs): a failed send would wait minutes to retry.
+  w.localStorage.setItem('lite-player-for-echo360:telemetryOff', 'true');
   // No network: every request fails (the player must cope).
   w.fetch = () => Promise.reject(new Error('offline in tests'));
+  // The check for a page that never starts its player (BOOT_CHECK_MS after load) comes at
+  // once: happy-dom's abort() waits for timers started while it runs.
+  const realSetTimeout = w.setTimeout.bind(w);
+  w.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, ms === 8000 ? 1 : ms, ...a);
   const intervals = new Set();
   const realSetInterval = w.setInterval.bind(w);
   const realClearInterval = w.clearInterval.bind(w);
@@ -62,6 +68,8 @@ function page({ granted = false } = {}) {
   w.clearInterval = (id) => { intervals.delete(id); realClearInterval(id); };
   w.navigator.mediaSession && (w.navigator.mediaSession.setActionHandler ||= () => {});
   w.document.body.innerHTML = '<div id="echo-player-root"></div>';
+  // The script runs at document start (the page has not started its own player yet).
+  Object.defineProperty(w.document, 'readyState', { value: 'loading', configurable: true });
   if (granted) {
     w.__managerWindow = managerWindow(w);
     w.eval('(function (window, unsafeWindow) {\n' + script + '\n})(__managerWindow, this);');

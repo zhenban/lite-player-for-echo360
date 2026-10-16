@@ -32,7 +32,7 @@ function loadSources(names, overrides) {
   // As in a page: window is the global object (page scripts set window.Echo, read Echo).
   if (ctx.window === 'global') ctx.window = ctx;
   vm.createContext(ctx);
-  const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
+  const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('00-boot') || f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
@@ -438,6 +438,9 @@ test('a stream knows where it is going while it loads; a reload in that window k
   // Switched back before it arrived: still 3000 and playing (before the fix: 0 and paused).
   st.load('screen.m3u8', st.position(), null, st.playing());
   assert.equal(st.hls.cfg.startPosition, 3000);
+  // Buffered ahead at most a minute, whatever bitrate the playlist declares (hls.js would
+  // go to ten minutes for Echo360's low declared bitrates: bufferFullError, data wasted).
+  assert.equal(st.hls.cfg.maxMaxBufferLength, 60);
   assert.equal(st.position(), 3000);
   assert.equal(st.playing(), true);
   // A seek or pause while loading becomes the new intent.
@@ -570,7 +573,7 @@ function reporterRig(statusFor) {
   const sent = [];
   const store = new Map();
   const listeners = {};
-  const m = loadSources(['00-util', '20-reporter'], {
+  const m = loadSources(['00-util', '15-takeover', '20-reporter'], {
     window: { addEventListener: (t, fn) => { listeners[t] = fn; }, removeEventListener: (t) => { delete listeners[t]; } },
     localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) },
     document: { referrer: 'https://echo360.example/section/s/home' },
@@ -972,6 +975,22 @@ function fakeLecture() {
   return { pageTexts, fileOf: pageTexts.map(() => 0), texts, at };
 }
 
+test('following: a page mostly made of a picture (few words, OCR noise) in a lecture of clean slides is still that page', () => {
+  // COMP1521 2026-06-01 (hashed fixture): the slides are clean text, so the right matches
+  // fitted were all near perfect, and two pages with a photo or a screenshot (a title of a
+  // few words, noise read from the picture) were taken for "not a slide" between their
+  // neighbours. Checked by eye on the frames: those two are pages 52 and 88; the editor,
+  // terminal, simulator and desktop parts are not slides.
+  const m = deckMod();
+  const fx = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'text-2026-06-01-comp1521.json'), 'utf8'));
+  const pages = Array.from(m.followLecture({ pageTexts: fx.pages, fileOf: fx.fileOf, texts: fx.texts, at: fx.at }).pages);
+  const during = (a, b) => [...new Set(fx.times.map((t, i) => (t >= a && t <= b ? pages[i] : null)).filter((x) => x !== null))];
+  assert.deepEqual(during(3310, 3350), [51], 'page 52 (a photo)');
+  assert.deepEqual(during(5830, 5840), [87], 'page 88 (a screenshot)');
+  for (const [a, b] of [[190, 280], [2980, 3140], [3730, 3860], [4250, 4350], [4840, 4940], [5340, 5590], [6040, 6880]]) assert.deepEqual(during(a, b), [-1], a + '-' + b + ' s');
+  assert.ok(pages.filter((x) => x < 0).length / pages.length < 0.3);
+});
+
 test('H3: words in any script, only in the scripts being read; the reading language from the slides', () => {
   const m = deckMod();
   // Latin: accents and ligatures unified, a script change splits a formula, short pieces dropped.
@@ -1016,7 +1035,7 @@ test('T1.6: the Worker source runs on its own and decides as the page does', () 
 // see dev/make-text-fixture.mjs). Scored as dev/text-eval.mjs does, on slide time: the page
 // shown (after followSamples) is the labelled one or next to it, and the page decided is
 // exactly the labelled one. Floors a little under today's results (ELEC 98.6% / 92.4%,
-// COMP 99.3% / 91.4%), so that a change that makes following worse fails here.
+// COMP 99.6% / 94.8%), so that a change that makes following worse fails here.
 function replayLecture(name) {
   const m = deckMod();
   const fx = JSON.parse(readFileSync(join(root, 'test', 'fixtures', name), 'utf8'));

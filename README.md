@@ -21,6 +21,14 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 2. Install the script: **[lite-player-for-echo360.user.js](https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js)** from the latest release (your manager offers to install it). Each release lists what changed.
 3. Open any Echo360 lecture recording. The browser console (F12) shows `[Lite Player for Echo360] v… active`.
 
+## Supported browsers
+
+- **Supported:** Chrome, Edge and Firefox on computers; Firefox on Android (with Violentmonkey or Tampermonkey).
+- **Best effort:** Safari on iPadOS 15.4 or later (with a userscript manager such as Stay or Userscripts). 15.4 is the oldest version Echo360's own player runs on; the script itself needs Safari 15. Some managers start the script after the page has started its own player: the script then takes the page over (it stops the original player, carries on where it was, and keeps it from reporting the viewing twice).
+- **Not supported:** iPhone. Older browsers and iPhones keep the original player, with a note saying why.
+
+**Settings (⋮) > Storage and diagnostics > Copy diagnostics** (or the button on the note) shows how the script started on the page: *intercept* (before the page's player started), *takeover* or the original player and why.
+
 ## Features
 
 - **Low CPU use**: native `<video>` with [hls.js](https://github.com/video-dev/hls.js), using hardware decoding.
@@ -75,7 +83,7 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 
 - The script only runs on Echo360 lecture pages. Apart from Echo360 itself, it sends data to one place only: the anonymous usage data described below, which you can turn off.
 - Settings, resume positions and analysis caches are stored only in your browser (localStorage and IndexedDB).
-- hls.js is loaded from jsDelivr at a pinned version with its SHA-256 hash (Tampermonkey refuses a file that does not match, and the script then leaves the original player in place; Violentmonkey does not check hashes yet); pdf.js and Tesseract.js (text recognition) are loaded at pinned versions only when a recording has a slide PDF. Text recognition runs in your browser.
+- hls.js is loaded from jsDelivr at a pinned version when a player is about to start, and run only if its SHA-256 hash matches (otherwise the original player is used); pdf.js and Tesseract.js (text recognition) are loaded at pinned versions only when a recording has a slide PDF. Text recognition runs in your browser.
 - Tags, watch progress, slide files and backups stay on your device. Exports and backups never contain the video or its address.
 - Nothing is ever posted for you. Writes to Echo360 (notes, posts, flags) only happen when you click. Anything your instructors or classmates can see is labelled before you send it.
 - There is no download feature.
@@ -85,17 +93,18 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 On by default; **Settings (⋮) > Usage data** turns it off, and sending stops at once. It helps find problems that only show on some computers and decide what to improve.
 
 - **What is sent:**
-  - the computer and browser, at most once a day: script, browser, system and script-manager versions, interface language, desktop or touch, screen size and scaling, CPU cores, processor type (x86 or ARM, 32 or 64 bit) and system version where the browser tells, memory and graphics card, the graphics vendor and family WebGPU reports, whether WebGPU, WebCodecs, the browser's built-in AI and CPU pressure readings are available, whether video is decoded in hardware (720p and 1080p), whether the computer was charging, the step of the browser's timer, network type and estimated speed;
+  - the computer and browser, at most once a day: script, browser, system and script-manager versions, interface language, desktop or touch, screen size and scaling, CPU cores, processor type (x86 or ARM, 32 or 64 bit), system version and, on Android, the device model where the browser tells, memory and graphics card, the graphics vendor and family WebGPU reports, whether WebGPU, WebCodecs, the browser's built-in AI and CPU pressure readings are available, whether video is decoded in hardware (720p and 1080p), whether the computer was charging, the step of the browser's timer, network type and estimated speed;
   - one summary per viewing:
+    - start-up: how the script started (caught the page's player before it started, took over a player that had already started, or left the page to the original player), the page's loading state when the script ran, how long until the player was shown, and how many of the original player's watch reports were stopped after a takeover;
     - watching: whether it began with the page load, how long until the controls worked and the first picture, how long seeking took (median, 90th percentile), rebuffering (times, share of time), the share of time at each video resolution and how often it changed, the estimated bandwidth, how far apart the two views drifted (median, largest);
-    - responsiveness and load: how long clicks and key presses took to be answered (median, 90th percentile, how many over 200 ms), long main-thread tasks, dropped frames, memory, the share of time at each level of CPU pressure and on battery;
+    - responsiveness and load: how long clicks and key presses took to be answered (median, 90th percentile, how many over 200 ms), long main-thread tasks, dropped frames, memory, the share of the time played (in a visible tab) at each level of CPU pressure, separately while background analyses were running and while none were, and whether the time played was all on mains power, all on battery or mixed;
     - background analyses: how much they downloaded per hour of recording, the video data per hour played, how many results came from the cache, how soon chapters and the PDF follower were ready, how long each step took (per keyframe, per minute of audio, per million pixels of text recognition and of PDF drawing: median, 90th percentile, count);
     - how fast this computer is: the time per million pixels or audio samples of two fixed pieces of the analyses, which do the same work whatever the recording (10th, 50th and 90th percentile, how many batches, and whether the video was playing, the speed, the CPU pressure and the power source as each batch finished). These come from work the analyses do anyway: nothing extra is run to measure them;
     - stability: features turned off after an error, uncaught errors of the script, failed requests by kind (refused, server error, timed out, no answer), video stream errors by name, renewals of the video access that worked or failed, the version of Echo360's page code (the names of its script files);
     - habits: time open and played, the share of the recording watched, the share of time at each speed and the layout used most, seconds of silence and empty screen skipped, how often each feature was used, keys against clicks, the *names* of settings you changed from their defaults, interface language and theme, how long you watched before switching to the original player;
     - how the analyses did: how the screen view was found, chapters per hour, how much of the time the PDF follower recognised no page, corrections by hand, automatic layout changes undone;
     - the usage data itself: sends that failed, errors left out because too many were queued;
-  - switches to the original player and why;
+  - switches to the original player and why, with the page's loading state when the script ran;
   - errors: the feature, the error type and the message with web addresses, e-mail addresses, quoted text, ids and numbers removed.
 
   Times and speeds are rounded to two significant digits, and only summaries (medians, percentiles, counts) are sent, never series of values.

@@ -181,7 +181,7 @@ async function telemetryEnv() {
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
     : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
-  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts'];
+  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
   const conn = /** @type {any} */ (navigator).connection;
   const env = {
@@ -230,16 +230,18 @@ async function telemetryEnv() {
       if (b) env.hw1080 = !!b.powerEfficient;
     }
   } catch (e) { /* not known */ }
-  // Processor and system version (Chromium browsers say; the model is not asked for).
+  // Processor, system version and device model (Chromium browsers say; the model is given
+  // by Android only, and is null elsewhere).
   try {
     const uad = /** @type {any} */ (navigator).userAgentData;
     if (uad && uad.getHighEntropyValues) {
-      const h = await within(uad.getHighEntropyValues(['architecture', 'bitness', 'platformVersion']));
+      const h = await within(uad.getHighEntropyValues(['architecture', 'bitness', 'platformVersion', 'model']));
       if (h) {
         env.arch = h.architecture === 'x86' || h.architecture === 'arm' ? h.architecture : h.architecture ? 'other' : undefined;
         env.bitness = h.bitness === '64' || h.bitness === '32' ? +h.bitness : undefined;
         const major = parseInt(h.platformVersion, 10);
         env.osV = Number.isInteger(major) && major >= 0 && major < 1000 ? major : undefined;
+        env.model = typeof h.model === 'string' && /^[\w ()+.,/-]{1,40}$/.test(h.model.trim()) ? h.model.trim() : null;
       }
       env.mobile = !!uad.mobile;
     }
@@ -426,7 +428,7 @@ const telemetry = {
 
   fallback(reason) {
     try {
-      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend() }]);
+      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend(), injectState: boot.readyState }]);
     } catch (e) { /* not sent */ }
   },
 
@@ -494,11 +496,11 @@ class UsageSession {
     this.inputs = 0;               // interactions (pointer presses and key presses)
     this.inputMs = new Map();      // Event Timing interactionId -> longest duration
     this.inputUndrawn = new Set(); // interactions whose answer was never drawn (left out)
-    this.pressure = null;          // { state, since } and ms per state:
-    this.pressureMs = {};
+    this.pressure = null;          // CPU pressure level now (null: not known or not watched)
+    this.pressureMs = { bg: {}, idle: {} };   // ms played at each level, with and without background analyses running
+    this.pressureObs = null;       // the PressureObserver while it watches
     this.onBattery = null;         // null: not known
-    this.batterySince = 0;
-    this.batteryMs = { yes: 0, no: 0 };
+    this.powerMs = { ac: 0, battery: 0 };     // ms played on each power source
     this.self = telemetry.takePending();
     telemetry.current = this;
     telemetry.measureTimer();
@@ -508,7 +510,8 @@ class UsageSession {
     const v = deps.video;
     const on = (target, type, fn, opts) => disposer.listen(target, type, (e) => { try { fn(e); } catch (err) { /* not counted */ } }, opts);
     on(v, 'timeupdate', () => this.tick());
-    on(v, 'pause', () => { this.tick(); this.lastTick = 0; });
+    on(v, 'pause', () => { this.tick(); this.lastTick = 0; this.watchPressure(); });
+    on(v, 'playing', () => this.watchPressure());
     on(v, 'loadeddata', () => { if (this.firstFrameMs == null) this.firstFrameMs = Math.round(performance.now() - this.t0); });
     on(v, 'waiting', () => { if (!v.seeking && !v.paused && this.firstFrameMs != null && !this.waitingSince) this.waitingSince = performance.now(); });
     const resumed = () => {
@@ -531,6 +534,7 @@ class UsageSession {
         this.visibleSince = 0;
         this.report(true);
       } else this.visibleSince = performance.now();
+      this.watchPressure();
     });
     on(window, 'pagehide', () => this.report(true));
     // Uncaught errors of this script (the page's own are not ours to count).
@@ -568,15 +572,9 @@ class UsageSession {
       po.observe(/** @type {any} */ ({ type: 'event', durationThreshold: TELEMETRY_INPUT_MIN_MS }));
       disposer.observe(po);
     }
-    // CPU pressure (Chromium browsers) and whether the computer runs on battery.
-    const PO = /** @type {any} */ (self).PressureObserver;
-    if (typeof PO === 'function') {
-      try {
-        const po = new PO((records) => { try { this.setPressure(records[records.length - 1].state); } catch (e) { /* not counted */ } });
-        po.observe('cpu', { sampleInterval: TELEMETRY_PRESSURE_SAMPLE_MS }).catch(() => {});
-        disposer.add(() => { try { po.disconnect(); } catch (e) { /* gone */ } });
-      } catch (e) { /* not available */ }
-    }
+    // CPU pressure (Chromium browsers; watched only while playing in a visible tab, see
+    // watchPressure) and whether the computer runs on battery.
+    disposer.add(() => { this.watchPressure(true); });
     const nav = /** @type {any} */ (navigator);
     if (nav.getBattery) {
       nav.getBattery().then((b) => {
@@ -594,16 +592,31 @@ class UsageSession {
   }
 
   setPressure(state) {
-    const now = performance.now();
-    if (this.pressure) this.pressureMs[this.pressure.state] = (this.pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
-    this.pressure = ['nominal', 'fair', 'serious', 'critical'].includes(state) ? { state, since: now } : null;
+    this.pressure = ['nominal', 'fair', 'serious', 'critical'].includes(state) ? state : null;
+  }
+
+  // CPU pressure is watched while the video plays in a visible tab, and not otherwise
+  // (paused or hidden: not what watching costs). stop: the viewing is over.
+  watchPressure(stop) {
+    const want = !stop && !this.x.video.paused && !document.hidden;
+    if (want === !!this.pressureObs) return;
+    if (!want) {
+      try { this.pressureObs.disconnect(); } catch (e) { /* gone */ }
+      this.pressureObs = null;
+      this.pressure = null;
+      return;
+    }
+    const PO = /** @type {any} */ (self).PressureObserver;
+    if (typeof PO !== 'function') return;
+    try {
+      const po = new PO((records) => { try { if (this.pressureObs === po) this.setPressure(records[records.length - 1].state); } catch (e) { /* not counted */ } });
+      po.observe('cpu', { sampleInterval: TELEMETRY_PRESSURE_SAMPLE_MS }).catch(() => {});
+      this.pressureObs = po;
+    } catch (e) { /* not available */ }
   }
 
   setBattery(onBattery) {
-    const now = performance.now();
-    if (this.onBattery !== null) this.batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
     this.onBattery = onBattery;
-    this.batterySince = now;
   }
 
   // From usageNote (00-util.js).
@@ -632,7 +645,7 @@ class UsageSession {
     const conds = [
       video.paused ? 'paused' : 'playing',
       'rate:' + video.playbackRate,
-      'cpu:' + (this.pressure ? this.pressure.state : 'unknown'),
+      'cpu:' + (this.pressure || 'unknown'),
       'power:' + (this.onBattery === null ? 'unknown' : this.onBattery ? 'battery' : 'ac'),
     ];
     for (const k of conds) st.cond[k] = (st.cond[k] || 0) + 1;
@@ -663,6 +676,11 @@ class UsageSession {
         this.byLayout.set(l, (this.byLayout.get(l) || 0) + dt);
         const h = this.x.height ? this.x.height() : 0;
         if (h) this.byHeight.set(h, (this.byHeight.get(h) || 0) + dt);
+        if (this.pressure && !document.hidden) {
+          const m = this.pressureMs[bgWork.n > 0 ? 'bg' : 'idle'];
+          m[this.pressure] = (m[this.pressure] || 0) + dt;
+        }
+        if (this.onBattery !== null) this.powerMs[this.onBattery ? 'battery' : 'ac'] += dt;
       }
     }
     this.lastTick = v.paused ? 0 : now;
@@ -725,11 +743,7 @@ class UsageSession {
       return r <= fast ? TELEMETRY_INPUT_MIN_MS : sig2(timed[r - fast - 1]);
     };
     const slow = timed.filter((ms) => ms > TELEMETRY_SLOW_INPUT_MS).length;
-    const pressureMs = Object.assign({}, this.pressureMs);
-    if (this.pressure) pressureMs[this.pressure.state] = (pressureMs[this.pressure.state] || 0) + now - this.pressure.since;
-    const batteryMs = Object.assign({}, this.batteryMs);
-    if (this.onBattery !== null) batteryMs[this.onBattery ? 'yes' : 'no'] += now - this.batterySince;
-    const batteryKnown = batteryMs.yes + batteryMs.no;
+    const power = this.powerMs;
     let watched = 0;
     try { for (const [a, b] of x.played ? x.played() : []) watched += Math.max(0, b - a); } catch (e) { watched = 0; }
     const s = {
@@ -737,6 +751,12 @@ class UsageSession {
       // Watching
       fromLoad: this.fromLoad,
       readyMs: Math.round(this.readyMs),
+      // How the script started (00-boot.js): the way in, the page's state when it ran, the
+      // time from then until the player was shown, the original's watch reports stopped.
+      bootPath: this.fromLoad ? boot.path || undefined : undefined,
+      injectState: this.fromLoad ? boot.readyState : undefined,
+      bootMs: this.fromLoad && boot.readyAt ? Math.round(boot.readyAt - boot.at) : undefined,
+      blockedReports: this.fromLoad && boot.path === 'takeover' ? boot.blocked : undefined,
       firstFrameMs: this.firstFrameMs == null ? undefined : this.firstFrameMs,
       seekN: n('seek'), seekMs50: q('seek', 0.5), seekMs90: q('seek', 0.9),
       rebufferN: this.rebufferN,
@@ -756,8 +776,9 @@ class UsageSession {
       longTasksPerMin: visibleMs > 60000 ? Math.round(this.longTasks / (visibleMs / 60000) * 10) / 10 : undefined,
       droppedPct: total > 0 ? Math.round(dropped / total * 10000) / 100 : undefined,
       heapMb: this.heap ? Math.round(this.heap / 1e5) / 10 : undefined,
-      pressure: shares(pressureMs),
-      batteryPct: batteryKnown > 0 ? sig2((batteryMs.yes / batteryKnown) * 100) : undefined,
+      pressureBg: shares(this.pressureMs.bg),
+      pressureIdle: shares(this.pressureMs.idle),
+      power: power.ac > 0 && power.battery > 0 ? 'mixed' : power.ac > 0 ? 'ac' : power.battery > 0 ? 'battery' : undefined,
       // Background analyses
       streamMbPerHour: this.playMs >= 60000 ? sig2(this.streamBytes / 1e6 / (this.playMs / 3.6e6)) : undefined,
       bgMbPerHour: dur > 60 ? sig2(this.bgBytes / 1e6 / (dur / 3600)) : undefined,

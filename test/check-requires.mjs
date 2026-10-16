@@ -1,7 +1,7 @@
-// Every @require in src/meta.txt must carry a SHA-256 hash (#sha256-<base64>, checked by
-// Tampermonkey) that matches the file the CDN serves now, and so must every library file
-// loaded when first needed (LIB_SHA256 in src/04-libs.js, hex; the player checks these
-// itself). Needs the network (CI runs it).
+// Every library file loaded when first needed (LIB_SHA256 in src/04-libs.js, hex; the
+// player checks these itself, hls.js included) must match the file the CDN serves now, and
+// so must any @require in src/meta.txt, which must carry a SHA-256 hash (#sha256-<base64>;
+// there is none since 0.22.0, but one added later is checked). Needs the network (CI runs it).
 //   npm run check-requires
 //
 // Two kinds of failure are told apart: a file that could not be downloaded (no answer, a
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const REQUIRE_TRIES = 4;                  // attempts per file
 const REQUIRE_PAUSE_MS = [2000, 5000, 10000];   // pauses between them
-const REQUIRE_TIMEOUT_MS = 30000;         // one attempt; hls.js is about 400 KB
+const REQUIRE_TIMEOUT_MS = 30000;         // one attempt; the largest file (a Tesseract language) is a few MB
 
 // The files to check: [{ url, want, enc ('base64' | 'hex') }], or { error } for a
 // malformed @require.
@@ -59,7 +59,6 @@ export async function checkFile(file, fetchFn, sleep, tries = REQUIRE_TRIES) {
 export async function checkAll(files, fetchFn, sleep, out) {
   let mismatch = 0;
   let network = 0;
-  if (!files.some((f) => f.enc === 'base64' || f.error)) { out.error('no @require found'); mismatch++; }
   if (!files.some((f) => f.enc === 'hex')) { out.error('no LIB_SHA256 entry found'); mismatch++; }
   for (const f of files) {
     if (f.error) { out.error(f.error); mismatch++; continue; }

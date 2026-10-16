@@ -164,8 +164,8 @@ async function bidiDriver(log) {
 const log = [];
 const driver = await (arg('protocol', 'cdp') === 'bidi' ? bidiDriver(log) : cdpDriver(log));
 
-const hlsUrl = /@require\s+(\S+hls[^\s]*)/.exec(readFileSync(join(root, 'src', 'meta.txt'), 'utf8'))[1];
-const hls = await (await fetch(hlsUrl)).text();
+// hls.js is not injected: the script loads it itself (pinned, hash checked) when a player
+// starts, as it does in every userscript manager.
 const lite = readFileSync(join(root, 'dist', 'lite-player-for-echo360.user.js'), 'utf8');
 const version = /@version\s+(\S+)/.exec(lite)[1];
 // --no-inject: test the script as installed in the browser's userscript manager (it must
@@ -173,7 +173,7 @@ const version = /@version\s+(\S+)/.exec(lite)[1];
 const inject = !process.argv.includes('--no-inject');
 await driver.addInitScript('if (/^https:\\/\\/echo360\\.net\\.au\\/(lesson\\/|section\\/[^/]+\\/home)/.test(location.href)) {\n'
   + 'try { localStorage.setItem("lite-player-for-echo360:debug", "true"); localStorage.setItem("lite-player-for-echo360:dryRun", "\\"public\\""); localStorage.setItem("lite-player-for-echo360:telemetryOff", "true"); } catch (e) {}\n'
-  + (inject ? hls + '\n;\n' + lite : '') + '\n}\n//# sourceURL=lite-player-for-echo360.user.js');
+  + (inject ? lite : '') + '\n}\n//# sourceURL=lite-player-for-echo360.user.js');
 
 const evalIn = (expr) => driver.evaluate(expr);
 const key = (k) => driver.key(k);

@@ -208,7 +208,7 @@ function fakeHls() {
 }
 
 // A lesson page whose requests to the Worker are recorded (everything else fails).
-function page(prefs) {
+function page(prefs, setup) {
   const w = new Window({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   w.Hls = fakeHls();
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
@@ -222,6 +222,9 @@ function page(prefs) {
     throw new Error('offline in tests');
   };
   w.document.body.innerHTML = '<div id="echo-player-root"></div>';
+  // The script runs at document start (the page has not started its own player yet).
+  Object.defineProperty(w.document, 'readyState', { value: 'loading', configurable: true });
+  if (setup) setup(w);
   w.eval(script);
   w.Echo = { echoPlayerV2FullApp: () => {} };
   w.eval('Echo["echoPlayerV2FullApp"](' + JSON.stringify(boot) + ')');
@@ -366,10 +369,11 @@ test('telemetry worker: the newer fields keep only known keys and two significan
   const r = await worker.fetch(post('/v1/events', {
     uid,
     events: [
-      { k: 'env', v: '1.0.0', gpuVendor: 'nvidia', gpuArch: 'ampere', hw720: true, arch: 'arm', bitness: 64, osV: 15, charging: false, timerUs: 100.4, gpuF16: true },
+      { k: 'env', v: '1.0.0', gpuVendor: 'nvidia', gpuArch: 'ampere', hw720: true, arch: 'arm', bitness: 64, osV: 15, charging: false, timerUs: 100.4, gpuF16: true, model: 'SM-X710', manager: 'Stay' },
       {
         k: 'session', v: '1.0.0', sid: 'cccccccccccccccc', seekMs50: 123.456, inputMs90: 248.7,
-        quality: { 720: 87.5, 360: 12.5, '<b>': 1 }, pressure: { nominal: 90, fair: 10, hot: 5 },
+        quality: { 720: 87.5, 360: 12.5, '<b>': 1 }, pressureBg: { nominal: 90, fair: 10, hot: 5 }, pressureIdle: { nominal: 100 }, power: 'mixed',
+        bootPath: 'takeover', injectState: 'complete', bootMs: 412, blockedReports: 2,
         netErrors: { 403: 2, network: 1, 'G_abc': 3 }, streamErrors: { fragLoadError: 4, 'frag load': 1 },
         guardOff: { 'slide chapters': 1, 'Jane Doe': 1 },
         lumaV: 1, lumaP10: 0.8123, lumaP50: 1.234, lumaN: 3,
@@ -381,12 +385,14 @@ test('telemetry worker: the newer fields keep only known keys and two significan
   assert.equal(r.status, 200);
   const db = env.DB.db;
   const e = db.prepare('SELECT * FROM env').get();
-  assert.deepEqual([e.gpu_vendor, e.gpu_arch, e.hw720, e.arch, e.bitness, e.os_v, e.charging, e.timer_us, e.gpu_f16], ['nvidia', 'ampere', 1, 'arm', 64, 15, 0, 100, 1]);
+  assert.deepEqual([e.gpu_vendor, e.gpu_arch, e.hw720, e.arch, e.bitness, e.os_v, e.charging, e.timer_us, e.gpu_f16, e.model, e.manager], ['nvidia', 'ampere', 1, 'arm', 64, 15, 0, 100, 1, 'SM-X710', 'Stay']);
   const s = db.prepare('SELECT * FROM sessions').get();
   assert.equal(s.seek_ms50, 120);
   assert.equal(s.input_ms90, 250);
   assert.deepEqual(JSON.parse(s.quality), { 720: 88, 360: 13 });
-  assert.deepEqual(JSON.parse(s.pressure), { nominal: 90, fair: 10 });
+  assert.deepEqual(JSON.parse(s.pressure_bg), { nominal: 90, fair: 10 });
+  assert.deepEqual([JSON.parse(s.pressure_idle), s.power], [{ nominal: 100 }, 'mixed']);
+  assert.deepEqual([s.boot_path, s.inject_state, s.boot_ms, s.blocked_reports], ['takeover', 'complete', 412, 2]);
   assert.deepEqual(JSON.parse(s.net_errors), { 403: 2, network: 1 });
   assert.deepEqual(JSON.parse(s.stream_errors), { fragLoadError: 4 });
   // "Jane Doe" fits the pattern of a feature name but not a known one... it is lower-case
@@ -497,6 +503,66 @@ test('telemetry: a viewing counts failures, downloads, skips, interactions and t
   pg.w.close();
 });
 
+test('telemetry: CPU pressure is watched only while playing in a visible tab, with and without background analyses; power over the time played', async () => {
+  const observers = [];
+  let battery = null;
+  const pg = page(null, (w) => {
+    w.PressureObserver = class {
+      constructor(cb) { this.cb = cb; this.on = false; observers.push(this); }
+      observe() { this.on = true; return Promise.resolve(); }
+      disconnect() { this.on = false; }
+    };
+    battery = { charging: true, fns: [], addEventListener(t, f) { this.fns.push(f); }, removeEventListener() {} };
+    Object.defineProperty(w.navigator, 'getBattery', { value: () => Promise.resolve(battery), configurable: true });
+  });
+  const p = pg.player();
+  await settle();
+  const u = p.usage;
+  const bg = pg.dev().bgWork;
+  const watching = () => observers.filter((o) => o.on);
+  const play = (on) => {
+    Object.defineProperty(p.video, 'paused', { value: !on, configurable: true });
+    p.video.dispatchEvent(new pg.w.Event(on ? 'playing' : 'pause'));
+  };
+  const hide = (hidden) => {
+    Object.defineProperty(pg.w.document, 'hidden', { value: hidden, configurable: true });
+    pg.w.document.dispatchEvent(new pg.w.Event('visibilitychange'));
+  };
+  const played = (ms) => { u.lastTick = pg.w.performance.now() - ms; u.tick(); };
+  assert.equal(watching().length, 0, 'not watched while paused');
+  play(true);
+  assert.equal(watching().length, 1, 'watched while playing');
+  const running = bg.n;                           // the page's own analyses, set here instead
+  bg.n = 0;
+  watching()[0].cb([{ state: 'serious' }]);
+  played(1000);                                   // no analysis running: serious
+  bg.n = 1;
+  watching()[0].cb([{ state: 'nominal' }]);
+  played(1000);                                   // an analysis running: nominal
+  bg.n = 0;
+  battery.charging = false;
+  for (const f of battery.fns) f();
+  played(500);                                    // none running: nominal; on battery
+  hide(true);
+  assert.equal(watching().length, 0, 'not watched in a hidden tab');
+  played(1000);                                   // hidden: no pressure counted (power is)
+  hide(false);
+  assert.equal(watching().length, 1, 'watched again when visible');
+  play(false);
+  assert.equal(watching().length, 0, 'not watched once paused');
+  const s = JSON.parse(JSON.stringify(u.summary()));
+  assert.deepEqual(s.pressureIdle, { serious: 67, nominal: 33 });
+  assert.deepEqual(s.pressureBg, { nominal: 100 });
+  assert.equal(s.power, 'mixed');
+  assert.equal(s.pressure, undefined);
+  assert.equal(s.batteryPct, undefined);
+  bg.n = running;
+  assertAccepted(s);
+  p.destroy();
+  await pg.w.happyDOM.abort();
+  pg.w.close();
+});
+
 test('telemetry: a send that is given up is counted, and told with the viewing', async () => {
   const pg = page();
   const p = pg.player();
@@ -510,22 +576,34 @@ test('telemetry: a send that is given up is counted, and told with the viewing',
   pg.w.close();
 });
 
-test('telemetry queries: computers in tiers by their fixed-step time, and how well the steps follow the real work', () => {
+test('telemetry queries: devices in tiers by their fixed-step time, and how well the steps follow the real work', () => {
   const db = fakeD1().db;
   const now = Date.now();
-  const add = db.prepare("INSERT INTO sessions (uid, at, sid, version, play_sec, luma_v, luma_p10, dropped_pct, input_ms90, scan_frame_ms50, ocr_mpx_ms50, pressure) VALUES ('u', ?, ?, '1.0.0', 600, ?, ?, ?, ?, ?, ?, ?)");
-  // Eight viewings, slower computers dropping more frames; one of an older step version
-  // (left out), whose time would otherwise land in the fastest tier.
-  for (let i = 1; i <= 8; i++) add.run(now, 's' + i, 2, i, i * 0.5, 20 * i, 3 * i, 100 / i, i > 6 ? '{"nominal":50,"serious":30,"critical":20}' : '{"nominal":100}');
-  add.run(now, 'old', 1, 0.01, 99, 999, 1, 1, null);
+  const add = db.prepare("INSERT INTO sessions (uid, at, sid, version, play_sec, luma_v, luma_p10, loud_v, loud_p10, dropped_pct, input_ms90, scan_frame_ms50, ocr_mpx_ms50, pressure_bg, pressure_idle) VALUES (?, ?, ?, '1.0.0', 600, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)");
+  // Eight devices, slower ones dropping more frames. Each has a viewing with the steps
+  // timed and one without (the steps are sparse: it still counts for its device).
+  for (let i = 1; i <= 8; i++) {
+    const hot = i > 6 ? '{"nominal":50,"serious":30,"critical":20}' : '{"nominal":100}';
+    add.run('d' + i, now, 'a' + i, 2, i, i * 10, i * 0.5, 20 * i, 3 * i, 100 / i, hot, '{"nominal":100}');
+    add.run('d' + i, now, 'b' + i, null, null, null, i * 0.5, 20 * i, null, null, null, null);
+  }
+  // An older step version (left out), whose time would otherwise make d1 the slowest; and
+  // a device's speed is its median: one odd viewing does not move it to another tier.
+  add.run('d1', now, 'old', 1, 99, null, 1, 1, null, null, null, null);
+  add.run('d2', now, 'odd', 2, 50, 20, 1, 40, null, null, null, null);
+  add.run('d2', now, 'even', 2, 2, 20, 1, 40, null, null, null, null);
   const dir = join(root, 'telemetry-worker', 'queries');
   const tiers = db.prepare(readFileSync(join(dir, 'device-tiers.sql'), 'utf8')).all();
   const row = (tier, metric) => tiers.find((r) => r.tier === tier && r.metric === metric);
-  assert.deepEqual([row(1, 'dropped_pct').sessions, row(1, 'dropped_pct').luma_p10_from, row(1, 'dropped_pct').luma_p10_to, row(1, 'dropped_pct').median], [2, 1, 2, 0.5]);
+  const t1 = row(1, 'dropped_pct');
+  assert.deepEqual([t1.devices, t1.sessions, t1.luma_p10_from, t1.luma_p10_to], [2, 7, 1, 2]);
+  assert.equal(row(1, 'device_loud_p10').median, 10);
   assert.equal(row(4, 'dropped_pct').median, 3.5);
-  assert.equal(row(4, 'cpu_serious_pct').median, 50);
-  assert.equal(row(1, 'cpu_serious_pct').median, 0);
-  const rho = Object.fromEntries(db.prepare(readFileSync(join(dir, 'work-vs-steps.sql'), 'utf8')).all().map((r) => [r.pair, r.spearman]));
-  assert.equal(rho['luma~scan_frame'], 1, 'same order');
-  assert.equal(rho['luma~ocr_mpx'], -1, 'opposite order');
+  assert.equal(row(4, 'cpu_serious_pct_bg').median, 50);
+  assert.equal(row(4, 'cpu_serious_pct_idle').median, 0);
+  assert.equal(row(1, 'cpu_serious_pct_bg').median, 0);
+  const rho = Object.fromEntries(db.prepare(readFileSync(join(dir, 'work-vs-steps.sql'), 'utf8')).all().map((r) => [r.pair, [r.devices, r.spearman]]));
+  assert.deepEqual(rho['luma~scan_frame'], [8, 1], 'same order');
+  assert.deepEqual(rho['luma~ocr_mpx'], [8, -1], 'opposite order');
+  assert.deepEqual(rho['loud~luma'], [8, 1]);
 });

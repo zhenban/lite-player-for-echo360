@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.22.0
 New:
 - **Anonymous usage data, on by default.** The player sends a short summary of each viewing (how smooth playback was, which features were used, how well the slide and silence analyses worked), errors with names, addresses and numbers removed, and once a day the browser and computer type. It never sends your name, school account, recordings, notes, discussion, transcripts or files, and your address is not stored. Settings → Usage data turns it off at once, shows everything stored for you (and downloads it), deletes it, or gives you a new ID. Details are in the README under "Anonymous usage data". Because of this, the script now asks the script manager for permission to connect to one server (lite-player-telemetry.zhenban.workers.dev). The summary also says how watching went (time to the first picture, seeking, buffering, video quality, how well the two views stay in step), how quickly the player answered clicks and keys, how busy the computer was, and how fast the analyses ran on it, measured from the work they do anyway (nothing extra is run). Times are rounded and sent only as summaries.
 
+- **Start-up on iPad, and with script managers that start late.** Some managers (Stay on iPadOS) start the script after the page has already started Echo360's own player. The script now takes the page over: it stops the original player (no second sound, no further downloads), carries on where it was and whether it was playing, and keeps the original from reporting the viewing a second time. "Switch to the original player" still works and lets it report again. Before, the original player simply stayed, and the check for a page it does not recognise never ran.
+- **Supported browsers** are now stated in the README: Chrome, Edge and Firefox on computers and Firefox on Android; Safari on iPadOS 15.4 or later as best effort; not iPhone. A browser that is too old, or an iPhone, keeps the original player with a note saying why, instead of failing half way.
+- When the original player is used, the note says why and has a "Copy diagnostics" button; the diagnostics say how the script started (before the page's player, by taking it over, or not) and how long the player took to appear.
+- hls.js is now loaded only when a player is about to start, and its SHA-256 hash is checked by the script itself in every script manager (Violentmonkey did not check it before).
+
 Fixes:
+- The player downloaded up to ten minutes of video ahead in each view (at the start and after every jump), instead of the half minute intended, because Echo360's playlists declare far lower bitrates than the videos use. Besides the wasted data, this could fill the browser's video buffer ("bufferFullError"; playback recovered by itself). It now buffers at most a minute ahead.
+- Following the slide PDF: a slide that is mostly a picture or a screenshot (a short title and some unreadable text in the picture) is now recognised in lectures of clean text slides; before, it was taken for "not a slide".
 - A recording that opens at your resume point no longer switches to the camera and back ("back to your layout") on the way, when it starts with an empty screen. (Since 0.21.0.)
 - With automatic silence skipping on, a recording that starts with silence no longer skips from 0:00 and loses your resume point.
 - On touch screens, the buttons in dialogs and panels (Close, Add note, Retry…), the small text buttons (Like, Reply, Manage tags…) and the small drop-down lists are now at least 44 px high, so they are easier to tap. Before, they were 21 to 32 px.

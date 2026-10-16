@@ -384,7 +384,7 @@ class SilenceAnalyzer {
     }
     if (!this.masterUrl) { this.fail('noAudio'); return; }
     this.source = 'audio';
-    this.runAudio().catch((e) => {
+    bgWork.track(this.runAudio()).catch((e) => {
       if (this.ac.signal.aborted) return;
       log.warn('silence analysis stopped:', e && e.message ? e.message : e);
       this.fail('error');

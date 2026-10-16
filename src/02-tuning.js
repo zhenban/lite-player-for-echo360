@@ -82,6 +82,13 @@ const EVIDENCE_GRID = 101;
 const EVIDENCE_MIN_SD = 1 / (EVIDENCE_GRID - 1);
 const EVIDENCE_FLOOR = -25;
 const EVIDENCE_EM_ROUNDS = 200;
+// The share of right pictures the fitted "right" distribution does not describe: a slide
+// mostly made of a photo or a screenshot (OCR noise, words the PDF does not have), a page
+// with a few words. Lectures of clean slides fit a very narrow "right" distribution; without
+// this, such a page reads as further from it than from a wrong page and is taken for "not
+// a slide" (COMP1521 2026-06-01: two such pages, 70 s). Chosen on the labelled lectures and
+// COMP1521 (PROGRESS.md, 2026-10-15): the same results from 0.02 to 0.1.
+const EVIDENCE_OUTLIER = 0.05;
 // How lecturers move through slides: prior chances for the sequence model, per step from
 // one picture to the next different one (so independent of how often the screen is
 // sampled). They describe lecturing, not a course: mostly staying or moving on,
@@ -170,6 +177,12 @@ const STREAM_START_BPS = () => {
   return c && c.downlink > 0 ? c.downlink * 1e6 : 5e6;
 };
 const STREAM_MAX_BUFFER_SEC = 30;      // ahead of the playhead (hls.js default)
+// The most hls.js may buffer ahead. It buffers until maxBufferSize (60 MB) at the bitrate a
+// playlist declares, and Echo360 declares far less than its streams use (29 kbps for 117,
+// measured 2026-10-15 on six lectures): without this, its own cap of 600 s, so ten minutes of
+// each view downloaded at the start and after every jump, and the browser's SourceBuffer
+// limit reached (bufferFullError). Twice STREAM_MAX_BUFFER_SEC: room for a slow patch.
+const STREAM_MAX_AHEAD_SEC = 60;
 const STREAM_BACK_BUFFER_SEC = 60;     // kept behind it, for short jumps back
 // Share of the measured bandwidth the quality may use (stay below, step up): hls.js'
 // defaults for the main view; the second view leaves room for it.
@@ -227,6 +240,7 @@ const LIST_CONCURRENT = 2;             // course page: player requests at a time
 const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
+const HLS_LOAD_TIMEOUT_MS = 20000;    // hls.js (about 600 KB from jsDelivr, cached afterwards) not loaded by then: the original player is used (a slow mobile link of 0.3 Mbit/s still gets it in time)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 
 // ---- anonymous usage data (87-telemetry.js) ----

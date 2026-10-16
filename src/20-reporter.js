@@ -71,9 +71,12 @@ class Reporter {
   }
 
   post(path, body, retried) {
-    return fetch(this.info.gatewayUrl + path, {
-      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body),
-    }).then((r) => {
+    // OWN_REQUEST: ours, let through while the original player's reports are stopped
+    // (15-takeover.js).
+    const sent = fetch(this.info.gatewayUrl + path, /** @type {RequestInit} */ ({
+      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), [OWN_REQUEST]: true,
+    }));
+    return sent.then((r) => {
       if (r.status === 401 && !retried) {
         return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false) })
           .then((rr) => this.saveToken(rr))

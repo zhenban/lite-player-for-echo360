@@ -186,7 +186,7 @@ class SlideTextReader {
   }
 
   start() {
-    this.run().catch((e) => {
+    bgWork.track(this.run()).catch((e) => {
       if (this.ac.signal.aborted) return;
       log.warn('slide text:', e && e.message ? e.message : e);
       this.state = 'unavailable';
@@ -235,9 +235,9 @@ class SlideTextReader {
     if (this.done() === n) { this.state = 'done'; if (this.shared) this.shared.shareLumas(false); this.onChange(); return; }
     this.state = 'reading';
     this.onChange();
-    const canvas = new OffscreenCanvas(this.reader.info.width, this.reader.info.height);
+    const canvas = makeCanvas(this.reader.info.width, this.reader.info.height);
     const g = canvas.getContext('2d');
-    const small = new OffscreenCanvas(THUMB_W, THUMB_H).getContext('2d', { willReadFrequently: true });
+    const small = makeCanvas(THUMB_W, THUMB_H).getContext('2d', { willReadFrequently: true });
     // The previous sample of this pass, and the thumbnail of the last one whose text was
     // read: changes are measured against that, so that slow changes (ink added a little at
     // a time) still add up.
@@ -284,7 +284,7 @@ class SlideTextReader {
         this.stats.same++;
       } else {
         fails = 0;
-        const blob = await canvas.convertToBlob({ type: 'image/png' });
+        const blob = await canvasBlob(canvas, 'image/png');
         const a = performance.now();
         const text = await this.recognize(blob);
         const ms = performance.now() - a;
