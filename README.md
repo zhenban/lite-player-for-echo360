@@ -113,6 +113,7 @@ On by default; **Settings (⋮) > Usage data** turns it off, and sending stops a
   Times and speeds are rounded to two significant digits, and only summaries (medians, percentiles, counts) are sent, never series of values.
 - **What is never sent:** your name, account, student number or e-mail; which courses or recordings you watch, their titles or addresses; anything you write (notes, tags, discussion); captions or slide content; your IP address.
 - **Where:** a Cloudflare Worker and D1 database run for this project (code in [`telemetry-worker/`](telemetry-worker/)). The Worker keeps only the listed fields and drops everything else. It keeps the country, region and network provider Cloudflare derives from the request, never the IP address; the address only serves as the key of a one-minute rate-limit counter. Requests are not logged. The data is kept with no automatic deletion.
+- **Who reads it:** only the maintainer, on a private read-only dashboard (code in [`telemetry-admin/`](telemetry-admin/)) behind Cloudflare Access with a Google sign-in. It shows totals only, never one user's data or id.
 - **Who you are to it:** on first use the script makes a random secret, kept by your script manager and never shown or exported. Your data is stored under the SHA-256 hash of that secret. Viewing or deleting needs the secret itself, so someone who learns the hash can neither read nor delete your data.
 - **Your data:** **Settings > Usage data** has *View my data* (a table, and a JSON download), *Delete all my data* (asks first, then deletes at once on the server) and *Reset my ID* (a new secret; it offers to delete the old data first, since the old ID can no longer be used afterwards).
 - Greasy Fork's label for this is `@antifeature tracking`.
@@ -134,6 +135,13 @@ npm run build      # src/*.js -> dist/lite-player-for-echo360.user.js (readable,
 npm test           # unit and whole-page tests
 npm run ci         # lint, type check, tests, dist/ in sync (what GitHub Actions runs)
 ```
+
+Besides the userscript, the repository holds two Cloudflare Workers for the anonymous usage data, each with its own `package.json`, tests and README:
+
+- [`telemetry-worker/`](telemetry-worker/): receives the usage data and stores the listed fields in D1. Its field checks are tested from the root (`test/telemetry.test.mjs`).
+- [`telemetry-admin/`](telemetry-admin/): the private read-only dashboard over that data (`cd telemetry-admin && npm install && npm run ci`).
+
+GitHub Actions runs each check as its own job (lint, type check, tests, `@require` hashes, `dist/` in sync, dashboard), so one failure does not hide the others.
 
 Only edit `src/` (`dist/` is generated). How the code is organised: [ARCHITECTURE.md](ARCHITECTURE.md).
 

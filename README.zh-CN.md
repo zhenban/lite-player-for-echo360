@@ -113,6 +113,7 @@
   时间和速度都四舍五入到两位有效数字，只发送汇总值（中位数、百分位数、次数），不发送逐条数据。
 - **从不发送：**姓名、账号、学号、邮箱；看了哪些课程或录像、它们的标题或地址；你写的任何内容（笔记、标签、讨论）；字幕或幻灯片内容；你的 IP 地址。
 - **存在哪里：**本项目自己的 Cloudflare Worker 和 D1 数据库（代码在 [`telemetry-worker/`](telemetry-worker/)）。Worker 只保存上面列出的字段，其余一律丢弃。它保存 Cloudflare 根据请求得出的国家、地区和网络运营商，不保存 IP 地址；IP 地址只用作一分钟限流计数器的键。不记录请求日志。数据长期保存，不自动删除。
+- **谁能看：**只有维护者，通过一个只读的私人看板（代码在 [`telemetry-admin/`](telemetry-admin/)），前面有 Cloudflare Access 和 Google 登录。看板只显示汇总数字，不显示任何单个用户的数据或 ID。
 - **怎样认出你：**首次使用时脚本生成一个随机密钥，由脚本管理器保存，从不显示或导出。你的数据以这个密钥的 SHA-256 哈希为 ID 保存。查看和删除需要密钥本身，所以别人即使知道你的 ID，也无法查看或删除你的数据。
 - **你的数据：****设置 → 使用数据**里有“查看我的数据”（表格，可下载 JSON）、“删除我的全部数据”（先确认，确认后立即从服务器删除）和“重置 ID”（生成新密钥；重置后旧 ID 无法再使用，所以会先问你要不要删除旧数据）。
 - Greasy Fork 对此的标注是 `@antifeature tracking`。
@@ -134,6 +135,13 @@ npm run build      # src/*.js -> dist/lite-player-for-echo360.user.js（可读�
 npm test           # 单元测试和整页测试
 npm run ci         # 代码检查、类型检查、测试、dist/ 与源码一致（GitHub Actions 运行的就是这些）
 ```
+
+除了用户脚本，仓库里还有两个用于匿名使用数据的 Cloudflare Worker，各有自己的 `package.json`、测试和说明：
+
+- [`telemetry-worker/`](telemetry-worker/)：接收使用数据，把列出的字段存进 D1。字段检查的测试在根目录（`test/telemetry.test.mjs`）。
+- [`telemetry-admin/`](telemetry-admin/)：这些数据的私人只读看板（`cd telemetry-admin && npm install && npm run ci`）。
+
+GitHub Actions 把每项检查作为单独的任务运行（代码检查、类型检查、测试、`@require` 哈希、`dist/` 一致、看板），一项失败不会把其他项一起标红。
 
 只修改 `src/`（`dist/` 是生成的）。代码结构说明：[ARCHITECTURE.md](ARCHITECTURE.md)（英文）。
 

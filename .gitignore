@@ -5,8 +5,8 @@ M9-PLAN.md
 PROGRESS.md
 FEATURES.md
 AI-ENGINES.md
-# Local test tooling
-dev/
+# Local test tooling (the top-level folder only: telemetry-admin/dev/ is published)
+/dev/
 node_modules/
 # Course slides used for local testing (not ours to publish)
 lecture-slides/
