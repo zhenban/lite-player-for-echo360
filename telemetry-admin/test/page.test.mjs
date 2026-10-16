@@ -17,6 +17,14 @@ test('feature and setting names cover exactly the Worker\'s lists, in both langu
   }
 });
 
+test('every slide source and stop reason the Worker accepts has a name', () => {
+  // As in telemetry-worker/src/schema.js (slideSrc, slideStop).
+  const values = { src: ['frames', 'thumbs', 'none'], stop: ['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'] };
+  for (const lang of ['en', 'zh']) {
+    for (const [prefix, list] of Object.entries(values)) for (const v of list) assert.ok(STRINGS[lang][prefix + '_' + v], lang + ' ' + prefix + '_' + v);
+  }
+});
+
 test('every English text has a Chinese one', () => {
   const base = (k) => k.replace(/_(one|other)$/, '');
   const zh = new Set(Object.keys(STRINGS.zh).map(base));

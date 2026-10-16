@@ -11,10 +11,17 @@ import { readFileSync, readdirSync } from 'node:fs';
 export const OWNER_UID = 'a'.repeat(63) + '1';
 const DAY = 86400000;
 
-// Applies the telemetry Worker's migrations (the real schema) to an empty SQLite database.
+// Applies the telemetry Worker's migrations (the real schema) to an empty SQLite database,
+// then any copy in dev/migrations/ of one the Worker has but this branch does not yet (a
+// copy is skipped once the Worker's own file of the same name is here).
 export function applySchema(db) {
   const dir = new URL('../../telemetry-worker/migrations/', import.meta.url);
-  for (const f of readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) db.exec(readFileSync(new URL(f, dir), 'utf8'));
+  const own = readdirSync(dir).filter((x) => x.endsWith('.sql'));
+  const local = new URL('./migrations/', import.meta.url);
+  const files = [...own.map((f) => new URL(f, dir)),
+    ...readdirSync(local).filter((x) => x.endsWith('.sql') && !own.includes(x)).map((f) => new URL(f, local))];
+  files.sort((a, b) => a.pathname.split('/').pop().localeCompare(b.pathname.split('/').pop()));
+  for (const f of files) db.exec(readFileSync(f, 'utf8'));
 }
 
 function rng(start) {
@@ -67,7 +74,8 @@ function device(r, uid, i) {
     screen_w: mobile ? 390 : weighted(r, [[1280, 1], [1440, 3], [1536, 2], [1920, 4], [2560, 1]]), screen_h: mobile ? 844 : 900,
     dpr: mobile ? 3 : weighted(r, [[1, 2], [1.25, 1], [2, 3]]), cores, mem_gb: mobile ? 4 : weighted(r, [[8, 6], [4, 2], [2, 1]]),
     gpu_vendor: os === 'macOS' || os === 'iOS' ? 'apple' : weighted(r, [['intel', 4], ['nvidia', 3], ['amd', 2], ['qualcomm', 1]]),
-    webgpu: browser === 'Firefox' ? 0 : 1, webcodecs: 1, hw720: 1, hw1080: r() < 0.9 ? 1 : 0, arch: os === 'macOS' ? 'arm' : 'x86',
+    // Some iPads still on iPadOS 15 (no WebCodecs).
+    webgpu: browser === 'Firefox' ? 0 : 1, webcodecs: os === 'iOS' && parseInt(uid.slice(-1), 16) % 3 === 0 ? 0 : 1, hw720: 1, hw1080: r() < 0.9 ? 1 : 0, arch: os === 'macOS' ? 'arm' : 'x86',
     country: 'AU', region: weighted(r, [['Queensland', 7], ['New South Wales', 2], ['Victoria', 1]]),
     asorg: weighted(r, [['University Network', 5], ['Telstra', 3], ['Optus', 2], ['TPG', 1]]),
     speed: mobile ? 1.6 : cores <= 4 ? 1.4 : 1, // how slow the device is (1 = typical)
@@ -82,8 +90,9 @@ function session(r, d, at, version, frontend, extra = {}) {
   const changed = PREFS.filter(() => r() < 0.25);
   const slow = d.speed;
   const problem = r() < 0.06;
+  const sid = hex(r, 16);
   return {
-    uid: d.uid, at, sid: hex(r, 16), version, play_sec: play, open_sec: play + Math.round(r() * 600),
+    uid: d.uid, at, sid, version, play_sec: play, open_sec: play + Math.round(r() * 600),
     long_tasks_pm: two((0.3 + r() * 1.2) * slow), dropped_pct: two((0.2 + r() * 1.1) * slow * slow), heap_mb: two(90 + r() * 120),
     first_frame_ms: Math.round((500 + r() * 900) * slow), rebuffer_n: Math.floor(r() * 3), rebuffer_pct: two(r() * 0.8),
     seek_n: 5 + Math.floor(r() * 30), seek_ms50: two(180 + r() * 200), seek_ms90: two((400 + r() * 600) * slow),
@@ -101,8 +110,23 @@ function session(r, d, at, version, frontend, extra = {}) {
     net_errors: r() < 0.08 ? JSON.stringify({ [pick(r, ['timeout', '5xx', 'network'])]: 1 }) : null,
     renew_ok: Math.floor(play / 1800), renew_fail: r() < 0.02 ? 1 : 0, send_fail: r() < 0.03 ? 1 : 0,
     country: d.country, region: d.region, asorg: d.asorg,
+    ...slides(d, version, sid),
     ...extra,
   };
+}
+
+// Where the slide chapters came from (reported from 0.23.0): keyframes, unless the browser
+// cannot decode them (no WebCodecs; iPhone Safari's decoder giving no picture) or, now and
+// then, the scan stops on a network or decoder failure.
+function slides(d, version, sid) {
+  if (version !== '0.23.0') return {};
+  if (!d.webcodecs) return { slide_src: 'thumbs', slide_stop: 'noWebCodecs' };
+  if (d.browser === 'Safari' && d.mobile) return { slide_src: 'thumbs', slide_stop: 'noFrame' };
+  const k = parseInt(sid.slice(0, 4), 16) % 40;
+  if (k === 0) return { slide_src: 'thumbs', slide_stop: 'network' };
+  if (k === 1) return { slide_src: 'thumbs', slide_stop: 'decoder' };
+  if (k === 2) return { slide_src: 'none' };
+  return { slide_src: 'frames' };
 }
 
 function envRow(d, at, version) {

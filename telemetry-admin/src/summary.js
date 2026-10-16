@@ -68,7 +68,7 @@ export async function summary(db, filters, owners, now) {
   const exclude = filters.devices === 'others' ? JSON.stringify(owners) : '[]';
   const values = { from: filters.from, to: filters.to, prev: filters.prev, since: filters.since, version: filters.version, exclude, tz: filters.tz };
   const r = await run(db, ['overview', 'daily', 'versions', 'versionList', 'latest', 'devices', 'performance', 'perfByVersion',
-    'stability', 'problems', 'errors', 'features', 'changed', 'speeds', 'frontends', 'fallbackReasons', 'boot'], values);
+    'stability', 'problems', 'errors', 'features', 'changed', 'speeds', 'slides', 'frontends', 'fallbackReasons', 'boot'], values);
 
   const o = r.overview[0] || {};
   const st = r.stability[0] || {};
@@ -152,6 +152,8 @@ export async function summary(db, filters, owners, now) {
       used: r.features.map((f) => ({ feature: f.feature, users: num(f.users), uses: num(f.uses) })),
       changed: r.changed.map((c) => ({ setting: c.setting, users: num(c.users) })),
       speeds: r.speeds.map((s) => ({ speed: s.speed, sec: Math.round(num(s.sec)) })),
+      slideSources: r.slides.filter((x) => x.kind === 'src').map((x) => ({ source: x.bucket, sessions: num(x.sessions) })),
+      slideStops: r.slides.filter((x) => x.kind === 'stop').map((x) => ({ reason: x.bucket, sessions: num(x.sessions) })),
     },
     compat: {
       fallbacks, fallbackPct,

@@ -204,7 +204,7 @@ function build() {
   u.devicesSec = devices;
   u.dims = {};
   const dimList = h('div', { class: 'lists' });
-  for (const dim of ['browser', 'os', 'form', 'manager', 'screen', 'cores', 'memory', 'gpu', 'hwdecode', 'webgpu']) {
+  for (const dim of ['browser', 'os', 'form', 'manager', 'screen', 'cores', 'memory', 'gpu', 'hwdecode', 'webgpu', 'webcodecs']) {
     const list = barList({ compact: true });
     u.dims[dim] = list;
     dimList.append(h('div', { class: 'list' }, h('h4', { text: t('dim_' + dim) }), list.root));
@@ -253,9 +253,12 @@ function build() {
   u.bChanged = block('w-4', t('changedSettings'), u.changedBars.root);
   u.speedBars = barList({ compact: true, format: (v) => fmtDuration(v) });
   u.bSpeeds = block('w-4', t('speedsPlayed'), u.speedBars.root);
-  const featSide = h('div', { class: 'stack w-4' }, u.bChanged.root, u.bSpeeds.root);
-  u.bChanged.root.classList.remove('w-4');
-  u.bSpeeds.root.classList.remove('w-4');
+  u.slideSrcBars = barList({ compact: true, stacked: true });
+  u.slideStopBars = barList({ compact: true, stacked: true });
+  u.slideStopHead = h('h4', { class: 'sub-h', text: t('slideStops') });
+  u.bSlides = block('w-4', t('slideSources'), u.slideSrcBars.root, u.slideStopHead, u.slideStopBars.root);
+  const featSide = h('div', { class: 'stack w-4' }, u.bChanged.root, u.bSpeeds.root, u.bSlides.root);
+  for (const b of [u.bChanged, u.bSpeeds, u.bSlides]) b.root.classList.remove('w-4');
   features.grid.append(u.bFeatures.root, featSide);
 
   // Compatibility
@@ -306,7 +309,7 @@ const GPU_NAMES = { amd: 'AMD', nvidia: 'NVIDIA', intel: 'Intel', apple: 'Apple'
 const basedOn = (kind, n) => t('basedOn_' + kind, { n });
 const label = (dim, v) => {
   if (v == null) return t('unknown');
-  if (dim === 'form' || dim === 'screen' || dim === 'memory' || dim === 'hwdecode' || dim === 'webgpu') return t(dim + '_' + v);
+  if (dim === 'form' || dim === 'screen' || dim === 'memory' || dim === 'hwdecode' || dim === 'webgpu' || dim === 'webcodecs') return t(dim + '_' + v);
   if (dim === 'cores') return t('cores_n', { v });
   if (dim === 'gpu') return GPU_NAMES[v] || v.charAt(0).toUpperCase() + v.slice(1);
   if (dim === 'manager' && v === 'none') return t('unknown');
@@ -522,6 +525,12 @@ function render(d, animate) {
   const speedTotal = f.speeds.reduce((a, x) => a + x.sec, 0);
   ui.speedBars.update(f.speeds.slice().sort((a, b) => Number(a.speed) - Number(b.speed)).map((x) => ({ key: x.speed, label: t('speedX', { v: x.speed }), value: x.sec })), speedTotal, f.users < low);
   ui.bSpeeds.meta(basedOn('users', f.users), f.users > 0 && f.users < low, speedTotal ? '' : t('status_none'));
+  const slideTotal = f.slideSources.reduce((a, x) => a + x.sessions, 0);
+  ui.slideSrcBars.update(f.slideSources.map((x) => ({ key: x.source, label: t('src_' + x.source), value: x.sessions })), slideTotal, slideTotal < low);
+  ui.slideStopBars.update(f.slideStops.map((x) => ({ key: x.reason, label: t('stop_' + x.reason), value: x.sessions })), slideTotal, slideTotal < low);
+  ui.slideStopHead.hidden = !f.slideStops.length;
+  ui.slideStopBars.root.hidden = !f.slideStops.length;
+  ui.bSlides.meta(basedOn('views', slideTotal), slideTotal > 0 && slideTotal < low, slideTotal ? '' : t('noSlideSource'));
 
   // ---- Compatibility
   const loads = o.sessions + c.fallbacks;
