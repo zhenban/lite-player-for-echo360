@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { Window } from 'happy-dom';
+import { newWindow, closeWindow, patchProto, same } from './dom-guard.mjs';
 import { assemble } from '../build.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,8 +42,9 @@ function fakeHls() {
 //   inline      the page's inline bootstrap script is there (the text it was started with)
 //   hls         hls.js already on the page (else it is loaded, and fails: offline)
 //   ua, setup   a user agent; changes to the page before the script runs
-function page({ state = 'loading', started = false, react = true, inline = true, arg = bootText, hls = true, ua, setup } = {}) {
-  const w = new Window({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true, ...(ua ? { navigator: { userAgent: ua } } : {}) } });
+//   cdn         (url) => Promise of a Response: the CDN's answer for hls.js (default: offline)
+function page({ state = 'loading', started = false, react = true, inline = true, arg = bootText, hls = true, ua, setup, cdn } = {}) {
+  const w = newWindow({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true, ...(ua ? { navigator: { userAgent: ua } } : {}) } });
   if (hls) w.Hls = fakeHls();
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
   const sent = { fetch: [], xhr: [], beacon: [] };
@@ -51,10 +52,11 @@ function page({ state = 'loading', started = false, react = true, inline = true,
     sent.fetch.push([String(url), opts]);
     // Usage data is taken (a failed send would wait to retry after the test).
     if (String(url).endsWith('/v1/events')) return new w.Response('{"stored":1}', { status: 200 });
+    if (cdn && /cdn\.jsdelivr\.net/.test(String(url))) return cdn(String(url), w);
     throw new Error('offline in tests');
   };
-  w.XMLHttpRequest.prototype.send = function send() { sent.xhr.push(this); };
-  w.Navigator.prototype.sendBeacon = function sendBeacon(url) { sent.beacon.push(String(url)); return true; };
+  patchProto(w.XMLHttpRequest.prototype, 'send', function send() { sent.xhr.push(this); });
+  patchProto(w.Navigator.prototype, 'sendBeacon', function sendBeacon(url) { sent.beacon.push(String(url)); return true; });
   // The page's own timers of BOOT_CHECK_MS come at once.
   const setTimeout0 = w.setTimeout.bind(w);
   w.setTimeout = (fn, ms, ...a) => setTimeout0(fn, ms === 8000 ? 1 : ms, ...a);
@@ -101,8 +103,7 @@ function page({ state = 'loading', started = false, react = true, inline = true,
   // taken out and put back): bounded, the window is closed anyway.
   t.close = async () => {
     try { if (t.player()) t.player().destroy(); } catch (e) { /* gone */ }
-    await Promise.race([w.happyDOM.abort(), new Promise((r) => setTimeout(r, 500))]);
-    w.close();
+    await closeWindow(w);
   };
   return t;
 }
@@ -191,7 +192,7 @@ test('takeover of a playing original where the browser refuses to play: the butt
       // The stream arrives at once; the browser refuses playing without a press.
       class ReadyHls extends w.Hls { once(ev, fn) { if (ev === 'm') setTimeout(fn, 0); } }
       w.Hls = ReadyHls;
-      w.HTMLMediaElement.prototype.play = function play() { return Promise.reject(new w.DOMException('no autoplay', 'NotAllowedError')); };
+      patchProto(w.HTMLMediaElement.prototype, 'play', function play() { return Promise.reject(new w.DOMException('no autoplay', 'NotAllowedError')); });
     },
   });
   await settle(60);
@@ -261,7 +262,7 @@ test('takeover without React: the container is taken out and its videos kept sil
   await t.close();
 });
 
-test('start-up: a browser without what the player needs, or an iPhone: the original player at once, with the reason', async () => {
+test('start-up: a browser without what the player needs: the original player at once, with the reason; an iPhone that has it gets the player', async () => {
   const t = page({ setup: (w) => { delete w.ResizeObserver; } });
   await settle(60);
   assert.equal(t.boot().path, 'fallback');
@@ -271,8 +272,9 @@ test('start-up: a browser without what the player needs, or an iPhone: the origi
   await t.close();
   const p = page({ ua: IPHONE });
   await settle(60);
-  assert.equal(p.boot().reason, 'unsupported: iPhone');
-  assert.equal(p.calls.length, 1);
+  assert.equal(p.boot().path, 'intercept');
+  assert.equal(p.calls.length, 0);
+  assert.ok(p.player());
   await p.close();
 });
 
@@ -283,6 +285,67 @@ test('start-up: hls.js that cannot be loaded leaves the page to the original pla
   assert.match(t.boot().reason, /^libFailed/);
   assert.equal(t.calls.length, 1);
   assert.ok(t.notice());
+  await t.close();
+});
+
+const loading = (t) => t.w.document.getElementById('lite-player-for-echo360-loading');
+
+test('start-up: while hls.js loads slowly, a loading screen shows the lesson; leaving it starts the original player and a late hls.js is not used', async () => {
+  let arrive;
+  const t = page({ hls: false, cdn: () => new Promise((r) => { arrive = r; }) });
+  await settle(60);
+  assert.equal(loading(t), null, 'not at once (from the cache it would only flash)');
+  await settle(500);
+  const scr = loading(t);
+  assert.ok(scr, 'shown after a moment');
+  assert.equal(scr.shadowRoot.querySelector('h1').textContent, cfg.title || cfg.lesson.name);
+  assert.equal(t.calls.length, 0, 'the original player is not started meanwhile');
+  assert.equal(t.w.document.documentElement.style.overflow, 'hidden');
+  scr.shadowRoot.querySelector('button').click();
+  assert.equal(loading(t), null);
+  assert.equal(t.w.document.documentElement.style.overflow, '');
+  assert.equal(t.boot().path, 'fallback');
+  assert.match(t.boot().reason, /^user/);
+  assert.equal(t.calls.length, 1, 'the original player starts');
+  arrive(new t.w.Response('x', { status: 200 }));
+  await settle(60);
+  assert.equal(t.player(), undefined, 'a late hls.js builds nothing');
+  assert.equal(t.calls.length, 1);
+  await t.close();
+});
+
+test('start-up: the loading screen shows the download\'s progress and goes when hls.js fails (the original player, with the reason)', async () => {
+  let push;
+  let end;
+  const t = page({
+    hls: false,
+    cdn: (url, w) => {
+      const body = new w.ReadableStream({ start(c) { push = (n) => c.enqueue(new Uint8Array(n)); end = () => c.close(); } });
+      return Promise.resolve(new w.Response(body, { status: 200 }));
+    },
+  });
+  await settle(560);
+  push(200 * 1024);
+  await settle(30);
+  const scr = loading(t);
+  assert.ok(scr);
+  assert.match(scr.shadowRoot.querySelector('.status').textContent, /200 KB of 605 KB/);
+  assert.equal(scr.shadowRoot.querySelector('.bar').getAttribute('aria-valuenow'), '33');
+  end();   // not the pinned file: refused
+  await settle(60);
+  assert.equal(loading(t), null);
+  assert.equal(t.boot().path, 'fallback');
+  assert.match(t.boot().reason, /^libFailed: library file changed/);
+  assert.equal(t.calls.length, 1);
+  assert.ok(t.notice());
+  await t.close();
+});
+
+test('start-up: with hls.js at hand no loading screen is shown', async () => {
+  const t = page();
+  await settle(600);
+  assert.equal(t.boot().path, 'intercept');
+  assert.equal(loading(t), null);
   await t.close();
 });
 
@@ -314,4 +377,25 @@ test('readJsString reads a JavaScript string literal as the page\'s engine would
   assert.equal(readJsString('x("open', 2), null);
   assert.equal(readJsString('x("bad\\u12")', 2), null);
   assert.equal(readJsString('x(1)', 2), null);
+});
+
+test('fullscreen: the prefixed API where there is no other (iPadOS 15)', async () => {
+  // happy-dom has no fullscreen API: each case adds what that browser has.
+  const t = page({ setup: (w) => { patchProto(w.Element.prototype, 'webkitRequestFullscreen', function () { w.document.webkitFullscreenElement = this; }); } });
+  try {
+    await settle(60);
+    const p = t.player();
+    p.toggleFullscreen();
+    await settle(10);
+    same(t.w.document.webkitFullscreenElement, p.host, 'the player is fullscreen');
+  } finally { await t.close(); }
+});
+
+test('fullscreen on an iPhone: the main video in the system player', async () => {
+  const i = page({ ua: IPHONE, setup: (w) => { patchProto(w.HTMLVideoElement.prototype, 'webkitEnterFullscreen', function () { w.__entered = this; }); } });
+  try {
+    await settle(60);
+    i.player().toggleFullscreen();
+    same(i.w.__entered, i.player().video, 'the main video is in the system player');
+  } finally { await i.close(); }
 });

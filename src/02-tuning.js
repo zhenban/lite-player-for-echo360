@@ -241,6 +241,9 @@ const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
 const HLS_LOAD_TIMEOUT_MS = 20000;    // hls.js (about 600 KB from jsDelivr, cached afterwards) not loaded by then: the original player is used (a slow mobile link of 0.3 Mbit/s still gets it in time)
+const LOADING_SHOW_MS = 400;          // hls.js not there this long after the page's player was caught: the loading screen is shown (from the browser cache it takes tens of ms, and a screen shown that briefly would only flash)
+const LOADING_SLOW_MS = 5000;          // from then on the loading screen says the network is slow, how long it has waited and what happens at HLS_LOAD_TIMEOUT_MS (the whole file takes about 0.5 s on a 10 Mbit/s link)
+const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 
 // ---- anonymous usage data (87-telemetry.js) ----

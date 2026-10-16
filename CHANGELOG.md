@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23.0
+New:
+- **A loading screen instead of a blank page.** When the player's video code (hls.js, about 600 KB, downloaded once and then kept by the browser) takes a moment, the page now shows the lecture's title, how much has been downloaded, a tip about the player, and a "Use the original player now" button. On a slow connection it also says how long it has waited and that the original player opens by itself after 20 seconds. Before, the page stayed blank until the player appeared.
+- **iPhone.** The script now runs on iPhone too (iOS 15.4 or later, best effort, as on iPad). Full screen there shows the main view in the system's own player, since iPhone Safari lets only a video go full screen. Before, iPhones always kept the original player.
+
+Fixes:
+- Full screen did nothing on iPad with iPadOS older than 16.4 (an error was shown instead), because Safari there only has the older form of the full-screen function. It now works there.
+
 ## 0.22.0
 New:
 - **Anonymous usage data, on by default.** The player sends a short summary of each viewing (how smooth playback was, which features were used, how well the slide and silence analyses worked), errors with names, addresses and numbers removed, and once a day the browser and computer type. It never sends your name, school account, recordings, notes, discussion, transcripts or files, and your address is not stored. Settings → Usage data turns it off at once, shows everything stored for you (and downloads it), deletes it, or gives you a new ID. Details are in the README under "Anonymous usage data". Because of this, the script now asks the script manager for permission to connect to one server (lite-player-telemetry.zhenban.workers.dev). The summary also says how watching went (time to the first picture, seeking, buffering, video quality, how well the two views stay in step), how quickly the player answered clicks and keys, how busy the computer was, and how fast the analyses ran on it, measured from the work they do anyway (nothing extra is run). Times are rounded and sent only as summaries.

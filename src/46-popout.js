@@ -31,7 +31,7 @@ class PopoutController {
   async open() {
     const x = this.x;
     const host = x.host;
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+    if (fullscreenElement()) await exitFullscreen();
     const r = host.getBoundingClientRect();
     let pip;
     try {

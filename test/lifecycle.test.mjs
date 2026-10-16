@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { Window } from 'happy-dom';
+import { newWindow, closeWindow, same } from './dom-guard.mjs';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
@@ -14,11 +14,11 @@ const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeCont
 
 // The sources in a page of their own; nothing reaches the network.
 async function withPage(run) {
-  const w = new Window({ url: 'https://example.test/', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
+  const w = newWindow({ url: 'https://example.test/', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   w.fetch = () => { throw new Error('network forbidden in tests'); };
   w.Hls = { isSupported: () => false };
   const m = w.eval('(function () { const VERSION = "test";\n' + code + '\nreturn {' + names + '}; })()');
-  try { return await run(w, m); } finally { await w.happyDOM.abort(); w.close(); }
+  try { return await run(w, m); } finally { await closeWindow(w); }
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const pointer = (w, type, init) => new w.PointerEvent(type, Object.assign({ bubbles: true, button: 0, pointerType: 'touch' }, init));
@@ -342,7 +342,7 @@ test('audit 10: closing while a slide file is being read makes no PDF Worker', a
 }));
 
 test('audit 11: in the floating window, captions follow that window\'s visibility, not the page behind', async () => withPage(async (w, m) => {
-  const other = new Window();
+  const other = newWindow();
   try {
     const elem = w.document.createElement('div');
     elem.append(w.document.createElement('span'));
@@ -355,7 +355,7 @@ test('audit 11: in the floating window, captions follow that window\'s visibilit
     cc.update(6);
     assert.equal(elem.firstChild.textContent, 'second');
     cc.dispose();
-  } finally { await other.happyDOM.abort(); other.close(); }
+  } finally { await closeWindow(other); }
 }));
 
 test('audit 6b: other drags (zoom pan, loop handle) ignore a second finger and undo when cancelled', async () => withPage(async (w, m) => {
@@ -452,7 +452,7 @@ test('popover: a bottom sheet when narrow; Esc and an outside press close it, Es
   assert.equal(pops.isOpen(), false);
   assert.equal(pop.el.hidden, true);
   assert.equal(btn.getAttribute('aria-expanded'), 'false');
-  assert.equal(w.document.activeElement, btn, 'focus back on the button');
+  same(w.document.activeElement, btn, 'focus back on the button');
   pops.open(pop, btn, 'above');
   w.document.body.dispatchEvent(pointer(w, 'pointerdown', { pointerId: 1 }));
   assert.equal(pops.isOpen(), false, 'outside press closes');

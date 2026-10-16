@@ -178,3 +178,23 @@ function windowOf(node) {
 function hiddenFor(node) {
   return !!(node && node.ownerDocument ? node.ownerDocument : document).hidden;
 }
+
+// Fullscreen, also where only the prefixed API is there (Safari before 16.4: iPadOS 15).
+// The prefixed calls return nothing (no Promise); a refusal is not an error worth reporting.
+function fullscreenElement(doc) {
+  const d = doc || document;
+  return d.fullscreenElement || d.webkitFullscreenElement || null;
+}
+function exitFullscreen(doc) {
+  const d = doc || document;
+  const f = d.exitFullscreen || d.webkitExitFullscreen;
+  return f ? Promise.resolve().then(() => f.call(d)).catch(() => {}) : Promise.resolve();
+}
+// false: elements cannot be made fullscreen here (iPhone: only a video, in the system's
+// own player).
+function requestFullscreen(node) {
+  const f = node.requestFullscreen || node.webkitRequestFullscreen;
+  if (!f) return false;
+  Promise.resolve().then(() => f.call(node)).catch(() => {});
+  return true;
+}

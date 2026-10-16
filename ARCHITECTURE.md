@@ -64,6 +64,7 @@ runs immediately must come after what it uses.
 | `85-export.js` | Export (Markdown, zip) and backup / restore |
 | `86-diagnostics.js` | "Copy diagnostics" text |
 | `87-telemetry.js` | Anonymous usage data: the secret and the id (SHA-256 of it), the daily environment, the summary of each viewing (`UsageSession`), errors and hand-overs to the original player; viewing, deleting and resetting from Settings. The Worker is in `telemetry-worker/` |
+| `88-loading.js` | The loading screen while hls.js downloads (intercept path): title, real progress (LIB_BYTES), time waited, tips, "use the original player now" |
 | `90-main.js` | Start-up |
 
 ## 3. Start-up
@@ -87,9 +88,11 @@ script runs ──► 00-boot.js: window.Echo trapped (nothing else needed; boot
                      ▼
                 launch(json, callOriginal, takeover)
                   ├─ settings say "use the original player" ──► original
-                  ├─ browser too old / iPhone (unsupportedReason) ──► original, notice
+                  ├─ browser too old (unsupportedReason) ──► original, notice
                   ├─ adapter.parse(json) ──► Lesson   (throws: live lecture, copyright...)
-                  ├─ hls.js loaded now (platform.loadHls, hash checked; fails ──► original)
+                  ├─ hls.js loaded now (platform.loadHls, hash checked; fails or 20 s ──► original);
+                  │    caught before it started: the loading screen meanwhile (LoadingScreen,
+                  │    after 0.4 s; its button ──► original at once, a late hls.js is not used)
                   └─ start(): takeover? netGuard.start(), adapter.stopOriginal() (unmount
                        its React root, else take its container out; position and play
                        state carried over) ──► new LitePlayer(lesson, {..., takeover})

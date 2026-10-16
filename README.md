@@ -24,8 +24,11 @@ The stock player keeps one CPU core busy for the whole lecture (loud fans, drain
 ## Supported browsers
 
 - **Supported:** Chrome, Edge and Firefox on computers; Firefox on Android (with Violentmonkey or Tampermonkey).
-- **Best effort:** Safari on iPadOS 15.4 or later (with a userscript manager such as Stay or Userscripts). 15.4 is the oldest version Echo360's own player runs on; the script itself needs Safari 15. Some managers start the script after the page has started its own player: the script then takes the page over (it stops the original player, carries on where it was, and keeps it from reporting the viewing twice).
-- **Not supported:** iPhone. Older browsers and iPhones keep the original player, with a note saying why.
+- **Best effort:** Safari on iPadOS and iOS (iPhone) 15.4 or later (with a userscript manager such as Stay or Userscripts). 15.4 is the oldest version Echo360's own player runs on; the script itself needs Safari 15. Some managers start the script after the page has started its own player: the script then takes the page over (it stops the original player, carries on where it was, and keeps it from reporting the viewing twice).
+  - On an iPhone, full screen shows the main view in the system's own player (Safari lets only a video go full screen there). Before iOS 17.1 the videos are played by Safari itself, so volume levelling and voice enhancement are off.
+- Older browsers keep the original player, with a note saying why.
+
+If the player's code is slow to download (the first visit on a slow connection), a loading screen shows how far it has got, with a button to use the original player at once. After 20 seconds the original player opens by itself.
 
 **Settings (⋮) > Storage and diagnostics > Copy diagnostics** (or the button on the note) shows how the script started on the page: *intercept* (before the page's player started), *takeover* or the original player and why.
 

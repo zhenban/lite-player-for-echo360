@@ -22,6 +22,24 @@
 
 const libBlobUrls = new Map();   // path -> Promise of a blob URL (platform.libBlobUrl)
 
+// A response body read to the end as an ArrayBuffer, reporting the bytes so far (a failure in
+// the report does not stop the download).
+async function readCounting(reader, onProgress) {
+  const parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    n += value.byteLength;
+    try { onProgress(n); } catch (e) { /* display only */ }
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out.buffer;
+}
+
 const platform = {
   name: 'userscript',
   // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
@@ -45,23 +63,24 @@ const platform = {
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it
   // again, and it is a few files of 0.1 to 4 MB.
-  libBlobUrl(path, prefix, suffix) {
+  libBlobUrl(path, prefix, suffix, onProgress) {
     const key = path + (prefix ? '\n' + prefix : '') + (suffix ? '\n' + suffix : '');
     let p = libBlobUrls.get(key);
     if (!p) {
-      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
+      p = this.libBytes(path, onProgress).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
       libBlobUrls.set(key, p);
       p.catch(() => libBlobUrls.delete(key));
     }
     return p;
   },
-  // The bytes of a pinned file, refused unless they match its SHA-256.
-  async libBytes(path) {
+  // The bytes of a pinned file, refused unless they match its SHA-256. onProgress(bytes so
+  // far): called as the body arrives, where the browser can stream it.
+  async libBytes(path, onProgress) {
     const want = LIB_SHA256[path];
     if (!want) throw new Error('not a pinned library file: ' + path);
     const r = await fetch(this.libUrl(path), { credentials: 'omit' });
     if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + path);
-    const buf = await r.arrayBuffer();
+    const buf = onProgress && r.body && r.body.getReader ? await readCounting(r.body.getReader(), onProgress) : await r.arrayBuffer();
     if (await sha256Hex(buf) !== want) throw new Error('library file changed on the CDN, not used: ' + path);
     return buf;
   },
@@ -71,10 +90,11 @@ const platform = {
   // Resolves to hls.js, or rejects (the file could not be had in timeoutMs, or differs).
   // hls.min.js is a UMD file: run as a module, it is given `module` and `exports` to fill
   // (so it sets no global on the page) and its export is passed on.
-  loadHls(timeoutMs) {
+  // onProgress(bytes so far): see libBytes (only the call that starts the download gets it).
+  loadHls(timeoutMs, onProgress) {
     if (this.Hls) return Promise.resolve(this.Hls);
     if (!this.hlsLoading) {
-      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n')
+      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n', onProgress)
         .then((u) => import(u))
         .then((m) => {
           const lib = m && m.default;

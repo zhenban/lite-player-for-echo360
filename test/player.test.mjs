@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Window } from 'happy-dom';
+import { newWindow, closeWindow } from './dom-guard.mjs';
 import { assemble } from '../build.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,7 +49,7 @@ function managerWindow(w) {
 // Timers are counted: every interval and timeout set by the page and not yet cleared.
 // granted: run as a userscript manager runs a script with @grant (managerWindow).
 function page({ granted = false } = {}) {
-  const w = new Window({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
+  const w = newWindow({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   const hlsLog = [];
   w.Hls = fakeHls(hlsLog);
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
@@ -106,8 +106,7 @@ test('T1.2: the player takes over the page, and leaves nothing behind when it is
   assert.equal(w.document.body.style.overflow || '', '');
   assert.equal([...pg.intervals].filter((id) => !before.has(id)).length, 0, 'no interval left running');
   assert.ok(pg.hlsLog.includes('destroy'), 'the stream was released');
-  await w.happyDOM.abort();
-  w.close();
+  await closeWindow(w);
 });
 
 test('T1.2: handing over to the original player passes the position on and tears this one down', async () => {
@@ -119,8 +118,7 @@ test('T1.2: handing over to the original player passes the position on and tears
   const handed = JSON.parse(pg.original());
   assert.equal(handed.startTimeMillis, 321000);
   assert.equal(p.destroyed, true);
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('T1.2/E1: a broken lesson page goes to the original player untouched, with nothing built', async () => {
@@ -132,8 +130,7 @@ test('T1.2/E1: a broken lesson page goes to the original player untouched, with 
   assert.ok(pg.w.__orig, 'the original player started');
   assert.equal(pg.player(), undefined);
   assert.equal(pg.w.document.body.style.overflow || '', '');
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('touch release keeps controls visible so a second tap can pause; mouse leave still hides them', async () => {
@@ -169,8 +166,7 @@ test('touch release keeps controls visible so a second tap can pause; mouse leav
     assert.equal(p.stage.classList.contains('idle'), false, 'mouse movement still wakes controls');
   } finally {
     p.destroy();
-    await w.happyDOM.abort();
-    w.close();
+    await closeWindow(w);
   }
 });
 
@@ -187,8 +183,7 @@ test('review R2: the U key passes its key event on, so removing a mark is a user
     assert.equal(got[0] && got[0].key, 'u', 'the key event reaches the write');
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -230,8 +225,7 @@ test('copy picture takes what the user is looking at: the PDF page when the PDF 
     assert.ok(p.focusView().video);
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -256,8 +250,7 @@ test('a reload the player makes (language, expired session) comes back where pla
     assert.equal(p.pickStart(), 4139);
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -307,8 +300,7 @@ test('a side-panel load that fails for now keeps its tab with "Retry"; one the l
     assert.equal(pane('transcript').querySelectorAll('.trow').length, 2, 'the open tab shows the new list');
   } finally {
     p.destroy();
-    await w.happyDOM.abort();
-    w.close();
+    await closeWindow(w);
   }
 });
 
@@ -340,8 +332,7 @@ test('the open Notes and Discussion tabs say the playing moment, not the moment 
     assert.match(link.textContent, /3:20/, 'playing on moves "Link to" with it');
   } finally {
     p.destroy();
-    await w.happyDOM.abort();
-    w.close();
+    await closeWindow(w);
   }
 });
 
@@ -368,8 +359,7 @@ test('an automatic message waits for the one shown, replaces its own, and is dro
     assert.equal(text(), null, 'a message that is no longer true is not shown');
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -393,8 +383,7 @@ test('the camera is not shown for an empty screen at 0:00 while the player is on
     assert.equal(p.emptyScreen.on, true);
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -413,8 +402,7 @@ test('a silence at 0:00 is not skipped automatically while the player is on its 
     assert.deepEqual(seeks, [], 'the resume point is kept');
   } finally {
     p.destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });
 
@@ -427,7 +415,6 @@ test('with @grant (a wrapped window), the player still catches the page\'s own s
     assert.ok(!Object.hasOwn(pg.w.__managerWindow, 'Echo'), 'the trap is on the page, not on the wrapper');
   } finally {
     if (pg.player()) pg.player().destroy();
-    await pg.w.happyDOM.abort();
-    pg.w.close();
+    await closeWindow(pg.w);
   }
 });

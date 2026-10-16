@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { Window } from 'happy-dom';
+import { newWindow, closeWindow } from './dom-guard.mjs';
 import { assemble } from '../build.mjs';
 import worker, { LIMITS } from '../telemetry-worker/src/index.js';
 import { KINDS, cleanEvent, plainMessage } from '../telemetry-worker/src/schema.js';
@@ -209,7 +209,7 @@ function fakeHls() {
 
 // A lesson page whose requests to the Worker are recorded (everything else fails).
 function page(prefs, setup) {
-  const w = new Window({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
+  const w = newWindow({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   w.Hls = fakeHls();
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
   if (prefs) w.localStorage.setItem('lite-player-for-echo360:prefs', JSON.stringify(prefs));
@@ -276,8 +276,7 @@ test('telemetry: a viewing is summed up when the player goes, in fields the Work
   assert.match(stored, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(createHash('sha256').update(stored).digest('hex'), body.uid);
   assert.ok(!JSON.stringify(body).includes(stored));
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: the environment and errors use fields the Worker keeps; error messages lose names, addresses and numbers', async () => {
@@ -294,8 +293,7 @@ test('telemetry: the environment and errors use fields the Worker keeps; error m
   assert.equal(errs[0].n, 2);
   assert.equal(errs[0].msg, 'could not read <text> from <url> #');
   for (const ev of errs) assertAccepted(ev);
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: turned off in the settings, nothing more is sent, and the setting is kept', async () => {
@@ -312,8 +310,7 @@ test('telemetry: turned off in the settings, nothing more is sent, and the setti
   await settle();
   assert.equal(pg.sent.length, 0);
   assert.equal(JSON.parse(pg.w.localStorage.getItem('lite-player-for-echo360:prefs')).telemetry, false);
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
   // A later page starts with it off.
   const again = page({ telemetry: false });
   await settle();
@@ -321,8 +318,7 @@ test('telemetry: turned off in the settings, nothing more is sent, and the setti
   again.player().destroy();
   await settle();
   assert.equal(again.sent.length, 0);
-  await again.w.happyDOM.abort();
-  again.w.close();
+  await closeWindow(again.w);
 });
 
 test('telemetry: viewing, deleting and resetting the id send the secret only in the body, to the Worker', async () => {
@@ -345,8 +341,7 @@ test('telemetry: viewing, deleting and resetting the id send the secret only in 
   const diag = p.menus.x.diagnostics();
   assert.ok(!diag.includes(secret1) && !diag.includes(second.body.secret));
   p.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: the summary goes out while the page closes, at once and with keepalive', async () => {
@@ -360,8 +355,7 @@ test('telemetry: the summary goes out while the page closes, at once and with ke
   assert.equal(pg.sent[0].keepalive, true);
   assert.equal(pg.sent[0].body.events[0].k, 'session');
   p.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry worker: the newer fields keep only known keys and two significant digits', async () => {
@@ -416,8 +410,7 @@ test('telemetry: percentiles, two significant digits, and a bounded sample of va
   const mid = v.q(0.5);
   assert.ok(mid >= 40 && mid <= 60, 'the sample keeps the distribution: median ' + mid);
   pg.player().destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: fixed steps are timed in batches of 20 ms, with their version and conditions', async () => {
@@ -444,8 +437,7 @@ test('telemetry: fixed steps are timed in batches of 20 ms, with their version a
   assert.deepEqual([s.loudN, s.loudP10, s.loudP50, s.loudP90], [10, 20, 100, 180]);
   assertAccepted(s);
   p.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: a viewing counts failures, downloads, skips, interactions and the work of the analyses', async () => {
@@ -499,8 +491,7 @@ test('telemetry: a viewing counts failures, downloads, skips, interactions and t
   assert.equal(s.theme, 'system');
   assertAccepted(s);
   p2.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: CPU pressure is watched only while playing in a visible tab, with and without background analyses; power over the time played', async () => {
@@ -559,8 +550,7 @@ test('telemetry: CPU pressure is watched only while playing in a visible tab, wi
   bg.n = running;
   assertAccepted(s);
   p.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry: a send that is given up is counted, and told with the viewing', async () => {
@@ -572,8 +562,7 @@ test('telemetry: a send that is given up is counted, and told with the viewing',
   await t.send([{ k: 'fallback', v: '1.0.0', reason: 'user' }]);
   assert.equal(p.usage.summary().sendFail, 1);
   p.destroy();
-  await pg.w.happyDOM.abort();
-  pg.w.close();
+  await closeWindow(pg.w);
 });
 
 test('telemetry queries: devices in tiers by their fixed-step time, and how well the steps follow the real work', () => {

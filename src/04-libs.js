@@ -13,6 +13,14 @@
 
 const HLS_LIB = 'hls.js@1.7.3/dist/hls.min.js';
 
+// Sizes in bytes of the files whose download shows progress (the loading screen, 88-loading.js).
+// The bytes are pinned by the hash below, so the size is too; the response's own length is no
+// use for this (jsDelivr compresses: it gives the compressed size, and the body is counted
+// after decompression). `npm run check-requires` checks them with the hashes.
+const LIB_BYTES = {
+  'hls.js@1.7.3/dist/hls.min.js': 619692,
+};
+
 const LIB_SHA256 = {
   'hls.js@1.7.3/dist/hls.min.js': 'a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e',
   'pdfjs-dist@6.4.299/build/pdf.min.mjs': '57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2',

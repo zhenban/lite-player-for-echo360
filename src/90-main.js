@@ -13,10 +13,9 @@
 // ===================================================================================
 
 // Why this browser cannot run the player ('' if it can): checked before anything starts.
-// iPhone is not supported. The rest are what the player needs; CSS aspect-ratio and
-// createImageBitmap set the oldest browsers that pass (Safari 15, iPadOS 15).
+// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
+// that pass (Safari 15: iOS and iPadOS 15).
 function unsupportedReason() {
-  if (/iPhone|iPod/.test(navigator.userAgent)) return 'iPhone';
   const need = [
     ['Proxy', typeof Proxy === 'function'],
     ['fetch', typeof fetch === 'function'],
@@ -90,15 +89,33 @@ function unsupportedReason() {
     };
     const why = unsupportedReason();
     if (why) { giveUp('unsupported', why); return; }
-    try { adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
+    let lesson;
+    try { lesson = adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
     const go = () => {
       // Checked before anything is built: without a way to play HLS, the original player.
       if (!canPlayHls()) { giveUp('noHls', new Error('this browser cannot play HLS here (no Media Source Extensions and no native HLS)')); return; }
       start(arg, callOriginal, takeover);
     };
     // hls.js already there (a development build injects it): at once.
-    if (platform.Hls) go();
-    else platform.loadHls(HLS_LOAD_TIMEOUT_MS).then(go, (e) => giveUp('libFailed', e));
+    if (platform.Hls) { go(); return; }
+    // Caught before it started, the original player is not on the page: while hls.js loads,
+    // the loading screen (taken over, the original player plays on meanwhile). The user may
+    // leave it for the original player; then a late hls.js is not used.
+    let left = false;
+    let screen = null;
+    if (!takeover) {
+      try {
+        screen = new LoadingScreen(lesson, () => {
+          left = true;
+          fellBack('user', 'chose the original player while loading');
+          startOriginal(callOriginal, arg, null);
+        });
+      } catch (e) { log.warn('loading screen failed:', e); }
+    }
+    const done = () => { if (screen) { try { screen.dispose(); } catch (e) { /* gone with the page */ } screen = null; } };
+    platform.loadHls(HLS_LOAD_TIMEOUT_MS, screen ? (n) => { if (screen) screen.progress(n); } : undefined).then(
+      () => { if (left) return; try { go(); } finally { done(); } },
+      (e) => { if (left) return; done(); giveUp('libFailed', e); });
   }
 
   function start(arg, callOriginal, takeover) {

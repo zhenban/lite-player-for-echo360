@@ -18,7 +18,7 @@ const REQUIRE_TRIES = 4;                  // attempts per file
 const REQUIRE_PAUSE_MS = [2000, 5000, 10000];   // pauses between them
 const REQUIRE_TIMEOUT_MS = 30000;         // one attempt; the largest file (a Tesseract language) is a few MB
 
-// The files to check: [{ url, want, enc ('base64' | 'hex') }], or { error } for a
+// The files to check: [{ url, want, enc ('base64' | 'hex'), bytes? }], or { error } for a
 // malformed @require.
 export function pinnedFiles(meta, libs) {
   const out = [];
@@ -27,8 +27,10 @@ export function pinnedFiles(meta, libs) {
     const want = frag && /^sha256-([A-Za-z0-9+/=]+)$/.exec(frag);
     out.push(want ? { url, want: want[1], enc: 'base64' } : { error: 'no #sha256-<base64> hash: ' + line });
   }
+  // LIB_BYTES: the size the loading screen counts against, checked with the hash.
+  const sizes = new Map([...libs.matchAll(/^\s*'([^']+)': (\d+),$/gm)].map(([, path, n]) => [path, +n]));
   for (const [, path, want] of libs.matchAll(/^\s*'([^']+)': '([0-9a-f]{64})',$/gm)) {
-    out.push({ url: 'https://cdn.jsdelivr.net/npm/' + path, want, enc: 'hex' });
+    out.push({ url: 'https://cdn.jsdelivr.net/npm/' + path, want, enc: 'hex', ...(sizes.has(path) ? { bytes: sizes.get(path) } : {}) });
   }
   return out;
 }
@@ -51,6 +53,7 @@ export async function checkFile(file, fetchFn, sleep, tries = REQUIRE_TRIES) {
       continue;
     }
     const got = createHash('sha256').update(buf).digest(file.enc);
+    if (got === file.want && file.bytes != null && buf.length !== file.bytes) return { mismatch: file.url + ': ' + buf.length + ' bytes, LIB_BYTES says ' + file.bytes };
     return got === file.want ? { ok: true } : { mismatch: file.url + ': hash ' + got + ', expected ' + file.want };
   }
   return { network: file.url + ': could not be downloaded after ' + tries + ' attempts (' + last + ')' };

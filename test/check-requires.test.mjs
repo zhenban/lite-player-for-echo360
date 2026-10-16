@@ -51,3 +51,11 @@ test('check-requires: no @require at all is fine (hls.js is checked by the scrip
   assert.equal(await checkAll(pinnedFiles('// @grant        none\n', ''), async () => answer(200), noSleep, out), 1);
   assert.ok(lines.some((s) => /no LIB_SHA256 entry/.test(s)));
 });
+
+test('a LIB_BYTES size is checked with the hash (the loading screen counts against it)', async () => {
+  const files = pinnedFiles('', "  'x@1/y.js': " + body.length + ",\n  'x@1/y.js': '" + hex + "',\n");
+  assert.equal(files[0].bytes, body.length);
+  assert.deepEqual(await checkFile(files[0], async () => answer(200), noSleep, 1), { ok: true });
+  const wrong = pinnedFiles('', "  'x@1/y.js': " + (body.length + 1) + ",\n  'x@1/y.js': '" + hex + "',\n");
+  assert.match((await checkFile(wrong[0], async () => answer(200), noSleep, 1)).mismatch, /bytes, LIB_BYTES says/);
+});

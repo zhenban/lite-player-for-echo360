@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.22.0
+// @version      0.23.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -23,7 +23,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.22.0';
+  const VERSION = '0.23.0';
 
 // ---- 00-boot.js ----
 // ===================================================================================
@@ -829,6 +829,17 @@ const STRINGS = {
     retry: 'Retry',
     close: 'Close',
     errorNotice: 'Lite Player for Echo360 ran into an unexpected error and switched to the original player (with the CPU fix enabled).',
+    loadingPlayer: 'Loading the player\u2026',
+    loadingProgress: 'Loading the player: {done} KB of {total} KB',
+    loadingSlow: 'The network is slow: {s} s so far. If the player has not loaded after {limit} s, the original player opens instead.',
+    loadingUseOriginal: 'Use the original player now',
+    loadingTipLabel: 'Tip',
+    loadingTip1: 'Space plays and pauses. J and L jump 10 seconds, [ and ] change the speed.',
+    loadingTip2: 'S swaps the two views. The layout button switches between side by side, picture in picture and one view.',
+    loadingTip3: 'Add the lecturer\'s slide PDF in the Slides tab: it turns to the page being talked about. The file stays on this device.',
+    loadingTip4: 'Chapters come from the slide changes. Shift with the arrow keys jumps between them.',
+    loadingTip5: 'Long silences (breaks, group work) can be skipped automatically: Settings, Silence.',
+    loadingTip6: 'Press ? for all the keyboard shortcuts.',
     fallbackNotice:'Lite Player for Echo360 could not take over this page, so the original player is being used (with the CPU fix enabled).',
   },
 };
@@ -1316,6 +1327,17 @@ STRINGS.zh = {
   retry: '重试',
   close: '关闭',
   errorNotice: 'Echo360 轻量播放器遇到意外错误，已切换到原播放器（CPU 修复已开启）。',
+  loadingPlayer: '正在加载播放器…',
+  loadingProgress: '正在加载播放器：{done} KB / {total} KB',
+  loadingSlow: '网络较慢，已等 {s} 秒。{limit} 秒内加载不完会自动打开原播放器。',
+  loadingUseOriginal: '现在就用原播放器',
+  loadingTipLabel: '小提示',
+  loadingTip1: '空格播放和暂停，J 和 L 前后跳 10 秒，[ 和 ] 调倍速。',
+  loadingTip2: 'S 交换两路画面。布局按钮可以在并排、画中画和单路之间切换。',
+  loadingTip3: '在“幻灯片”标签页添加老师的 PDF，会自动翻到正在讲的那页。文件只存在这台设备上。',
+  loadingTip4: '章节按幻灯片翻页自动生成，Shift 加方向键在章节之间跳。',
+  loadingTip5: '长时间的无声段（课间休息、小组讨论）可以自动跳过：设置 → 无声段。',
+  loadingTip6: '按 ? 查看全部快捷键。',
   fallbackNotice: 'Echo360 轻量播放器无法接管这个页面，正在使用原播放器（CPU 修复已开启）。',
 };
 
@@ -1563,6 +1585,9 @@ const LIST_GAP_MS = 150;               // and between them
 const LIST_DEBOUNCE_MS = 300;          // redraws of the list waited for before labelling
 const LIST_DONE_PCT = 99;              // watched share shown as complete
 const HLS_LOAD_TIMEOUT_MS = 20000;    // hls.js (about 600 KB from jsDelivr, cached afterwards) not loaded by then: the original player is used (a slow mobile link of 0.3 Mbit/s still gets it in time)
+const LOADING_SHOW_MS = 400;          // hls.js not there this long after the page's player was caught: the loading screen is shown (from the browser cache it takes tens of ms, and a screen shown that briefly would only flash)
+const LOADING_SLOW_MS = 5000;          // from then on the loading screen says the network is slow, how long it has waited and what happens at HLS_LOAD_TIMEOUT_MS (the whole file takes about 0.5 s on a 10 Mbit/s link)
+const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -1766,6 +1791,26 @@ function hiddenFor(node) {
   return !!(node && node.ownerDocument ? node.ownerDocument : document).hidden;
 }
 
+// Fullscreen, also where only the prefixed API is there (Safari before 16.4: iPadOS 15).
+// The prefixed calls return nothing (no Promise); a refusal is not an error worth reporting.
+function fullscreenElement(doc) {
+  const d = doc || document;
+  return d.fullscreenElement || d.webkitFullscreenElement || null;
+}
+function exitFullscreen(doc) {
+  const d = doc || document;
+  const f = d.exitFullscreen || d.webkitExitFullscreen;
+  return f ? Promise.resolve().then(() => f.call(d)).catch(() => {}) : Promise.resolve();
+}
+// false: elements cannot be made fullscreen here (iPhone: only a video, in the system's
+// own player).
+function requestFullscreen(node) {
+  const f = node.requestFullscreen || node.webkitRequestFullscreen;
+  if (!f) return false;
+  Promise.resolve().then(() => f.call(node)).catch(() => {});
+  return true;
+}
+
 // ---- 04-libs.js ----
 // ===================================================================================
 // The library files loaded when first needed, by npm path, with their SHA-256 (hex).
@@ -1781,6 +1826,14 @@ function hiddenFor(node) {
 // ===================================================================================
 
 const HLS_LIB = 'hls.js@1.7.3/dist/hls.min.js';
+
+// Sizes in bytes of the files whose download shows progress (the loading screen, 88-loading.js).
+// The bytes are pinned by the hash below, so the size is too; the response's own length is no
+// use for this (jsDelivr compresses: it gives the compressed size, and the body is counted
+// after decompression). `npm run check-requires` checks them with the hashes.
+const LIB_BYTES = {
+  'hls.js@1.7.3/dist/hls.min.js': 619692,
+};
 
 const LIB_SHA256 = {
   'hls.js@1.7.3/dist/hls.min.js': 'a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e',
@@ -1997,6 +2050,24 @@ const LIB_SHA256 = {
 
 const libBlobUrls = new Map();   // path -> Promise of a blob URL (platform.libBlobUrl)
 
+// A response body read to the end as an ArrayBuffer, reporting the bytes so far (a failure in
+// the report does not stop the download).
+async function readCounting(reader, onProgress) {
+  const parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    n += value.byteLength;
+    try { onProgress(n); } catch (e) { /* display only */ }
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out.buffer;
+}
+
 const platform = {
   name: 'userscript',
   // With any @grant other than none, Tampermonkey and Violentmonkey give the script a
@@ -2020,23 +2091,24 @@ const platform = {
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it
   // again, and it is a few files of 0.1 to 4 MB.
-  libBlobUrl(path, prefix, suffix) {
+  libBlobUrl(path, prefix, suffix, onProgress) {
     const key = path + (prefix ? '\n' + prefix : '') + (suffix ? '\n' + suffix : '');
     let p = libBlobUrls.get(key);
     if (!p) {
-      p = this.libBytes(path).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
+      p = this.libBytes(path, onProgress).then((buf) => URL.createObjectURL(new Blob([prefix || '', buf, suffix || ''], { type: 'text/javascript' })));
       libBlobUrls.set(key, p);
       p.catch(() => libBlobUrls.delete(key));
     }
     return p;
   },
-  // The bytes of a pinned file, refused unless they match its SHA-256.
-  async libBytes(path) {
+  // The bytes of a pinned file, refused unless they match its SHA-256. onProgress(bytes so
+  // far): called as the body arrives, where the browser can stream it.
+  async libBytes(path, onProgress) {
     const want = LIB_SHA256[path];
     if (!want) throw new Error('not a pinned library file: ' + path);
     const r = await fetch(this.libUrl(path), { credentials: 'omit' });
     if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + path);
-    const buf = await r.arrayBuffer();
+    const buf = onProgress && r.body && r.body.getReader ? await readCounting(r.body.getReader(), onProgress) : await r.arrayBuffer();
     if (await sha256Hex(buf) !== want) throw new Error('library file changed on the CDN, not used: ' + path);
     return buf;
   },
@@ -2046,10 +2118,11 @@ const platform = {
   // Resolves to hls.js, or rejects (the file could not be had in timeoutMs, or differs).
   // hls.min.js is a UMD file: run as a module, it is given `module` and `exports` to fill
   // (so it sets no global on the page) and its export is passed on.
-  loadHls(timeoutMs) {
+  // onProgress(bytes so far): see libBytes (only the call that starts the download gets it).
+  loadHls(timeoutMs, onProgress) {
     if (this.Hls) return Promise.resolve(this.Hls);
     if (!this.hlsLoading) {
-      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n')
+      this.hlsLoading = this.libBlobUrl(HLS_LIB, 'const module = { exports: {} }; const exports = module.exports;\n', '\n;export default module.exports;\n', onProgress)
         .then((u) => import(u))
         .then((m) => {
           const lib = m && m.default;
@@ -4774,7 +4847,7 @@ class LitePlayer {
     const prevOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
     this.d.add(() => {
-      if (document.fullscreenElement === host) document.exitFullscreen().catch(() => {});
+      if (fullscreenElement() === host) exitFullscreen();
       host.remove();
       document.documentElement.style.overflow = prevOverflow;
     });
@@ -5352,9 +5425,11 @@ class LitePlayer {
     this.savePrefs();
   }
 
+  // Where no element can be fullscreen (iPhone), the main video goes into the system's own
+  // player: one view, its own controls; back inline it plays on in ours.
   toggleFullscreen() {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else this.host.requestFullscreen().catch(() => {});
+    if (fullscreenElement()) exitFullscreen();
+    else if (!requestFullscreen(this.host) && typeof this.video.webkitEnterFullscreen === 'function') this.video.webkitEnterFullscreen();
   }
 
   // ---- idle (auto-hide) handling ----
@@ -5387,10 +5462,12 @@ class LitePlayer {
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
-    d.listen(document, 'fullscreenchange', () => {
-      const fs = !!document.fullscreenElement;
+    const onFullscreen = () => {
+      const fs = !!fullscreenElement();
       this.setButton('.fs', fs ? 'exitFullscreen' : 'fullscreen', tr(fs ? 'exitFullscreen' : 'fullscreen'), tr(fs ? 'exitFullscreenKey' : 'fullscreenKey'));
-    });
+    };
+    d.listen(document, 'fullscreenchange', onFullscreen);
+    d.listen(document, 'webkitfullscreenchange', onFullscreen);
     let resizeTimer = 0;
     d.add(() => clearTimeout(resizeTimer));
     d.listen(window, 'resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(guard(() => { this.quality.apply(); this.redrawPdf(); }), 500); });
@@ -6939,7 +7016,7 @@ class PopoutController {
   async open() {
     const x = this.x;
     const host = x.host;
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+    if (fullscreenElement()) await exitFullscreen();
     const r = host.getBoundingClientRect();
     let pip;
     try {
@@ -14571,6 +14648,131 @@ class UsageSession {
   }
 }
 
+// ---- 88-loading.js ----
+// ===================================================================================
+// The loading screen: the page's own player was caught (intercept path) and ours waits for
+// hls.js. Without it the page would stay blank for the whole download, since neither player
+// is there yet. Shown only when the wait is noticeable (LOADING_SHOW_MS): the lesson's title,
+// the download's real progress, from LOADING_SLOW_MS how long it has waited and what happens
+// at the time limit, a tip about the player to read meanwhile, and a way out to the original
+// player at once. Removed when our player is built or the original one takes over.
+// Costs: two timers while shown (at most HLS_LOAD_TIMEOUT_MS), none after.
+// ===================================================================================
+
+const LOADING_TIPS = ['loadingTip1', 'loadingTip2', 'loadingTip3', 'loadingTip4', 'loadingTip5', 'loadingTip6'];
+
+const LOADING_CSS = `
+:host { all: initial; position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+  background: #000; color: #ECEDEF; color-scheme: dark; padding: 16px; box-sizing: border-box;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif; -webkit-font-smoothing: antialiased; }
+.box { width: min(520px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.course { color: #A8ABB2; font-size: 13px; margin: 0; }
+h1 { font-size: 20px; font-weight: 600; line-height: 1.3; margin: 0; overflow-wrap: anywhere; }
+.bar { position: relative; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; margin-top: 8px; }
+.bar i { position: absolute; inset: 0 auto 0 0; width: 100%; background: #3DBEC4; transform-origin: left; transform: scaleX(var(--p, 0));
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1); }
+.bar.waiting i { width: 30%; transform: none; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .bar.waiting i { animation: none; left: 0; opacity: .5; } .bar i { transition: none; } }
+.status { color: #A8ABB2; font-size: 13px; margin: 0; min-height: 1.45em; }
+.slow { color: #FFD38A; font-size: 13px; margin: 0; }
+.tip { margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: rgba(255,255,255,.08); color: #ECEDEF; font-size: 13px; }
+.tip b { color: #3DBEC4; font-weight: 600; margin-right: 6px; }
+button { all: unset; align-self: flex-start; cursor: pointer; color: #3DBEC4; font-size: 13px; font-weight: 600; padding: 6px 0; border-radius: 4px; }
+button:hover { text-decoration: underline; }
+button:focus-visible { outline: 2px solid #3DBEC4; outline-offset: 2px; }
+@media (pointer: coarse) { button { min-height: 44px; display: inline-flex; align-items: center; } }
+`;
+
+class LoadingScreen {
+  // lesson: the parsed lesson (title, courseName); onOriginal(): the user wants the original
+  // player now.
+  constructor(lesson, onOriginal) {
+    this.lesson = lesson;
+    this.onOriginal = onOriginal;
+    this.host = null;
+    this.bytes = 0;
+    this.total = LIB_BYTES[HLS_LIB] || 0;
+    this.started = Date.now();
+    this.tip = Math.floor(Math.random() * LOADING_TIPS.length);
+    this.showTimer = setTimeout(() => { this.showTimer = 0; this.show(); }, LOADING_SHOW_MS);
+    this.tick = 0;
+    this.nextTip = 0;
+  }
+
+  show() {
+    const parent = document.body || document.documentElement;
+    if (!parent) return;
+    const host = document.createElement('div');
+    host.id = 'lite-player-for-echo360-loading';
+    host.lang = uiLocale();
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = '<style>' + LOADING_CSS + '</style><div class="box">'
+      + '<p class="course"></p><h1></h1>'
+      + '<div class="bar waiting" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>'
+      + '<p class="status" role="status" aria-live="polite"></p><p class="slow" hidden></p>'
+      + '<p class="tip"><b></b><span></span></p><button type="button"></button></div>';
+    const q = (s) => /** @type {HTMLElement} */ (root.querySelector(s));
+    this.q = q;
+    q('.course').textContent = this.lesson.courseName || '';
+    q('.course').hidden = !this.lesson.courseName;
+    q('h1').textContent = this.lesson.title || '';
+    q('.bar').setAttribute('aria-label', tr('loadingPlayer'));
+    q('.tip b').textContent = tr('loadingTipLabel');
+    const btn = q('button');
+    btn.textContent = tr('loadingUseOriginal');
+    btn.addEventListener('click', () => { const f = this.onOriginal; this.dispose(); if (f) f(); });
+    this.host = host;
+    parent.appendChild(host);
+    // The page under it does not scroll (as under the player).
+    this.prevOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    this.render();
+    this.tick = setInterval(() => this.render(), 1000);
+  }
+
+  // Bytes of hls.js received so far.
+  progress(bytes) {
+    this.bytes = bytes;
+    if (this.host) this.render();
+  }
+
+  render() {
+    const q = this.q;
+    const kb = (n) => Math.round(n / 1024);
+    const bar = q('.bar');
+    if (this.bytes > 0 && this.total) {
+      const p = clamp(this.bytes / this.total, 0, 1);
+      bar.classList.remove('waiting');
+      bar.style.setProperty('--p', String(p));
+      bar.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+      q('.status').textContent = tr('loadingProgress', { done: kb(Math.min(this.bytes, this.total)), total: kb(this.total) });
+    } else q('.status').textContent = tr('loadingPlayer');
+    const waited = Date.now() - this.started;
+    const slow = q('.slow');
+    if (waited >= LOADING_SLOW_MS) {
+      slow.hidden = false;
+      slow.textContent = tr('loadingSlow', { s: Math.round(waited / 1000), limit: Math.round(HLS_LOAD_TIMEOUT_MS / 1000) });
+    }
+    const now = Date.now();
+    if (now >= this.nextTip) {
+      if (this.nextTip) this.tip++;
+      this.nextTip = now + LOADING_TIP_MS;
+      q('.tip span').textContent = tr(LOADING_TIPS[this.tip % LOADING_TIPS.length]);
+    }
+  }
+
+  dispose() {
+    clearTimeout(this.showTimer);
+    clearInterval(this.tick);
+    this.showTimer = 0;
+    this.tick = 0;
+    this.onOriginal = null;
+    if (this.host) { this.host.remove(); document.documentElement.style.overflow = this.prevOverflow || ''; }
+    this.host = null;
+  }
+}
+
 // ---- 90-main.js ----
 // ===================================================================================
 // Bootstrap. Two ways in (boot.path, 00-boot.js):
@@ -14587,10 +14789,9 @@ class UsageSession {
 // ===================================================================================
 
 // Why this browser cannot run the player ('' if it can): checked before anything starts.
-// iPhone is not supported. The rest are what the player needs; CSS aspect-ratio and
-// createImageBitmap set the oldest browsers that pass (Safari 15, iPadOS 15).
+// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
+// that pass (Safari 15: iOS and iPadOS 15).
 function unsupportedReason() {
-  if (/iPhone|iPod/.test(navigator.userAgent)) return 'iPhone';
   const need = [
     ['Proxy', typeof Proxy === 'function'],
     ['fetch', typeof fetch === 'function'],
@@ -14664,15 +14865,33 @@ function unsupportedReason() {
     };
     const why = unsupportedReason();
     if (why) { giveUp('unsupported', why); return; }
-    try { adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
+    let lesson;
+    try { lesson = adapter.parse(arg); } catch (e) { giveUp('startFailed', e); return; }
     const go = () => {
       // Checked before anything is built: without a way to play HLS, the original player.
       if (!canPlayHls()) { giveUp('noHls', new Error('this browser cannot play HLS here (no Media Source Extensions and no native HLS)')); return; }
       start(arg, callOriginal, takeover);
     };
     // hls.js already there (a development build injects it): at once.
-    if (platform.Hls) go();
-    else platform.loadHls(HLS_LOAD_TIMEOUT_MS).then(go, (e) => giveUp('libFailed', e));
+    if (platform.Hls) { go(); return; }
+    // Caught before it started, the original player is not on the page: while hls.js loads,
+    // the loading screen (taken over, the original player plays on meanwhile). The user may
+    // leave it for the original player; then a late hls.js is not used.
+    let left = false;
+    let screen = null;
+    if (!takeover) {
+      try {
+        screen = new LoadingScreen(lesson, () => {
+          left = true;
+          fellBack('user', 'chose the original player while loading');
+          startOriginal(callOriginal, arg, null);
+        });
+      } catch (e) { log.warn('loading screen failed:', e); }
+    }
+    const done = () => { if (screen) { try { screen.dispose(); } catch (e) { /* gone with the page */ } screen = null; } };
+    platform.loadHls(HLS_LOAD_TIMEOUT_MS, screen ? (n) => { if (screen) screen.progress(n); } : undefined).then(
+      () => { if (left) return; try { go(); } finally { done(); } },
+      (e) => { if (left) return; done(); giveUp('libFailed', e); });
   }
 
   function start(arg, callOriginal, takeover) {

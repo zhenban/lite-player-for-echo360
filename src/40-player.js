@@ -229,7 +229,7 @@ class LitePlayer {
     const prevOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
     this.d.add(() => {
-      if (document.fullscreenElement === host) document.exitFullscreen().catch(() => {});
+      if (fullscreenElement() === host) exitFullscreen();
       host.remove();
       document.documentElement.style.overflow = prevOverflow;
     });
@@ -807,9 +807,11 @@ class LitePlayer {
     this.savePrefs();
   }
 
+  // Where no element can be fullscreen (iPhone), the main video goes into the system's own
+  // player: one view, its own controls; back inline it plays on in ours.
   toggleFullscreen() {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else this.host.requestFullscreen().catch(() => {});
+    if (fullscreenElement()) exitFullscreen();
+    else if (!requestFullscreen(this.host) && typeof this.video.webkitEnterFullscreen === 'function') this.video.webkitEnterFullscreen();
   }
 
   // ---- idle (auto-hide) handling ----
@@ -842,10 +844,12 @@ class LitePlayer {
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
-    d.listen(document, 'fullscreenchange', () => {
-      const fs = !!document.fullscreenElement;
+    const onFullscreen = () => {
+      const fs = !!fullscreenElement();
       this.setButton('.fs', fs ? 'exitFullscreen' : 'fullscreen', tr(fs ? 'exitFullscreen' : 'fullscreen'), tr(fs ? 'exitFullscreenKey' : 'fullscreenKey'));
-    });
+    };
+    d.listen(document, 'fullscreenchange', onFullscreen);
+    d.listen(document, 'webkitfullscreenchange', onFullscreen);
     let resizeTimer = 0;
     d.add(() => clearTimeout(resizeTimer));
     d.listen(window, 'resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(guard(() => { this.quality.apply(); this.redrawPdf(); }), 500); });
