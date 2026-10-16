@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+src/assets.gen.js
+dev/out/
+.dev.vars

@@ -1,0 +1,20 @@
+# Read-only dashboard over the usage data (README.md: what it shows, access control, deploying).
+# Holds no secrets. TEAM_DOMAIN, POLICY_AUD, ALLOWED_EMAILS and OWNER_UIDS are Worker
+# secrets set with `wrangler secret put` (never in this file: the repository is public).
+name = "lite-player-dashboard"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+# Preview URLs would be more addresses to protect; the dashboard has none.
+preview_urls = false
+
+# No logs of requests.
+[observability]
+enabled = false
+
+# The same database the telemetry Worker writes. This Worker only runs the fixed SELECT
+# statements in src/queries.js (test/readonly.test.mjs).
+[[d1_databases]]
+binding = "DB"
+database_name = "telemetry"
+database_id = "d9006e7d-abf7-47d0-946e-ce732bd77a82"
