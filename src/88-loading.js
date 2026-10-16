@@ -11,7 +11,8 @@
 const LOADING_TIPS = ['loadingTip1', 'loadingTip2', 'loadingTip3', 'loadingTip4', 'loadingTip5', 'loadingTip6'];
 
 const LOADING_CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+/* max-width, max-height: as the player's (30-ui-assets.js), a page larger than a phone's screen. */
+:host { all: initial; position: fixed; inset: 0; max-width: 100vw; max-height: 100vh; max-height: 100dvh; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
   background: #000; color: #ECEDEF; color-scheme: dark; padding: 16px; box-sizing: border-box;
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif; -webkit-font-smoothing: antialiased; }
 .box { width: min(520px, 100%); display: flex; flex-direction: column; gap: 12px; }

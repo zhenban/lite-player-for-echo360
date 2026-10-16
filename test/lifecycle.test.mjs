@@ -9,7 +9,7 @@ import { newWindow, closeWindow, same } from './dom-guard.mjs';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
-const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,'
+const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,'
   + 'setPdfLib: (lib) => { pdfjsPromise = Promise.resolve(lib); }';
 
 // The sources in a page of their own; nothing reaches the network.
@@ -286,6 +286,53 @@ test('audit 8: with Data Saver on, finding the screen view downloads nothing', a
   d.dispose();
 }));
 
+test('slides without WebCodecs (iPadOS 15): the preview pictures are the final answer, said as such', async () => withPage(async (w, m) => {
+  // Field report: on an iPad the tab kept saying it was finding exact changes, which never
+  // come there.
+  m.HlsVideoReader.supported = () => false;
+  m.idbCache.get = async () => undefined;
+  const d = new m.Disposer();
+  const thumbs = { sourceIndex: 0, timesInSeconds: [0, 60, 120] };
+  const a = new m.SlideAnalyzer({ lesson: { mediaId: 'x', sources: [{ index: 0, av: 'a' }], thumbnails: [thumbs] }, video: {}, disposer: d });
+  a.gate = { wait: async () => {} };
+  let seen = null;
+  a.fromThumbnailsAsync = async (set) => {
+    seen = set;
+    await new Promise((r) => setTimeout(r, 20));   // pictures still loading when run() gets there
+    a.chapters = [{ start: 0, end: 90, precise: false }, { start: 90, end: 180, precise: false }];
+    a.state = 'thumbnails';
+    a.source = 'thumbs';
+  };
+  await a.run(a.ac.signal, a.gate);
+  assert.ok(seen === thumbs);
+  assert.equal(a.state, 'done');
+  assert.equal(a.source, 'thumbs');
+  assert.equal(a.stopped, 'noWebCodecs');
+  assert.equal(a.progress, 1);
+  d.dispose();
+}));
+
+test('slides: a keyframe scan that fails after the preview pictures keeps their chapters as the answer, with the reason', async () => withPage(async (w, m) => {
+  // Field report (iPhone, Safari 17): "slide detection stopped: no frame decoded" left the
+  // tab saying it was still finding exact changes.
+  m.HlsVideoReader.supported = () => true;
+  m.idbCache.get = async () => undefined;
+  const d = new m.Disposer();
+  const a = new m.SlideAnalyzer({ lesson: { mediaId: 'x', sources: [{ index: 0, av: 'a' }], thumbnails: [{ sourceIndex: 0, timesInSeconds: [0, 60] }] }, video: {}, disposer: d });
+  a.gate = { wait: async () => {} };
+  a.fromThumbnailsAsync = async () => { a.chapters = [{ start: 0, end: 60, precise: false }]; a.state = 'thumbnails'; a.source = 'thumbs'; };
+  a.fromKeyframes = async () => { await a.thumbsDone; throw new Error('no frame decoded'); };
+  let changes = 0;
+  a.onChange = () => { changes++; };
+  a.start();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(a.state, 'done');
+  assert.equal(a.source, 'thumbs');
+  assert.equal(a.stopped, 'noFrame');
+  assert.ok(changes > 0);
+  d.dispose();
+}));
+
 test('audit 9: a render still running for a removed PDF is not kept for the new one', async () => withPage(async (w, m) => {
   const d = new m.Disposer();
   const deck = new m.SlideDeckController({ lesson: { mediaId: 'test' }, video: {}, disposer: d });
@@ -517,10 +564,11 @@ test('speed: stops snap, [ and ] step between stops, values stay in range', asyn
   assert.equal(m.nextSpeed(m.SPEED_STOPS[0], -1), m.SPEED_STOPS[0]);
 }));
 
-test('control bar: buttons move into the menu in BAR_OVERFLOW order, then the time moves up', async () => withPage(async (w, m) => {
+test('control bar: BAR_OVERFLOW steps taken in order (buttons into the menu, the time up), all undone with room', async () => withPage(async (w, m) => {
+  const buttons = m.BAR_OVERFLOW.filter((k) => k !== 'time');
   const root = w.document.createElement('div');
   root.innerHTML = '<div class="bottom"><div class="row"><button class="a"></button>'
-    + m.BAR_OVERFLOW.slice().reverse().map((k) => '<button data-bar="' + k + '"></button>').join('') + '</div></div>';
+    + buttons.slice().reverse().map((k) => '<button data-bar="' + k + '"></button>').join('') + '</div></div>';
   const row = root.querySelector('.row');
   const bottom = root.querySelector('.bottom');
   // Each button is 40 px wide; a compact bar (time above the seek bar) saves 100 px.
@@ -529,15 +577,60 @@ test('control bar: buttons move into the menu in BAR_OVERFLOW order, then the ti
   Object.defineProperty(row, 'clientWidth', { get: () => width });
   const bar = { x: { $: (s) => root.querySelector(s), root }, refresh() {} };
   const fit = (wd) => { width = wd; m.MenuBar.prototype.fitBar.call(bar); return bar.out.join(','); };
-  assert.equal(fit(400), '');
-  assert.equal(fit(320), m.BAR_OVERFLOW.slice(0, 1).join(','), 'first in the list goes first');
-  assert.equal(fit(280), m.BAR_OVERFLOW.slice(0, 2).join(','));
-  assert.equal(fit(240), m.BAR_OVERFLOW.join(','));
+  const full = 40 * (buttons.length + 1) + 200;
+  // Width just short of fitting after each step (beyond the 1 px tolerance): the steps up
+  // to there are taken.
+  let saved = 0;
+  m.BAR_OVERFLOW.forEach((k, i) => {
+    const wd = full - saved - 2;
+    const want = m.BAR_OVERFLOW.slice(0, i + 1);
+    assert.equal(fit(wd), want.filter((x) => x !== 'time').join(','), 'at ' + wd + ' px: ' + want.join(','));
+    assert.equal(bottom.classList.contains('compact'), want.includes('time'), 'time moved up only from its step');
+    saved += k === 'time' ? 100 : 40;
+  });
+  assert.equal(fit(full), '', 'all come back when there is room');
   assert.equal(bottom.classList.contains('compact'), false);
-  assert.equal(fit(200), m.BAR_OVERFLOW.join(','));
-  assert.equal(bottom.classList.contains('compact'), true, 'still too wide: time moves up');
-  assert.equal(fit(400), '', 'all come back when there is room');
-  assert.equal(bottom.classList.contains('compact'), false);
+}));
+
+test('control bar: on a phone the always-kept controls fit, mute and captions make way before layout and fullscreen', async () => withPage(async (w, m) => {
+  // Field report (iPhone, Safari 17): the fullscreen and layout buttons were pushed off a
+  // 375 px bar, since only copy text, copy picture and the bookmark could make way.
+  assert.ok(m.BAR_OVERFLOW.includes('mute') && m.BAR_OVERFLOW.includes('captions'));
+  assert.ok(m.BAR_OVERFLOW.indexOf('time') < m.BAR_OVERFLOW.indexOf('mute'), 'the time moves up before a button is lost');
+  const keep = ['play', 'rew', 'fwd', 'speed', 'layout', 'fs'];
+  const tpl = m.playerTemplate();
+  for (const k of keep) assert.ok(new RegExp('class="(btn )?' + k + '"').test(tpl), k + ' has no data-bar: it stays');
+  for (const k of m.BAR_OVERFLOW.filter((x) => x !== 'time')) assert.ok(tpl.includes('data-bar="' + k + '"'), k + ' is in the bar');
+  // Touch: 44 px buttons, 52 px speed, 4 px gaps, 4 px padding each side.
+  const kept = keep.length - 1;
+  assert.ok(kept * 44 + 52 + (kept + 1) * 4 + 8 <= 320, 'fits a 320 px phone');
+}));
+
+test('phone: no 10 s jump buttons on a touch screen under 600 px across, upright or on its side', async () => withPage(async (w, m) => {
+  // The user's request: the progress bar is enough on a phone, and the bar needs the room.
+  const rule = /@media \(pointer: coarse\) and \(max-width: 600px\), \(pointer: coarse\) and \(max-height: 500px\) \{\s*\.row \.rew, \.row \.fwd \{ display: none; \}/;
+  assert.ok(rule.test(m.PLAYER_CSS));
+}));
+
+test('volume slider: closed, it is held to no width by max-width as well (Safari reserves ~130 px for a range input)', async () => withPage(async (w, m) => {
+  // Field report: on an iPhone the closed slider still took 129 px of the bar in Safari
+  // (width: 0 alone), pushing the layout and fullscreen buttons off. max-width: 0 holds it.
+  const closed = /\.vol input \{([^}]*)\}/.exec(m.PLAYER_CSS);
+  assert.ok(closed && /(^|[\s;])width: 0;/.test(closed[1]) && /max-width: 0;/.test(closed[1]), 'closed: width and max-width 0');
+  for (const rule of [/\.vol input:active \{([^}]*)\}/, /\.row\.measure \.vol input \{([^}]*)\}/]) {
+    const open = rule.exec(m.PLAYER_CSS);
+    assert.ok(open && /max-width: var\(--volw\)/.test(open[1]), 'open and measured: max-width lifted');
+  }
+}));
+
+test('player and loading screen: never wider than the screen (a phone page wider than the screen widens fixed boxes)', async () => withPage(async (w, m) => {
+  // Field report (iPhone): Echo360's root is 100vw plus the body's margin, so the page was
+  // 8 px wider than the screen, the player (fixed, inset 0) with it, and the fullscreen
+  // button at the right edge was cut off.
+  for (const css of [m.PLAYER_CSS, m.LOADING_CSS]) {
+    const host = /:host \{([^}]*)\}/.exec(css);
+    assert.ok(host && /position: fixed; inset: 0; max-width: 100vw; max-height: 100vh; max-height: 100dvh;/.test(host[1]), 'fixed, full, at most the screen');
+  }
 }));
 
 test('unavailable control: dimmed with a reason, which is also its tooltip; usable again with its own tip', async () => withPage(async (w, m) => {

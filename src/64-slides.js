@@ -583,6 +583,16 @@ function pickScreen(scored, lowerIsScreen, viewCount) {
 
 // ---- the controller used by the player ----
 
+// Why a keyframe scan stopped, as a short code for the usage data (never the message itself).
+const STOP_REASONS = ['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'];
+function stopReason(e) {
+  const m = String((e && e.message) || e || '');
+  return /no frame decoded/.test(m) ? 'noFrame'
+    : /decoder not supported|Decod|EncodingError|OperationError/i.test(m) || (e && /^(EncodingError|OperationError|NotSupportedError)$/.test(e.name)) ? 'decoder'
+      : /playlist|variant|keyframe/.test(m) ? 'playlist'
+        : /fetch|network|HTTP|\b[45]\d\d\b|Load failed/i.test(m) ? 'network' : 'other';
+}
+
 class SlideAnalyzer {
   // opts: { lesson, video, disposer, onChange }
   constructor(opts) {
@@ -606,6 +616,8 @@ class SlideAnalyzer {
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
     this.manualScreen = null;   // the view the user chose, if any
     this.took = null;           // ms the whole analysis took in this visit (usage data; null: from the cache)
+    this.source = null;         // what the chapters come from: 'frames' (the video's keyframes) | 'thumbs' (preview pictures only)
+    this.stopped = null;        // why the keyframe scan stopped early, if it did (usage data, STOP_REASONS)
     this.reader = null;
     this.urls = [];
     this.d.add(() => { for (const u of this.urls) URL.revokeObjectURL(u); this.urlOf = null; });
@@ -618,7 +630,11 @@ class SlideAnalyzer {
     bgWork.track(this.run(signal, this.gate)).catch((e) => {
       if (signal.aborted) return;
       log.warn('slide detection stopped:', e && e.message ? e.message : e);
-      if (!this.chapters.length) { this.state = 'unavailable'; this.onChange(); }
+      this.stopped = stopReason(e);
+      // The preview pictures' chapters stay, as the answer: nothing more is coming.
+      if (this.chapters.length && this.state === 'thumbnails') { this.state = 'done'; this.progress = 1; }
+      else if (!this.chapters.length) this.state = 'unavailable';
+      this.onChange();
     });
   }
 
@@ -666,6 +682,7 @@ class SlideAnalyzer {
       this.screenIndex = cached.screen;
       this.screenSure = cached.sure !== false;
       this.chapters = cached.chapters.map((c) => Object.assign({}, c, { thumb: c.blob ? this.thumbUrl(c.blob) : c.thumb }));
+      this.source = 'frames';   // only the keyframe scan's results are stored
       this.state = 'done';
       this.progress = 1;
       this.onChange();
@@ -684,8 +701,14 @@ class SlideAnalyzer {
     this.onChange();
     await gate.wait(BG_START_DELAY_MS); // let playback start first
     if (screen.thumbs) this.fromThumbnails(screen.thumbs, signal, gate);
+    // Without WebCodecs (Safari before 16.4) the preview pictures are the answer.
     if (!HlsVideoReader.supported()) {
-      if (this.chapters.length) { this.state = 'done'; this.progress = 1; this.onChange(); }
+      this.stopped = 'noWebCodecs';
+      await this.thumbsDone;
+      if (signal.aborted) return;
+      this.state = this.chapters.length ? 'done' : 'unavailable';
+      this.progress = 1;
+      this.onChange();
       return;
     }
     await this.fromKeyframes(screen.source, signal, gate, screen.reader);
@@ -716,6 +739,8 @@ class SlideAnalyzer {
     this.progress = 0;
     this.chapters = [];
     this.uniform = [];
+    this.source = null;
+    this.stopped = null;
     this.thumbsDone = null;
     this.lumas = null;
     this.pruneThumbs();
@@ -837,6 +862,7 @@ class SlideAnalyzer {
     }));
     for (let i = 1; i < this.chapters.length; i++) this.chapters[i - 1].end = this.chapters[i].start;
     this.state = 'thumbnails';
+    this.source = 'thumbs';
     this.onChange();
   }
 
@@ -957,6 +983,7 @@ class SlideAnalyzer {
   applyScenes(samples, thumbs, end) {
     const thr = learnThreshold(samples.slice(1).map((x) => x.change));
     const scenes = buildScenes(samples, end, { threshold: thr });
+    this.source = 'frames';
     this.chapters = scenes.map((sc) => {
       let blob = null;
       // The newest picture of this scene that is still kept.

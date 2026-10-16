@@ -68,7 +68,7 @@ const tally = (re) => keyed(re, 20, 1, 1000000, true);
 const THEMES = ['system', 'dark', 'light'];
 // Measures of the analyses' real work (median, 90th percentile and count each) and the
 // fixed steps that time this computer (87-telemetry.js: WORK_MEASURES, FIXED_STEPS).
-const WORK = [['scanFrame', 'scan_frame'], ['silenceMin', 'silence_min'], ['ocrMpx', 'ocr_mpx'], ['pdfMpx', 'pdf_mpx']];
+const WORK = ['scanFrame', 'silenceMin', 'ocrMpx', 'pdfMpx'];
 const STEPS = ['luma', 'loud'];
 
 // A list of known names.
@@ -156,6 +156,8 @@ export const KINDS = {
     ['features', 'features', counts(FEATURES)],
     ['changed', 'changed', names(PREFS)],
     ['screen', 'screen', oneOf(['sure', 'guess', 'manual', 'none'])],
+    ['slideSrc', 'slide_src', oneOf(['frames', 'thumbs', 'none'])],
+    ['slideStop', 'slide_stop', oneOf(['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'])],
     ['chaptersPerHour', 'chapters_ph', num(0, 3600)],
     ['pdfUnrecPct', 'pdf_unrec_pct', num(0, 100)],
     ['pageFixes', 'page_fixes', int(0, 100000)],
@@ -212,18 +214,21 @@ export const KINDS = {
     ['sendFail', 'send_fail', int(0, 100000)],
     ['dropped', 'dropped', int(0, 100000)],
     ['timerUs', 'timer_us', num2(0, 1000000)],
-    ...WORK.flatMap(([f, c]) => [
-      [f + 'Ms50', c + '_ms50', num2(0, 86400000)],
-      [f + 'Ms90', c + '_ms90', num2(0, 86400000)],
-      [f + 'N', c + '_n', int(0, 10000000)],
+    // Kept together as JSON (a dotted column: column.key.subkey), since D1 allows at most
+    // 100 columns a table: work {scanFrame: {ms50, ms90, n}, ...}, steps {luma: {v, p10,
+    // p50, p90, n, cond}, ...}.
+    ...WORK.flatMap((f) => [
+      [f + 'Ms50', 'work.' + f + '.ms50', num2(0, 86400000)],
+      [f + 'Ms90', 'work.' + f + '.ms90', num2(0, 86400000)],
+      [f + 'N', 'work.' + f + '.n', int(0, 10000000)],
     ]),
     ...STEPS.flatMap((f) => [
-      [f + 'V', f + '_v', int(1, 999)],
-      [f + 'P10', f + '_p10', num2(0, 1000000)],
-      [f + 'P50', f + '_p50', num2(0, 1000000)],
-      [f + 'P90', f + '_p90', num2(0, 1000000)],
-      [f + 'N', f + '_n', int(0, 1000000)],
-      [f + 'Cond', f + '_cond', tally(/^(playing|paused|rate:\d(\.\d{1,3})?|cpu:(nominal|fair|serious|critical|unknown)|power:(ac|battery|unknown))$/)],
+      [f + 'V', 'steps.' + f + '.v', int(1, 999)],
+      [f + 'P10', 'steps.' + f + '.p10', num2(0, 1000000)],
+      [f + 'P50', 'steps.' + f + '.p50', num2(0, 1000000)],
+      [f + 'P90', 'steps.' + f + '.p90', num2(0, 1000000)],
+      [f + 'N', 'steps.' + f + '.n', int(0, 1000000)],
+      [f + 'Cond', 'steps.' + f + '.cond', tally(/^(playing|paused|rate:\d(\.\d{1,3})?|cpu:(nominal|fair|serious|critical|unknown)|power:(ac|battery|unknown))$/)],
     ]),
   ],
   error: [
@@ -249,9 +254,19 @@ export const TABLES = { env: 'env', session: 'sessions', error: 'errors', fallba
 export function cleanEvent(ev) {
   if (!ev || typeof ev !== 'object' || Array.isArray(ev) || !Object.hasOwn(KINDS, ev.k)) return null;
   const row = {};
+  const nested = {};
   for (const [field, column, check] of KINDS[ev.k]) {
-    row[column] = Object.hasOwn(ev, field) ? check(ev[field]) : null;
+    const v = Object.hasOwn(ev, field) ? check(ev[field]) : null;
+    const path = column.split('.');
+    if (path.length === 1) { row[column] = v; continue; }
+    // A JSON column: only the values that pass, nested by the dotted path.
+    if (!nested[path[0]]) nested[path[0]] = {};
+    if (v == null) continue;
+    const group = nested[path[0]];
+    const inner = group[path[1]] || (group[path[1]] = {});
+    inner[path[2]] = typeof v === 'string' && v[0] === '{' ? JSON.parse(v) : v;
   }
+  for (const [column, group] of Object.entries(nested)) row[column] = Object.keys(group).length ? JSON.stringify(group) : null;
   for (const f of REQUIRED[ev.k]) {
     const col = KINDS[ev.k].find((x) => x[0] === f)[1];
     if (row[col] == null) return null;

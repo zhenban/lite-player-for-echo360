@@ -8,8 +8,35 @@
 -- frames, the 90th percentile of interaction delay, slow interactions per viewing, long
 -- tasks per minute, and the share of time played under serious or critical CPU pressure,
 -- with and without background analyses running.
-WITH recent AS (
-  SELECT * FROM sessions WHERE at > (strftime('%s', 'now') - 30 * 86400) * 1000
+WITH -- The timings under their former column names (migration 0004 moved them into JSON).
+t AS (
+  SELECT sessions.*,
+         json_extract(work, '$.scanFrame.ms50') AS scan_frame_ms50,
+         json_extract(work, '$.scanFrame.ms90') AS scan_frame_ms90,
+         json_extract(work, '$.scanFrame.n') AS scan_frame_n,
+         json_extract(work, '$.silenceMin.ms50') AS silence_min_ms50,
+         json_extract(work, '$.silenceMin.ms90') AS silence_min_ms90,
+         json_extract(work, '$.silenceMin.n') AS silence_min_n,
+         json_extract(work, '$.ocrMpx.ms50') AS ocr_mpx_ms50,
+         json_extract(work, '$.ocrMpx.ms90') AS ocr_mpx_ms90,
+         json_extract(work, '$.ocrMpx.n') AS ocr_mpx_n,
+         json_extract(work, '$.pdfMpx.ms50') AS pdf_mpx_ms50,
+         json_extract(work, '$.pdfMpx.ms90') AS pdf_mpx_ms90,
+         json_extract(work, '$.pdfMpx.n') AS pdf_mpx_n,
+         json_extract(steps, '$.luma.v') AS luma_v,
+         json_extract(steps, '$.luma.p10') AS luma_p10,
+         json_extract(steps, '$.luma.p50') AS luma_p50,
+         json_extract(steps, '$.luma.p90') AS luma_p90,
+         json_extract(steps, '$.luma.n') AS luma_n,
+         json_extract(steps, '$.loud.v') AS loud_v,
+         json_extract(steps, '$.loud.p10') AS loud_p10,
+         json_extract(steps, '$.loud.p50') AS loud_p50,
+         json_extract(steps, '$.loud.p90') AS loud_p90,
+         json_extract(steps, '$.loud.n') AS loud_n
+  FROM sessions
+),
+recent AS (
+  SELECT * FROM t WHERE at > (strftime('%s', 'now') - 30 * 86400) * 1000
 ),
 lv AS (SELECT MAX(luma_v) AS v FROM recent WHERE luma_p10 IS NOT NULL),
 ov AS (SELECT MAX(loud_v) AS v FROM recent WHERE loud_p10 IS NOT NULL),

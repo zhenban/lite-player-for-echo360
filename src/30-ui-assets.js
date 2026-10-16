@@ -63,7 +63,11 @@ const LIGHT_TOKENS = `
 const THEMED = '.panel, .pop, .dialog';
 
 const PLAYER_CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483000; display: block;
+/* max-width, max-height: on a phone, a page wider than the screen (Echo360's root is 100vw
+   plus the body's margin) enlarges the area that fixed boxes fill, and the player's right
+   edge (the fullscreen button) and bottom ended off the screen. 100vw is the screen's width;
+   100dvh the height between the browser's bars (100vh where dvh is unknown). */
+:host { all: initial; position: fixed; inset: 0; max-width: 100vw; max-height: 100vh; max-height: 100dvh; z-index: 2147483000; display: block;
   --video: #000; --s0: #18191B; --s1: #222326; --s2: #2C2D31; --s3: #37383D;
   --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10); --fill-2: rgba(255,255,255,.16);
   --text: #ECEDEF; --text-2: #A8ABB2; --text-3: #8A8D94;
@@ -148,15 +152,17 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
 .vol { display: flex; align-items: center; }
 /* The slider opens to the right of the speaker while a mouse is over the control or the
    keyboard focus is in it, and closes after a short pause; the time beside it slides along
-   (width transition) instead of jumping. Touch screens never show it. */
-.vol input { width: 0; margin: 0; opacity: 0; visibility: hidden;
-  transition: width var(--t) var(--ease) var(--t-fast), margin var(--t) var(--ease) var(--t-fast), opacity var(--t-fast) linear var(--t-fast), visibility 0s linear calc(var(--t) + var(--t-fast)); }
+   (width transition) instead of jumping. Touch screens never show it. The max-width too:
+   Safari keeps about 130 px for a range input of width 0 when it sizes the bar, which on an
+   iPhone pushed the layout and fullscreen buttons off the bar. */
+.vol input { width: 0; max-width: 0; margin: 0; opacity: 0; visibility: hidden;
+  transition: width var(--t) var(--ease) var(--t-fast), max-width var(--t) var(--ease) var(--t-fast), margin var(--t) var(--ease) var(--t-fast), opacity var(--t-fast) linear var(--t-fast), visibility 0s linear calc(var(--t) + var(--t-fast)); }
 @media (hover: hover) {
   .vol:hover input, .vol:has(:focus-visible) input, .vol input:active {
-    width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); opacity: 1; visibility: visible;
-    transition: width var(--t) var(--ease), margin var(--t) var(--ease), opacity var(--t-fast) linear, visibility 0s; }
+    width: var(--volw); max-width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); opacity: 1; visibility: visible;
+    transition: width var(--t) var(--ease), max-width var(--t) var(--ease), margin var(--t) var(--ease), opacity var(--t-fast) linear, visibility 0s; }
   /* MenuBar.fitBar measures the bar with the slider open, so opening it never overflows. */
-  .row.measure .vol input { width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
+  .row.measure .vol input { width: var(--volw); max-width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
 }
 .volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); white-space: nowrap; padding: var(--sp2) var(--sp4); border-radius: var(--r2);
   background: var(--overlay); color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none;
@@ -576,11 +582,24 @@ button.sfname:hover { text-decoration: underline; }
 @media (pointer: coarse) { button.sfname, .pfile { min-height: 44px; } .sfremove { width: 44px; height: 44px; } }
 .sdmsg { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
 
+/* A phone (a touch screen under 600 px across, upright or on its side): no 10 s jump
+   buttons; the progress bar is the way to move, and the bar keeps room for the rest. */
+@media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (max-height: 500px) {
+  .row .rew, .row .fwd { display: none; }
+}
 /* ---- narrow windows ---- */
 @media (max-width: 720px) {
   .app.panel-open .stage { right: 0; }
   .panel { width: 100%; }
   .presize { display: none; }
+}
+/* A phone held upright: the video on top at its own shape (16:9, between 200 px and half
+   the height), the panel below it, as video apps do on phones. */
+@media (max-width: 720px) and (orientation: portrait) {
+  .app { --stageh: clamp(200px, 56.25vw, 50%); }
+  .app.panel-open .stage { bottom: auto; height: var(--stageh); }
+  .panel { top: var(--stageh); border-left: 0; border-top: 1px solid var(--line); }
+  .app.panel-open .swapdot { margin-top: calc(var(--btn) / -2); }
 }
 /* The bars follow the video area's width, not the window's: an open panel narrows it. */
 @container stage (max-width: 720px) {
@@ -648,14 +667,14 @@ function playerTemplate() {
       <button class="btn play" aria-label="${tr('play')}" data-tip="${tr('playKey')}">${svg('play')}</button>
       <button class="btn rew" aria-label="${tr('rewind')}" data-tip="${tr('rewindKey')}">${svg('back10')}</button>
       <button class="btn fwd" aria-label="${tr('forward')}" data-tip="${tr('forwardKey')}">${svg('fwd10')}</button>
-      <div class="vol">
+      <div class="vol" data-bar="mute">
         <button class="btn mute" aria-label="${tr('mute')}" data-tip="${tr('muteKey')}">${svg('volume')}</button>
         <input class="volume" type="range" min="0" max="1" step="0.01" aria-label="${tr('volume')}">
       </div>
       <div class="time"><span class="cur">0:00</span><span class="sep"> / </span><span class="dur">0:00</span></div>
       <div class="spacer"></div>
       <button class="speed" aria-haspopup="dialog" aria-expanded="false" aria-label="${tr('speed')}" data-tip="${tr('speedKey')}">1×</button>
-      <button class="btn ccbtn" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
+      <button class="btn ccbtn" data-bar="captions" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
       <button class="btn bmbtn" data-bar="bookmark" hidden aria-pressed="false" aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
       <button class="btn framebtn" data-bar="copyPicture" aria-label="${tr('copyFrame')}" data-tip="${tr('copyFrameKey')}">${svg('copyPicture')}</button>
       <button class="btn textbtn" data-bar="copyText" aria-label="${tr('copyCaptions')}" data-tip="${tr('copyCaptionsKey')}">${svg('copyText')}</button>

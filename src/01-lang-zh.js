@@ -188,6 +188,8 @@ STRINGS.zh = {
   slideN: '幻灯片 {n}',
   slidesFinding: '正在查找幻灯片切换：{pct}%',
   slidesRough: '时间是根据预览图估计的。正在查找准确的切换位置：{pct}%',
+  slidesFromPreview: '共 {n} 张幻灯片，根据 Echo360 的预览图（约每分钟一张）推测，时间是大概的。',
+  slidesPreviewFinding: '正在根据 Echo360 的预览图推测幻灯片切换……',
   slidesFound: '从屏幕画面中自动找到 {n} 页幻灯片。',
   slidesNone: '没有在这个录像里自动找到幻灯片切换。',
   slidesSaveData: '浏览器开着省流量模式，不查找幻灯片章节。',

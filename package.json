@@ -14,7 +14,7 @@
     "check-requires": "node test/check-requires.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

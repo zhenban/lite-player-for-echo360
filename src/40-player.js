@@ -1017,8 +1017,9 @@ class LitePlayer {
     const pct = Math.floor(a.progress * 100);
     const status = a.reason === 'saveData' && !a.chapters.length ? tr('slidesSaveData')
       : !a.chapters.length && (a.state === 'done' || a.state === 'unavailable') ? tr('slidesNone')
-      : a.state === 'done' ? tr('slidesFound', { n: a.chapters.length })
-        : a.state === 'thumbnails' ? tr('slidesRough', { pct }) : tr('slidesFinding', { pct });
+      : a.state === 'done' ? tr(a.source === 'thumbs' ? 'slidesFromPreview' : 'slidesFound', { n: a.chapters.length })
+        : !HlsVideoReader.supported() ? tr('slidesPreviewFinding')
+          : a.state === 'thumbnails' ? tr('slidesRough', { pct }) : tr('slidesFinding', { pct });
     this.slidesPane.setChapters(a.chapters, status);
   }
 

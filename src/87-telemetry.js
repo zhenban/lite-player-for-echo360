@@ -178,8 +178,9 @@ async function telemetryEnv() {
   const ua = navigator.userAgent;
   const m = /(Edg|OPR|Firefox|Chrome|Version)\/(\d+)/.exec(ua);
   const browser = !m ? 'other' : { Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[m[1]] || m[1];
+  // iPadOS Safari presents itself as a Mac; a Mac has no touch screen.
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
-    : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+    : /iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
   const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
@@ -813,6 +814,8 @@ class UsageSession {
       originalAfterSec: this.originalAfter == null ? undefined : this.originalAfter,
       // Analyses' results
       screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
+      slideSrc: !slides ? undefined : slides.source || 'none',
+      slideStop: slides ? slides.stopped || undefined : undefined,
       chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
       pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
       pageFixes: deck ? deck.corrections || 0 : undefined,

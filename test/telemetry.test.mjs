@@ -20,6 +20,56 @@ const migration = readdirSync(migrationDir).filter((f) => f.endsWith('.sql')).so
 
 // ---- the Worker ----
 
+test('D1: no table over 100 columns (D1\'s limit; SQLite here allows 2000)', () => {
+  // Migration 0004 first failed on the live database with "too many columns": sessions had
+  // 100 and it added two.
+  const db = new DatabaseSync(':memory:');
+  db.exec(migration);
+  for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()) {
+    const n = db.prepare('SELECT count(*) AS n FROM pragma_table_info(?)').get(name).n;
+    assert.ok(n <= 100, name + ' has ' + n + ' columns');
+  }
+  // Every column the Worker writes exists.
+  for (const [kind, fields] of Object.entries(KINDS)) {
+    const table = { env: 'env', session: 'sessions', error: 'errors', fallback: 'fallbacks' }[kind];
+    const have = new Set(db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((r) => r.name));
+    for (const f of fields) assert.ok(have.has(f[1].split('.')[0]), table + '.' + f[1]);
+  }
+});
+
+test('D1 migration 0004: the old timing columns become the work and steps JSON, rows and indexes kept', () => {
+  const files = readdirSync(migrationDir).filter((f) => f.endsWith('.sql')).sort();
+  const before = files.filter((f) => f < '0004').map((f) => readFileSync(join(migrationDir, f), 'utf8')).join('\n');
+  const db = new DatabaseSync(':memory:');
+  db.exec(before);
+  db.exec(`INSERT INTO sessions (uid, at, sid, version, play_sec, scan_frame_ms50, scan_frame_ms90, scan_frame_n, ocr_mpx_n, luma_v, luma_p10, luma_p50, luma_p90, luma_n, luma_cond)
+    VALUES ('u1', 1, 's1', '0.22.0', 600, 12, 30, 40, 3, 1, 0.5, 0.6, 0.9, 9, '{"playing":5}')`);
+  db.exec("INSERT INTO sessions (uid, at, sid, version, play_sec) VALUES ('u2', 2, 's2', '0.22.0', 60)");
+  db.exec(readFileSync(join(migrationDir, files.find((f) => f.startsWith('0004'))), 'utf8'));
+  const rows = db.prepare('SELECT uid, play_sec, work, steps, slide_src FROM sessions ORDER BY uid').all();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].play_sec, 600);
+  assert.deepEqual(JSON.parse(rows[0].work), { scanFrame: { ms50: 12, ms90: 30, n: 40 }, ocrMpx: { n: 3 } });
+  assert.deepEqual(JSON.parse(rows[0].steps), { luma: { v: 1, p10: 0.5, p50: 0.6, p90: 0.9, n: 9, cond: { playing: 5 } } });
+  assert.equal(rows[1].work, null, 'nothing measured: NULL, not {}');
+  assert.equal(rows[1].steps, null);
+  assert.equal(rows[0].slide_src, null);
+  const idx = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sessions'").all().map((r) => r.name).sort();
+  for (const name of ['sessions_at', 'sessions_loud', 'sessions_luma', 'sessions_uid', 'sessions_version']) assert.ok(idx.includes(name), name);
+  // The upsert key survives: the same viewing again replaces its row.
+  assert.throws(() => db.exec("INSERT INTO sessions (uid, at, sid, version) VALUES ('u1', 3, 's1', '0.24.0')"), /UNIQUE/);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'sessions_json'").get().n, 0);
+});
+
+test('Worker: timings sent as flat fields are stored nested in work and steps', () => {
+  const c = cleanEvent({ k: 'session', sid: '0123456789abcdef', v: '1.0.0', scanFrameMs50: 12.34, scanFrameN: 40, ocrMpxMs90: 'x',
+    lumaV: 1, lumaP10: 0.5, lumaCond: { playing: 5, bogus: 2 } });
+  assert.deepEqual(JSON.parse(c.row.work), { scanFrame: { ms50: 12, n: 40 } });
+  assert.deepEqual(JSON.parse(c.row.steps), { luma: { v: 1, p10: 0.5, cond: { playing: 5 } } });
+  assert.equal(cleanEvent({ k: 'session', sid: '0123456789abcdef', v: '1.0.0' }).row.work, null);
+});
+
+
 // D1's prepare/bind/batch over an in-memory SQLite database.
 function fakeD1() {
   const db = new DatabaseSync(':memory:');
@@ -158,7 +208,7 @@ test('telemetry worker: every column in the database is one the schema lists', (
   const tables = { env: 'env', session: 'sessions', error: 'errors', fallback: 'fallbacks' };
   for (const [kind, table] of Object.entries(tables)) {
     const cols = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((r) => r.name);
-    const listed = ['id', 'uid', 'at', 'country', 'region', 'asorg', ...(kind === 'env' ? ['day'] : []), ...KINDS[kind].map((f) => f[1])];
+    const listed = ['id', 'uid', 'at', 'country', 'region', 'asorg', ...(kind === 'env' ? ['day'] : []), ...KINDS[kind].map((f) => f[1].split('.')[0])];
     assert.deepEqual(cols.slice().sort(), [...new Set(listed)].sort(), table);
   }
   assert.equal(plainMessage('Cannot read "x" of https://a.b/c?d=1 (id 9f8e7d6c5b4a) for me@x.edu'), 'Cannot read <text> of <url> (id <id>) for <email>');
@@ -243,7 +293,10 @@ function assertAccepted(ev) {
     if (k === 'k' || v === undefined) continue;
     const f = fields.find((x) => x[0] === k);
     assert.ok(f, ev.k + '.' + k + ' is not a field the Worker keeps');
-    assert.notEqual(c.row[f[1]], null, ev.k + '.' + k + ' = ' + JSON.stringify(v) + ' fails the Worker check');
+    // A dotted column is a key inside a JSON column.
+    const [col, ...path] = f[1].split('.');
+    const stored = path.reduce((o, key) => (o == null ? o : o[key]), path.length ? JSON.parse(c.row[col] || 'null') : c.row[col]);
+    assert.notEqual(stored, null, ev.k + '.' + k + ' = ' + JSON.stringify(v) + ' fails the Worker check');
   }
 }
 
@@ -293,6 +346,40 @@ test('telemetry: the environment and errors use fields the Worker keeps; error m
   assert.equal(errs[0].n, 2);
   assert.equal(errs[0].msg, 'could not read <text> from <url> #');
   for (const ev of errs) assertAccepted(ev);
+  await closeWindow(pg.w);
+});
+
+test('telemetry: an iPad (Safari says Macintosh) is iOS; slides from preview pictures only, and why, are in the session', async () => {
+  // Field report: iPadOS 15.7 has no WebCodecs; its sessions were filed under macOS and did
+  // not say the chapters were only the preview pictures' estimate.
+  const pg = page(null, (w) => {
+    Object.defineProperty(w.navigator, 'userAgent', { value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.4 Safari/605.1.15', configurable: true });
+    Object.defineProperty(w.navigator, 'maxTouchPoints', { value: 5, configurable: true });
+  });
+  const env = await pg.dev().telemetryEnv();
+  assert.equal(env.os, 'iOS');
+  assert.equal(env.browser, 'Safari');
+  assert.equal(env.webcodecs, false);
+  assertAccepted(JSON.parse(JSON.stringify(env)));
+  const p = pg.player();
+  await settle();
+  p.usage.opened -= 60000;
+  p.slides = { source: 'thumbs', stopped: 'noWebCodecs', state: 'done', chapters: [{}, {}], screenIndex: 0, manualScreen: null };
+  p.destroy();
+  await settle();
+  const s = pg.sent.flatMap((x) => x.body.events).find((e) => e.k === 'session');
+  assert.equal(s.slideSrc, 'thumbs');
+  assert.equal(s.slideStop, 'noWebCodecs');
+  assertAccepted(s);
+  await closeWindow(pg.w);
+});
+
+test('telemetry: a Mac without a touch screen stays macOS', async () => {
+  const pg = page(null, (w) => {
+    Object.defineProperty(w.navigator, 'userAgent', { value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15', configurable: true });
+    Object.defineProperty(w.navigator, 'maxTouchPoints', { value: 0, configurable: true });
+  });
+  assert.equal((await pg.dev().telemetryEnv()).os, 'macOS');
   await closeWindow(pg.w);
 });
 
@@ -392,9 +479,8 @@ test('telemetry worker: the newer fields keep only known keys and two significan
   // "Jane Doe" fits the pattern of a feature name but not a known one... it is lower-case
   // letters only that pass: a capitalised name does not.
   assert.deepEqual(JSON.parse(s.guard_off), { 'slide chapters': 1 });
-  assert.deepEqual([s.luma_v, s.luma_p10, s.luma_p50, s.luma_n], [1, 0.81, 1.2, 3]);
-  assert.deepEqual(JSON.parse(s.luma_cond), { playing: 2, paused: 1, 'rate:1.5': 3, 'cpu:nominal': 3, 'power:ac': 3 });
-  assert.deepEqual([s.scan_frame_ms50, s.scan_frame_n], [7.9, 120]);
+  assert.deepEqual(JSON.parse(s.steps), { luma: { v: 1, p10: 0.81, p50: 1.2, n: 3, cond: { playing: 2, paused: 1, 'rate:1.5': 3, 'cpu:nominal': 3, 'power:ac': 3 } } });
+  assert.deepEqual(JSON.parse(s.work), { scanFrame: { ms50: 7.9, n: 120 } });
 });
 
 test('telemetry: percentiles, two significant digits, and a bounded sample of values', async () => {
@@ -568,7 +654,10 @@ test('telemetry: a send that is given up is counted, and told with the viewing',
 test('telemetry queries: devices in tiers by their fixed-step time, and how well the steps follow the real work', () => {
   const db = fakeD1().db;
   const now = Date.now();
-  const add = db.prepare("INSERT INTO sessions (uid, at, sid, version, play_sec, luma_v, luma_p10, loud_v, loud_p10, dropped_pct, input_ms90, scan_frame_ms50, ocr_mpx_ms50, pressure_bg, pressure_idle) VALUES (?, ?, ?, '1.0.0', 600, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)");
+  // The timings as the Worker stores them (JSON; a NULL leaves the key out).
+  const add = db.prepare(`INSERT INTO sessions (uid, at, sid, version, play_sec, steps, dropped_pct, input_ms90, work, pressure_bg, pressure_idle)
+    VALUES (?1, ?2, ?3, '1.0.0', 600, json_patch('{}', json_object('luma', json_object('v', ?4, 'p10', ?5), 'loud', json_object('v', 1, 'p10', ?6))),
+      ?7, ?8, json_patch('{}', json_object('scanFrame', json_object('ms50', ?9), 'ocrMpx', json_object('ms50', ?10))), ?11, ?12)`);
   // Eight devices, slower ones dropping more frames. Each has a viewing with the steps
   // timed and one without (the steps are sparse: it still counts for its device).
   for (let i = 1; i <= 8; i++) {

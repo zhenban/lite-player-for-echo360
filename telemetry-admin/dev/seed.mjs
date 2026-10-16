@@ -6,7 +6,7 @@
 //          Echo360's page code 20 days ago that sent pages to the original player for two
 //          days, a few recurring errors
 // Deterministic: the same scenario and `now` give the same rows.
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
 export const OWNER_UID = 'a'.repeat(63) + '1';
 const DAY = 86400000;
@@ -19,7 +19,7 @@ export function applySchema(db) {
   const own = readdirSync(dir).filter((x) => x.endsWith('.sql'));
   const local = new URL('./migrations/', import.meta.url);
   const files = [...own.map((f) => new URL(f, dir)),
-    ...readdirSync(local).filter((x) => x.endsWith('.sql') && !own.includes(x)).map((f) => new URL(f, local))];
+    ...(existsSync(local) ? readdirSync(local) : []).filter((x) => x.endsWith('.sql') && !own.includes(x)).map((f) => new URL(f, local))];
   files.sort((a, b) => a.pathname.split('/').pop().localeCompare(b.pathname.split('/').pop()));
   for (const f of files) db.exec(readFileSync(f, 'utf8'));
 }

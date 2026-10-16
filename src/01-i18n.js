@@ -192,6 +192,8 @@ const STRINGS = {
     slidesFinding: 'Finding slide changes: {pct}%',
     slidesRough: 'Approximate times from preview pictures. Finding exact changes: {pct}%',
     slidesFound: '{n} slides, found automatically from the screen recording.',
+    slidesFromPreview: '{n} slides, estimated from Echo360\'s preview pictures (about one a minute), so the times are approximate.',
+    slidesPreviewFinding: 'Estimating slide changes from Echo360\'s preview pictures…',
     slidesNone: 'No slide changes were found automatically in this recording.',
     slidesSaveData: 'Slide chapters are not looked for while the browser\'s Data Saver is on.',
     screenView: 'Screen:',

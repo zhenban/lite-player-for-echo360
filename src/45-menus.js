@@ -3,10 +3,13 @@
 // shared components (32-ui-kit.js).
 //
 // Control bar: captions (on/off; unavailable with a reason when there are none), copy
-// picture, copy text, and the priority overflow: when the bar is too narrow, the buttons in
-// BAR_OVERFLOW make way in that order and appear at the top of the ⋮ menu instead; if it is
-// still too narrow, the time moves above the progress bar. The bookmark and layout buttons
-// are the player's; the speed button is SpeedControl's (48-speed.js).
+// picture, copy text, and the priority overflow: when the bar is too narrow, the steps of
+// BAR_OVERFLOW are taken in order until it fits: buttons make way and appear at the top of
+// the ⋮ menu instead, the time moves above the progress bar. Play, the jumps, speed, layout
+// and fullscreen always stay (a phone of 320 px fits them; a phone has no jump buttons,
+// see the stylesheet). The bookmark and layout buttons
+// are the player's; the speed button is SpeedControl's (48-speed.js), the volume button
+// VolumeControl's (49-volume.js).
 //
 // Settings menu: pages for quality, captions, audio, skipping silence, layout, copy text
 // and theme, then actions (floating window, loop, export, shortcuts, storage and
@@ -22,9 +25,11 @@
 //         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t), setLang(l) }
 // ===================================================================================
 
-// Control-bar buttons (data-bar) that move into the ⋮ menu when the bar is too narrow,
-// the first to go first. They come back in the opposite order when there is room.
-const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark'];
+// What makes way when the control bar is too narrow, the first to go first; it comes back
+// in the opposite order when there is room. A name is a control's data-bar (it moves into
+// the ⋮ menu); 'time' moves the time above the progress bar. Mute and captions go last:
+// a phone has volume keys, and captions also have their own page in the menu.
+const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark', 'time', 'mute', 'captions'];
 
 // A language choice as shown in the menu: "Match browser", or the language in itself.
 function langLabel(l) {
@@ -78,21 +83,20 @@ class MenuBar {
 
   // ---- the control bar ----
 
-  // Moves buttons out of the bar (BAR_OVERFLOW order) until it fits, then the time.
+  // Takes the BAR_OVERFLOW steps in order until the bar fits.
   fitBar() {
     const $ = this.x.$;
     const row = $('.row');
     const bottom = $('.bottom');
-    const btns = BAR_OVERFLOW.map((k) => this.x.root.querySelector('.row [data-bar=' + k + ']'));
-    for (const b of btns) b.classList.remove('out');
-    bottom.classList.remove('compact');
+    const btn = (k) => this.x.root.querySelector('.row [data-bar=' + k + ']');
+    const take = (k, on) => (k === 'time' ? bottom : btn(k)).classList.toggle(k === 'time' ? 'compact' : 'out', on);
+    for (const k of BAR_OVERFLOW) take(k, false);
     row.classList.add('measure');
     const over = () => row.scrollWidth > row.clientWidth + 1;
     let n = 0;
-    while (n < btns.length && over()) btns[n++].classList.add('out');
-    if (over()) bottom.classList.add('compact');
+    while (n < BAR_OVERFLOW.length && over()) take(BAR_OVERFLOW[n++], true);
     row.classList.remove('measure');
-    this.out = BAR_OVERFLOW.slice(0, n).filter((k, i) => !btns[i].hidden);
+    this.out = BAR_OVERFLOW.slice(0, n).filter((k) => k !== 'time' && !btn(k).hidden);
     this.refresh();
   }
 
@@ -104,9 +108,11 @@ class MenuBar {
       bookmark: { kind: 'action', label: tr(x.actions.bookmarkHere() ? 'removeBookmark' : 'bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
       copyPicture: { kind: 'action', label: tr('copyFrame'), key: 'P', run: () => this.copyFrame() },
       copyText: { kind: 'action', label: tr('copyCaptions'), key: 'A', run: () => this.copyCaptions(), reason: () => unavailableReason(btn('copyText')) },
+      mute: { kind: 'toggle', label: tr('mute'), on: () => x.video.muted || x.video.volume === 0, set: () => x.$('.mute').click() },
+      captions: { kind: 'toggle', label: tr('showCaptions'), on: () => x.cc.on, set: (on) => this.setCaptions(on), reason: () => unavailableReason(btn('captions')) },
     };
-    // In the bar's order (bookmark, copy picture, copy text).
-    const list = BAR_OVERFLOW.slice().reverse().filter((k) => this.out.includes(k)).map((k) => item[k]);
+    // In the bar's order (mute, captions, bookmark, copy picture, copy text).
+    const list = ['mute', 'captions', 'bookmark', 'copyPicture', 'copyText'].filter((k) => this.out.includes(k)).map((k) => item[k]);
     return list.length ? list.concat({ kind: 'sep' }) : [];
   }
 

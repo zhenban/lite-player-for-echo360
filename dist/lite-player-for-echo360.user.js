@@ -580,6 +580,8 @@ const STRINGS = {
     slidesFinding: 'Finding slide changes: {pct}%',
     slidesRough: 'Approximate times from preview pictures. Finding exact changes: {pct}%',
     slidesFound: '{n} slides, found automatically from the screen recording.',
+    slidesFromPreview: '{n} slides, estimated from Echo360\'s preview pictures (about one a minute), so the times are approximate.',
+    slidesPreviewFinding: 'Estimating slide changes from Echo360\'s preview pictures…',
     slidesNone: 'No slide changes were found automatically in this recording.',
     slidesSaveData: 'Slide chapters are not looked for while the browser\'s Data Saver is on.',
     screenView: 'Screen:',
@@ -1079,6 +1081,8 @@ STRINGS.zh = {
   slideN: '幻灯片 {n}',
   slidesFinding: '正在查找幻灯片切换：{pct}%',
   slidesRough: '时间是根据预览图估计的。正在查找准确的切换位置：{pct}%',
+  slidesFromPreview: '共 {n} 张幻灯片，根据 Echo360 的预览图（约每分钟一张）推测，时间是大概的。',
+  slidesPreviewFinding: '正在根据 Echo360 的预览图推测幻灯片切换……',
   slidesFound: '从屏幕画面中自动找到 {n} 页幻灯片。',
   slidesNone: '没有在这个录像里自动找到幻灯片切换。',
   slidesSaveData: '浏览器开着省流量模式，不查找幻灯片章节。',
@@ -3040,7 +3044,11 @@ const LIGHT_TOKENS = `
 const THEMED = '.panel, .pop, .dialog';
 
 const PLAYER_CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483000; display: block;
+/* max-width, max-height: on a phone, a page wider than the screen (Echo360's root is 100vw
+   plus the body's margin) enlarges the area that fixed boxes fill, and the player's right
+   edge (the fullscreen button) and bottom ended off the screen. 100vw is the screen's width;
+   100dvh the height between the browser's bars (100vh where dvh is unknown). */
+:host { all: initial; position: fixed; inset: 0; max-width: 100vw; max-height: 100vh; max-height: 100dvh; z-index: 2147483000; display: block;
   --video: #000; --s0: #18191B; --s1: #222326; --s2: #2C2D31; --s3: #37383D;
   --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10); --fill-2: rgba(255,255,255,.16);
   --text: #ECEDEF; --text-2: #A8ABB2; --text-3: #8A8D94;
@@ -3125,15 +3133,17 @@ svg { width: 24px; height: 24px; display: block; flex: none; }
 .vol { display: flex; align-items: center; }
 /* The slider opens to the right of the speaker while a mouse is over the control or the
    keyboard focus is in it, and closes after a short pause; the time beside it slides along
-   (width transition) instead of jumping. Touch screens never show it. */
-.vol input { width: 0; margin: 0; opacity: 0; visibility: hidden;
-  transition: width var(--t) var(--ease) var(--t-fast), margin var(--t) var(--ease) var(--t-fast), opacity var(--t-fast) linear var(--t-fast), visibility 0s linear calc(var(--t) + var(--t-fast)); }
+   (width transition) instead of jumping. Touch screens never show it. The max-width too:
+   Safari keeps about 130 px for a range input of width 0 when it sizes the bar, which on an
+   iPhone pushed the layout and fullscreen buttons off the bar. */
+.vol input { width: 0; max-width: 0; margin: 0; opacity: 0; visibility: hidden;
+  transition: width var(--t) var(--ease) var(--t-fast), max-width var(--t) var(--ease) var(--t-fast), margin var(--t) var(--ease) var(--t-fast), opacity var(--t-fast) linear var(--t-fast), visibility 0s linear calc(var(--t) + var(--t-fast)); }
 @media (hover: hover) {
   .vol:hover input, .vol:has(:focus-visible) input, .vol input:active {
-    width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); opacity: 1; visibility: visible;
-    transition: width var(--t) var(--ease), margin var(--t) var(--ease), opacity var(--t-fast) linear, visibility 0s; }
+    width: var(--volw); max-width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); opacity: 1; visibility: visible;
+    transition: width var(--t) var(--ease), max-width var(--t) var(--ease), margin var(--t) var(--ease), opacity var(--t-fast) linear, visibility 0s; }
   /* MenuBar.fitBar measures the bar with the slider open, so opening it never overflows. */
-  .row.measure .vol input { width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
+  .row.measure .vol input { width: var(--volw); max-width: var(--volw); margin: 0 var(--sp2) 0 var(--sp1); transition: none; }
 }
 .volosd { position: absolute; z-index: 6; left: 50%; top: 18%; transform: translateX(-50%); white-space: nowrap; padding: var(--sp2) var(--sp4); border-radius: var(--r2);
   background: var(--overlay); color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none;
@@ -3553,11 +3563,24 @@ button.sfname:hover { text-decoration: underline; }
 @media (pointer: coarse) { button.sfname, .pfile { min-height: 44px; } .sfremove { width: 44px; height: 44px; } }
 .sdmsg { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
 
+/* A phone (a touch screen under 600 px across, upright or on its side): no 10 s jump
+   buttons; the progress bar is the way to move, and the bar keeps room for the rest. */
+@media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (max-height: 500px) {
+  .row .rew, .row .fwd { display: none; }
+}
 /* ---- narrow windows ---- */
 @media (max-width: 720px) {
   .app.panel-open .stage { right: 0; }
   .panel { width: 100%; }
   .presize { display: none; }
+}
+/* A phone held upright: the video on top at its own shape (16:9, between 200 px and half
+   the height), the panel below it, as video apps do on phones. */
+@media (max-width: 720px) and (orientation: portrait) {
+  .app { --stageh: clamp(200px, 56.25vw, 50%); }
+  .app.panel-open .stage { bottom: auto; height: var(--stageh); }
+  .panel { top: var(--stageh); border-left: 0; border-top: 1px solid var(--line); }
+  .app.panel-open .swapdot { margin-top: calc(var(--btn) / -2); }
 }
 /* The bars follow the video area's width, not the window's: an open panel narrows it. */
 @container stage (max-width: 720px) {
@@ -3625,14 +3648,14 @@ function playerTemplate() {
       <button class="btn play" aria-label="${tr('play')}" data-tip="${tr('playKey')}">${svg('play')}</button>
       <button class="btn rew" aria-label="${tr('rewind')}" data-tip="${tr('rewindKey')}">${svg('back10')}</button>
       <button class="btn fwd" aria-label="${tr('forward')}" data-tip="${tr('forwardKey')}">${svg('fwd10')}</button>
-      <div class="vol">
+      <div class="vol" data-bar="mute">
         <button class="btn mute" aria-label="${tr('mute')}" data-tip="${tr('muteKey')}">${svg('volume')}</button>
         <input class="volume" type="range" min="0" max="1" step="0.01" aria-label="${tr('volume')}">
       </div>
       <div class="time"><span class="cur">0:00</span><span class="sep"> / </span><span class="dur">0:00</span></div>
       <div class="spacer"></div>
       <button class="speed" aria-haspopup="dialog" aria-expanded="false" aria-label="${tr('speed')}" data-tip="${tr('speedKey')}">1×</button>
-      <button class="btn ccbtn" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
+      <button class="btn ccbtn" data-bar="captions" aria-pressed="false" aria-disabled="true" aria-label="${tr('captions')}" data-tip="${tr('captionsLoading')}">${svg('cc')}</button>
       <button class="btn bmbtn" data-bar="bookmark" hidden aria-pressed="false" aria-label="${tr('bookmark')}" data-tip="${tr('bookmarkKey')}">${svg('bookmark')}</button>
       <button class="btn framebtn" data-bar="copyPicture" aria-label="${tr('copyFrame')}" data-tip="${tr('copyFrameKey')}">${svg('copyPicture')}</button>
       <button class="btn textbtn" data-bar="copyText" aria-label="${tr('copyCaptions')}" data-tip="${tr('copyCaptionsKey')}">${svg('copyText')}</button>
@@ -5635,8 +5658,9 @@ class LitePlayer {
     const pct = Math.floor(a.progress * 100);
     const status = a.reason === 'saveData' && !a.chapters.length ? tr('slidesSaveData')
       : !a.chapters.length && (a.state === 'done' || a.state === 'unavailable') ? tr('slidesNone')
-      : a.state === 'done' ? tr('slidesFound', { n: a.chapters.length })
-        : a.state === 'thumbnails' ? tr('slidesRough', { pct }) : tr('slidesFinding', { pct });
+      : a.state === 'done' ? tr(a.source === 'thumbs' ? 'slidesFromPreview' : 'slidesFound', { n: a.chapters.length })
+        : !HlsVideoReader.supported() ? tr('slidesPreviewFinding')
+          : a.state === 'thumbnails' ? tr('slidesRough', { pct }) : tr('slidesFinding', { pct });
     this.slidesPane.setChapters(a.chapters, status);
   }
 
@@ -6563,10 +6587,13 @@ class QualityController {
 // shared components (32-ui-kit.js).
 //
 // Control bar: captions (on/off; unavailable with a reason when there are none), copy
-// picture, copy text, and the priority overflow: when the bar is too narrow, the buttons in
-// BAR_OVERFLOW make way in that order and appear at the top of the ⋮ menu instead; if it is
-// still too narrow, the time moves above the progress bar. The bookmark and layout buttons
-// are the player's; the speed button is SpeedControl's (48-speed.js).
+// picture, copy text, and the priority overflow: when the bar is too narrow, the steps of
+// BAR_OVERFLOW are taken in order until it fits: buttons make way and appear at the top of
+// the ⋮ menu instead, the time moves above the progress bar. Play, the jumps, speed, layout
+// and fullscreen always stay (a phone of 320 px fits them; a phone has no jump buttons,
+// see the stylesheet). The bookmark and layout buttons
+// are the player's; the speed button is SpeedControl's (48-speed.js), the volume button
+// VolumeControl's (49-volume.js).
 //
 // Settings menu: pages for quality, captions, audio, skipping silence, layout, copy text
 // and theme, then actions (floating window, loop, export, shortcuts, storage and
@@ -6582,9 +6609,11 @@ class QualityController {
 //         loopLabel(), exportNotes() or null, showKeys(), original() }, setTheme(t), setLang(l) }
 // ===================================================================================
 
-// Control-bar buttons (data-bar) that move into the ⋮ menu when the bar is too narrow,
-// the first to go first. They come back in the opposite order when there is room.
-const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark'];
+// What makes way when the control bar is too narrow, the first to go first; it comes back
+// in the opposite order when there is room. A name is a control's data-bar (it moves into
+// the ⋮ menu); 'time' moves the time above the progress bar. Mute and captions go last:
+// a phone has volume keys, and captions also have their own page in the menu.
+const BAR_OVERFLOW = ['copyText', 'copyPicture', 'bookmark', 'time', 'mute', 'captions'];
 
 // A language choice as shown in the menu: "Match browser", or the language in itself.
 function langLabel(l) {
@@ -6638,21 +6667,20 @@ class MenuBar {
 
   // ---- the control bar ----
 
-  // Moves buttons out of the bar (BAR_OVERFLOW order) until it fits, then the time.
+  // Takes the BAR_OVERFLOW steps in order until the bar fits.
   fitBar() {
     const $ = this.x.$;
     const row = $('.row');
     const bottom = $('.bottom');
-    const btns = BAR_OVERFLOW.map((k) => this.x.root.querySelector('.row [data-bar=' + k + ']'));
-    for (const b of btns) b.classList.remove('out');
-    bottom.classList.remove('compact');
+    const btn = (k) => this.x.root.querySelector('.row [data-bar=' + k + ']');
+    const take = (k, on) => (k === 'time' ? bottom : btn(k)).classList.toggle(k === 'time' ? 'compact' : 'out', on);
+    for (const k of BAR_OVERFLOW) take(k, false);
     row.classList.add('measure');
     const over = () => row.scrollWidth > row.clientWidth + 1;
     let n = 0;
-    while (n < btns.length && over()) btns[n++].classList.add('out');
-    if (over()) bottom.classList.add('compact');
+    while (n < BAR_OVERFLOW.length && over()) take(BAR_OVERFLOW[n++], true);
     row.classList.remove('measure');
-    this.out = BAR_OVERFLOW.slice(0, n).filter((k, i) => !btns[i].hidden);
+    this.out = BAR_OVERFLOW.slice(0, n).filter((k) => k !== 'time' && !btn(k).hidden);
     this.refresh();
   }
 
@@ -6664,9 +6692,11 @@ class MenuBar {
       bookmark: { kind: 'action', label: tr(x.actions.bookmarkHere() ? 'removeBookmark' : 'bookmark'), key: 'B', run: (e) => x.actions.bookmark(e) },
       copyPicture: { kind: 'action', label: tr('copyFrame'), key: 'P', run: () => this.copyFrame() },
       copyText: { kind: 'action', label: tr('copyCaptions'), key: 'A', run: () => this.copyCaptions(), reason: () => unavailableReason(btn('copyText')) },
+      mute: { kind: 'toggle', label: tr('mute'), on: () => x.video.muted || x.video.volume === 0, set: () => x.$('.mute').click() },
+      captions: { kind: 'toggle', label: tr('showCaptions'), on: () => x.cc.on, set: (on) => this.setCaptions(on), reason: () => unavailableReason(btn('captions')) },
     };
-    // In the bar's order (bookmark, copy picture, copy text).
-    const list = BAR_OVERFLOW.slice().reverse().filter((k) => this.out.includes(k)).map((k) => item[k]);
+    // In the bar's order (mute, captions, bookmark, copy picture, copy text).
+    const list = ['mute', 'captions', 'bookmark', 'copyPicture', 'copyText'].filter((k) => this.out.includes(k)).map((k) => item[k]);
     return list.length ? list.concat({ kind: 'sep' }) : [];
   }
 
@@ -10887,6 +10917,16 @@ function pickScreen(scored, lowerIsScreen, viewCount) {
 
 // ---- the controller used by the player ----
 
+// Why a keyframe scan stopped, as a short code for the usage data (never the message itself).
+const STOP_REASONS = ['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'];
+function stopReason(e) {
+  const m = String((e && e.message) || e || '');
+  return /no frame decoded/.test(m) ? 'noFrame'
+    : /decoder not supported|Decod|EncodingError|OperationError/i.test(m) || (e && /^(EncodingError|OperationError|NotSupportedError)$/.test(e.name)) ? 'decoder'
+      : /playlist|variant|keyframe/.test(m) ? 'playlist'
+        : /fetch|network|HTTP|\b[45]\d\d\b|Load failed/i.test(m) ? 'network' : 'other';
+}
+
 class SlideAnalyzer {
   // opts: { lesson, video, disposer, onChange }
   constructor(opts) {
@@ -10910,6 +10950,8 @@ class SlideAnalyzer {
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
     this.manualScreen = null;   // the view the user chose, if any
     this.took = null;           // ms the whole analysis took in this visit (usage data; null: from the cache)
+    this.source = null;         // what the chapters come from: 'frames' (the video's keyframes) | 'thumbs' (preview pictures only)
+    this.stopped = null;        // why the keyframe scan stopped early, if it did (usage data, STOP_REASONS)
     this.reader = null;
     this.urls = [];
     this.d.add(() => { for (const u of this.urls) URL.revokeObjectURL(u); this.urlOf = null; });
@@ -10922,7 +10964,11 @@ class SlideAnalyzer {
     bgWork.track(this.run(signal, this.gate)).catch((e) => {
       if (signal.aborted) return;
       log.warn('slide detection stopped:', e && e.message ? e.message : e);
-      if (!this.chapters.length) { this.state = 'unavailable'; this.onChange(); }
+      this.stopped = stopReason(e);
+      // The preview pictures' chapters stay, as the answer: nothing more is coming.
+      if (this.chapters.length && this.state === 'thumbnails') { this.state = 'done'; this.progress = 1; }
+      else if (!this.chapters.length) this.state = 'unavailable';
+      this.onChange();
     });
   }
 
@@ -10970,6 +11016,7 @@ class SlideAnalyzer {
       this.screenIndex = cached.screen;
       this.screenSure = cached.sure !== false;
       this.chapters = cached.chapters.map((c) => Object.assign({}, c, { thumb: c.blob ? this.thumbUrl(c.blob) : c.thumb }));
+      this.source = 'frames';   // only the keyframe scan's results are stored
       this.state = 'done';
       this.progress = 1;
       this.onChange();
@@ -10988,8 +11035,14 @@ class SlideAnalyzer {
     this.onChange();
     await gate.wait(BG_START_DELAY_MS); // let playback start first
     if (screen.thumbs) this.fromThumbnails(screen.thumbs, signal, gate);
+    // Without WebCodecs (Safari before 16.4) the preview pictures are the answer.
     if (!HlsVideoReader.supported()) {
-      if (this.chapters.length) { this.state = 'done'; this.progress = 1; this.onChange(); }
+      this.stopped = 'noWebCodecs';
+      await this.thumbsDone;
+      if (signal.aborted) return;
+      this.state = this.chapters.length ? 'done' : 'unavailable';
+      this.progress = 1;
+      this.onChange();
       return;
     }
     await this.fromKeyframes(screen.source, signal, gate, screen.reader);
@@ -11020,6 +11073,8 @@ class SlideAnalyzer {
     this.progress = 0;
     this.chapters = [];
     this.uniform = [];
+    this.source = null;
+    this.stopped = null;
     this.thumbsDone = null;
     this.lumas = null;
     this.pruneThumbs();
@@ -11141,6 +11196,7 @@ class SlideAnalyzer {
     }));
     for (let i = 1; i < this.chapters.length; i++) this.chapters[i - 1].end = this.chapters[i].start;
     this.state = 'thumbnails';
+    this.source = 'thumbs';
     this.onChange();
   }
 
@@ -11261,6 +11317,7 @@ class SlideAnalyzer {
   applyScenes(samples, thumbs, end) {
     const thr = learnThreshold(samples.slice(1).map((x) => x.change));
     const scenes = buildScenes(samples, end, { threshold: thr });
+    this.source = 'frames';
     this.chapters = scenes.map((sc) => {
       let blob = null;
       // The newest picture of this scene that is still kept.
@@ -13971,8 +14028,9 @@ async function telemetryEnv() {
   const ua = navigator.userAgent;
   const m = /(Edg|OPR|Firefox|Chrome|Version)\/(\d+)/.exec(ua);
   const browser = !m ? 'other' : { Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[m[1]] || m[1];
+  // iPadOS Safari presents itself as a Mac; a Mac has no touch screen.
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
-    : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+    : /iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
   const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
@@ -14606,6 +14664,8 @@ class UsageSession {
       originalAfterSec: this.originalAfter == null ? undefined : this.originalAfter,
       // Analyses' results
       screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
+      slideSrc: !slides ? undefined : slides.source || 'none',
+      slideStop: slides ? slides.stopped || undefined : undefined,
       chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
       pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
       pageFixes: deck ? deck.corrections || 0 : undefined,
@@ -14662,7 +14722,8 @@ class UsageSession {
 const LOADING_TIPS = ['loadingTip1', 'loadingTip2', 'loadingTip3', 'loadingTip4', 'loadingTip5', 'loadingTip6'];
 
 const LOADING_CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+/* max-width, max-height: as the player's (30-ui-assets.js), a page larger than a phone's screen. */
+:host { all: initial; position: fixed; inset: 0; max-width: 100vw; max-height: 100vh; max-height: 100dvh; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
   background: #000; color: #ECEDEF; color-scheme: dark; padding: 16px; box-sizing: border-box;
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif; -webkit-font-smoothing: antialiased; }
 .box { width: min(520px, 100%); display: flex; flex-direction: column; gap: 12px; }
