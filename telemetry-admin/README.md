@@ -33,8 +33,18 @@ English, with Chinese as the second language (`中文` button).
   - **Echo360 compatibility**: page loads sent to the original player and why, the
     versions of Echo360's page code seen (a new one usually means Echo360 changed its
     player), and how the script started.
-- Filters: 7 / 30 / 90 days, script version, and **Exclude my devices** (off by default;
-  hides the uids listed in `OWNER_UIDS`).
+- Filters: 7 / 30 / 90 days, script version, **Exclude my devices** (off by default;
+  hides the uids listed in `OWNER_UIDS`) and **Verified data only** (off by default, see
+  below).
+
+**The totals include data that is not verified.** While the telemetry Worker runs with
+`ENFORCE_AUTH = "0"`, it also stores unsigned data (from players before 0.25.0, but also
+from anyone who sends it under a made-up uid), and that counts in every figure. A row is
+verified when it came in a batch signed by a registered player (`auth = 1`) whose
+registration carried a proof of work (`uid_keys.pow_ok = 1`) and none of its values is
+implausible (`flags = 0`). **Verified data only** counts those rows alone, everywhere on the
+page; the Users section shows how many of the active users have any verified data either
+way. Once the Worker enforces signing (and proofs of work), new unsigned rows stop arriving.
 
 Only totals. There is no per-user view and the page never shows a uid. Every block states its
 sample size; under 5 it is dimmed and marked "Too few to judge". The limits used for the
@@ -213,7 +223,9 @@ and the tests' schema, read from `../telemetry-worker/migrations`, follow).
 
 A small chart for the main README: active users in the last 30 days, the total since the
 first report, and daily active users over the last 90 days (UTC days). It shows totals only:
-no uid, no per-user numbers, nothing about devices.
+no uid, no per-user numbers, nothing about devices. Like the dashboard by default, it counts
+every row, including unsigned ones, so until the telemetry Worker refuses unsigned data its
+figures can include made-up users (see "What the page shows").
 
 - `chart/usage-chart.mjs` asks D1 for two fixed statements (checked by the same read-only
   `compile()` as the dashboard's) through Cloudflare's HTTP API and writes

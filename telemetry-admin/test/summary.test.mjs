@@ -21,7 +21,7 @@ async function get(scenario, qs = '', extraEnv = {}) {
 
 test('no uid or other per-user id appears in any response', async () => {
   for (const scenario of ['solo', 'busy']) {
-    for (const qs of ['range=7', 'range=90', 'range=90&devices=others', 'range=30&version=0.22.0']) {
+    for (const qs of ['range=7', 'range=90', 'range=90&devices=others', 'range=30&version=0.22.0', 'range=30&data=verified']) {
       const { text, ids } = await get(scenario, qs);
       assert.ok(ids.length > 0);
       assert.ok(!/[0-9a-f]{64}/.test(text), scenario + ' ' + qs + ': a 64-hex id leaked');
@@ -131,4 +131,34 @@ test('HEAD answers without a body', async () => {
   const res = await handle(req('/api/summary', { method: 'HEAD', token }), makeEnv(db), {}, deps);
   assert.equal(res.status, 200);
   assert.equal(await res.text(), '');
+});
+
+test('verified data only: rows that are unsigned, flagged or from a user without a proof of work are left out', async () => {
+  const all = await get('busy', 'range=7');
+  const { data } = await get('busy', 'range=7&data=verified');
+  assert.equal(data.filters.data, 'verified');
+  assert.equal(all.data.filters.data, 'all');
+  const db = makeDb('busy');
+  const from = data.filters.from;
+  const to = data.filters.to;
+  const ok = 't.auth = 1 AND t.flags = 0 AND t.uid IN (SELECT uid FROM uid_keys WHERE pow_ok = 1)';
+  const users = (where) => db.raw.prepare(`SELECT COUNT(DISTINCT uid) AS n FROM (SELECT uid, at, auth, flags FROM sessions UNION ALL SELECT uid, at, auth, flags FROM env) t
+    WHERE t.at >= ? AND t.at < ? AND ${where}`).get(from, to).n;
+  const verified = users(ok);
+  // The seed's made-up uids, unregistered and powless devices make a difference.
+  assert.ok(verified > 0 && verified < all.data.overview.users);
+  assert.equal(all.data.overview.users, users('1'));
+  assert.equal(all.data.overview.verifiedUsers, verified);
+  assert.equal(data.overview.users, verified);
+  assert.equal(data.overview.verifiedUsers, verified);
+  const views = db.raw.prepare(`SELECT COUNT(*) AS n FROM sessions t WHERE t.at >= ? AND t.at < ? AND ${ok}`).get(from, to).n;
+  assert.equal(data.overview.sessions, views);
+  assert.ok(data.overview.sessions < all.data.overview.sessions);
+  // Every other part counts only those rows too: never more than with all data.
+  assert.ok(data.devices.users <= all.data.devices.users);
+  assert.ok(data.stability.sessions === views);
+  // With only verified rows in the data (solo: the owner, registered, every row signed and
+  // none flagged except by chance), the figure is the same either way.
+  const solo = (await get('solo', 'range=7')).data.overview;
+  assert.equal(solo.verifiedUsers, solo.users);
 });

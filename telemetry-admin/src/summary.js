@@ -6,7 +6,7 @@ import { DEVICE_DIMS, PERF_METRICS, run } from './queries.js';
 const DAY = 86400000;
 export const RANGES = [7, 30, 90];
 const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-const KEYS = ['range', 'version', 'devices', 'tz'];
+const KEYS = ['range', 'version', 'devices', 'data', 'tz'];
 
 // Fewer than this many users or viewings: shown, but marked as too few to judge.
 export const LOW_SAMPLE = 5;
@@ -35,6 +35,10 @@ export function parseFilters(url, now) {
   if (version !== 'all' && !VERSION.test(version)) return null;
   const devices = q.has('devices') ? q.get('devices') : 'all';
   if (devices !== 'all' && devices !== 'others') return null;
+  // data=verified: only rows from signed batches of registered users, without implausible
+  // values (queries.js, `ok`).
+  const data = q.has('data') ? q.get('data') : 'all';
+  if (data !== 'all' && data !== 'verified') return null;
   const tzRaw = q.has('tz') ? q.get('tz') : '0';
   if (!/^-?\d{1,3}$/.test(tzRaw)) return null;
   const tz = Number(tzRaw);
@@ -43,7 +47,7 @@ export function parseFilters(url, now) {
   const localNow = now + tz * 60000;
   const to = Math.floor(localNow / DAY) * DAY + DAY - tz * 60000;
   const from = to - range * DAY;
-  return { range, version: version === 'all' ? null : version, devices, tz, from, to, prev: from - range * DAY, since: to - 90 * DAY };
+  return { range, version: version === 'all' ? null : version, devices, data, tz, from, to, prev: from - range * DAY, since: to - 90 * DAY };
 }
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -66,7 +70,8 @@ function byVersionDesc(a, b) {
 
 export async function summary(db, filters, owners, now) {
   const exclude = filters.devices === 'others' ? JSON.stringify(owners) : '[]';
-  const values = { from: filters.from, to: filters.to, prev: filters.prev, since: filters.since, version: filters.version, exclude, tz: filters.tz };
+  const values = { from: filters.from, to: filters.to, prev: filters.prev, since: filters.since, version: filters.version, exclude,
+    verified: filters.data === 'verified' ? 1 : 0, tz: filters.tz };
   const r = await run(db, ['overview', 'daily', 'versions', 'versionList', 'latest', 'devices', 'performance', 'perfByVersion',
     'stability', 'problems', 'errors', 'features', 'changed', 'speeds', 'slides', 'slideForms', 'slideFormTotals', 'frontends', 'fallbackReasons', 'boot'], values);
 
@@ -113,7 +118,7 @@ export async function summary(db, filters, owners, now) {
     .sort((a, b) => byVersionDesc(a.version, b.version));
 
   return {
-    filters: { range: filters.range, version: filters.version || 'all', devices: filters.devices, tz: filters.tz, from: filters.from, to: filters.to },
+    filters: { range: filters.range, version: filters.version || 'all', devices: filters.devices, data: filters.data, tz: filters.tz, from: filters.from, to: filters.to },
     canExclude: owners.length > 0,
     generatedAt: now,
     latestAt: r.latest[0] ? r.latest[0].at : null,
@@ -128,7 +133,7 @@ export async function summary(db, filters, owners, now) {
       compat: { level: sessions + fallbacks ? (compat === 'good' && recentFrontends ? 'warn' : compat) : 'none', low: sessions + fallbacks < LOW_SAMPLE, newFrontends: recentFrontends },
     },
     overview: {
-      users: num(o.users), prevUsers: num(o.prev_users), newUsers: num(o.new_users),
+      users: num(o.users), verifiedUsers: num(o.verified_users), prevUsers: num(o.prev_users), newUsers: num(o.new_users),
       sessions, prevSessions: num(o.prev_sessions), sessionUsers: num(o.session_users),
       playSec: num(o.play_sec), prevPlaySec: num(o.prev_play_sec),
       keys: num(o.keys), clicks: num(o.clicks), watchedPct: round1(o.watched_pct), silenceSkippedSec: num(o.silence_skipped_sec),

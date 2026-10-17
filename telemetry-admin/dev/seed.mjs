@@ -4,7 +4,7 @@
 //          looks like at first)
 //   busy   about 40 devices over 90 days: three script versions rolling out, a change of
 //          Echo360's page code 20 days ago that sent pages to the original player for two
-//          days, a few recurring errors
+//          days, a few recurring errors, and some rows that are not verified (below)
 // Deterministic: the same scenario and `now` give the same rows.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
@@ -159,6 +159,7 @@ export function seed(db, scenario, now) {
     // A short look (under a minute: counted as a viewing, not in performance).
     insert(db, 'sessions', session(r, d, now - 1800000, '0.23.0', NEW_FRONTEND, { play_sec: 40 }));
     insert(db, 'errors', { uid: d.uid, at: now - DAY, version: '0.23.0', feature: 'slides', type: 'TypeError', msg: 'Cannot read properties of null (reading <text>)', n: 1 });
+    register(db, [OWNER_UID], now);
     return;
   }
   // busy
@@ -201,4 +202,29 @@ export function seed(db, scenario, now) {
       if (r() < 0.02) insert(db, 'errors', { uid: d.uid, at, version: v, feature: 'transcript', type: 'AbortError', msg: 'The operation was aborted.', n: 1 });
     }
   }
+  // Not verified: two devices never registered (their rows unsigned), one registered without
+  // a proof of work, and six made-up uids that sent unsigned rows in the last three days, as
+  // anyone can while the Worker accepts unsigned data. (Their own random sequence, so the
+  // rows above stay as they were.)
+  register(db, devices.filter((d, i) => i < 40).map((d) => d.uid), now, [devices[7].uid]);
+  const f = rng(99);
+  for (let i = 0; i < 6; i++) {
+    const d = device(f, hex(f, 64), 0);
+    for (const ago of [2, 1, 0]) {
+      const at = now - ago * DAY - 5 * 3600000;
+      insert(db, 'env', envRow(d, at, '0.23.0'));
+      insert(db, 'sessions', session(f, d, at + 60000, '0.23.0', NEW_FRONTEND));
+    }
+  }
+}
+
+// Registers `uids` (no proof of work for those in `noPow`) and marks their rows signed, as
+// the Worker stores rows from a registered user's signed batch; everyone else's stay
+// unsigned. About one viewing in 16 gets an implausible-value flag.
+function register(db, uids, now, noPow = []) {
+  for (const uid of uids) {
+    insert(db, 'uid_keys', { uid, kv: new Uint8Array(32), created_day: Math.floor(now / DAY) - 91, status: 'new', pow_ok: noPow.includes(uid) ? 0 : 1 });
+  }
+  for (const t of ['env', 'sessions', 'errors', 'fallbacks']) db.exec(`UPDATE ${t} SET auth = 1 WHERE uid IN (SELECT uid FROM uid_keys)`);
+  db.exec(`UPDATE sessions SET flags = 1 WHERE substr(sid, 5, 1) = '0'`);
 }
