@@ -28,6 +28,10 @@ const TELEMETRY_URL = 'https://lite-player-telemetry.zhenban.workers.dev';
 const TELEMETRY_SECRET_KEY = 'telemetrySecret';
 const TELEMETRY_DAY_KEY = 'telemetryDay';
 const TELEMETRY_PENDING_KEY = 'telemetryPending';   // failed sends and dropped errors not yet reported
+const TELEMETRY_REG_KEY = 'telemetryRegistered';    // the uid the server keeps a signing key for (private store)
+const TELEMETRY_MINT_KEY = 'telemetryMint';         // proof of work in progress: { uid, day, from, bits, nonce } (private store)
+const TELEMETRY_INGEST_INFO = 'lp-ingest-v1';       // signing key = HMAC(secret, this), as the server derives it
+const TELEMETRY_MINT_PREFIX = 'lp-mint-v1|';
 
 // Fixed steps: pieces of the analyses that do the same computation however the recording
 // looks or sounds, so that their time per unit says how fast this computer is (the time of
@@ -260,6 +264,11 @@ const telemetry = {
   on: null,            // null: not read yet (from the settings)
   ids: null,           // Promise of { secret, uid }
   idNow: null,         // the same once known (a page that is closing cannot wait)
+  regUid: undefined,   // the uid the server signs for (undefined: not read yet)
+  clockMs: 0,          // the server's clock minus this computer's (from its answers)
+  minting: false,      // the proof of work or the registration is under way
+  mintTimer: 0,        // ... or planned
+  waiting: [],         // batches refused until registered, sent once registered
   current: null,       // the UsageSession of the player on the page
   sessions: 0,         // viewings started on this page
   errors: new Map(),   // key -> error event, waiting to be sent
@@ -282,7 +291,7 @@ const telemetry = {
     if (!on) { this.errors.clear(); clearTimeout(this.errorTimer); this.errorTimer = 0; }
   },
 
-  // { secret, uid }: made on first use.
+  // { secret, uid, kv }: made on first use. kv signs batches once registered.
   identity() {
     if (!this.ids) {
       let p; // read inside the function once it has awaited, so set by then
@@ -292,7 +301,7 @@ const telemetry = {
           secret = newTelemetrySecret();
           platform.privateKv.set(TELEMETRY_SECRET_KEY, secret);
         }
-        const id = { secret, uid: await sha256Hex(new TextEncoder().encode(secret)) };
+        const id = { secret, uid: await sha256Hex(utf8(secret)), kv: hmacSha256Sync(utf8(secret), utf8(TELEMETRY_INGEST_INFO)) };
         if (this.ids === p) this.idNow = id;
         return id;
       })();
@@ -306,28 +315,142 @@ const telemetry = {
     platform.privateKv.set(TELEMETRY_SECRET_KEY, newTelemetrySecret());
     this.ids = null;
     this.idNow = null;
+    this.forgetRegistration();
+    platform.privateKv.set(TELEMETRY_MINT_KEY, '');
     store.set(TELEMETRY_DAY_KEY, null);
   },
 
+  registered(id) {
+    if (this.regUid === undefined) this.regUid = platform.privateKv.get(TELEMETRY_REG_KEY);
+    return this.regUid === id.uid;
+  },
+
+  forgetRegistration() {
+    this.regUid = null;
+    platform.privateKv.set(TELEMETRY_REG_KEY, '');
+  },
+
+  // The body of a batch: signed once registered (a retry sends the same, so the server
+  // recognises a batch that did arrive), plain before (stored as unsigned).
+  payload(id, events) {
+    if (!this.registered(id)) return JSON.stringify({ uid: id.uid, events });
+    const body = JSON.stringify({ events });
+    const ts = Date.now() + this.clockMs;
+    const batch = bytesHex(crypto.getRandomValues(new Uint8Array(12)));
+    const sig = bytesHex(hmacSha256Sync(id.kv, utf8(ts + '.' + batch + '.' + bytesHex(sha256Sync(utf8(body))))));
+    return JSON.stringify({ uid: id.uid, ts, batch, sig, body });
+  },
+
+  // An answer of the server: its JSON (or null), and its clock.
+  answer(r) {
+    let data = null;
+    try { data = JSON.parse(r.text); } catch (e) { data = null; }
+    if (data && typeof data.now === 'number' && Number.isFinite(data.now)) this.clockMs = data.now - Date.now();
+    return data;
+  },
+
   // Sends events; never throws. `last`: the page is being hidden or closed (no retries).
-  async send(events, last, attempt) {
+  // `again`: sent a second time after the server asked to register or fix the clock.
+  async send(events, last, again) {
     try {
       if (!this.enabled() || !events.length || navigator.onLine === false) return;
       // Sent at once while the page closes: nothing is awaited before the request.
-      const { uid } = this.idNow || await this.identity();
+      const id = this.idNow || await this.identity();
       if (!this.enabled()) return;
-      const r = await platform.post(TELEMETRY_URL + '/v1/events', JSON.stringify({ uid, events }), TELEMETRY_TIMEOUT_MS, !!last);
-      const k = attempt || 0;
+      // deliver starts the request before its first await.
+      await this.deliver(id, this.payload(id, events), events, !!last, !!again, 0);
+    } catch (e) { /* dropped */ }
+  },
+
+  async deliver(id, payload, events, last, again, attempt) {
+    try {
+      const r = await platform.post(TELEMETRY_URL + '/v1/events', payload, TELEMETRY_TIMEOUT_MS, last);
+      const data = this.answer(r);
       if (r.status === 200) return;
-      if ((r.status === 0 || r.status >= 500) && !last && k < TELEMETRY_RETRY_MS.length) {
+      if (r.status === 401 && data && !last && !again) {
+        // The clock was off: signed again with the server's.
+        if (data.error === 'clock') { this.send(events, false, true); return; }
+        // Not registered (any more), or the server's key is not ours: register, then send.
+        if (data.register || data.error === 'signature') {
+          if (this.registered(id)) this.forgetRegistration();
+          if (this.waiting.length < TELEMETRY_WAIT_BATCHES) this.waiting.push(events);
+          this.register(0);
+          return;
+        }
+      }
+      if ((r.status === 0 || r.status >= 500) && !last && attempt < TELEMETRY_RETRY_MS.length) {
         setTimeout(() => {
-          if (!document.hidden && navigator.onLine !== false) this.send(events, false, k + 1);
-        }, TELEMETRY_RETRY_MS[k]);
+          if (!document.hidden && navigator.onLine !== false) this.deliver(id, payload, events, false, again, attempt + 1);
+        }, TELEMETRY_RETRY_MS[attempt]);
         return;
       }
       // Given up (a summary sent while the page closes is not waited for: not counted).
       if (!last) this.selfCount('sendFail');
     } catch (e) { /* dropped */ }
+  },
+
+  // Once per id: a proof of work done in short idle slices (saved as it goes, so a page
+  // closed early carries on next time), then the server keeps the signing key. `delay`: ms
+  // before starting (playback settles first).
+  register(delay) {
+    if (this.minting || !this.enabled()) return;
+    // Already planned: kept, unless asked to start sooner (the server asked to register).
+    if (this.mintTimer && delay > 0) return;
+    clearTimeout(this.mintTimer);
+    this.mintTimer = setTimeout(() => {
+      this.mintTimer = 0;
+      this.minting = true;
+      this.mint().catch(() => {}).then(() => { this.minting = false; });
+    }, delay);
+  },
+
+  async mint() {
+    const id = await this.identity();
+    for (let tries = 0; tries < 2 && !this.registered(id); tries++) {
+      const today = Math.floor((Date.now() + this.clockMs) / 86400000);
+      let m = null;
+      try { m = JSON.parse(platform.privateKv.get(TELEMETRY_MINT_KEY) || 'null'); } catch (e) { m = null; }
+      const bits = Math.max(TELEMETRY_MINT_BITS, m && m.uid === id.uid && m.bits <= 32 ? m.bits : 0);
+      // The server takes the day before, the day and the day after.
+      if (!m || m.uid !== id.uid || m.bits !== bits || !(Math.abs(today - m.day) <= 1) || !(m.from >= 0)) m = { uid: id.uid, day: today, from: 0, bits };
+      const save = () => platform.privateKv.set(TELEMETRY_MINT_KEY, JSON.stringify(m));
+      const prefix = TELEMETRY_MINT_PREFIX + id.uid + '|' + m.day + '|';
+      let chunk = 1000;
+      let saved = performance.now();
+      while (m.nonce == null) {
+        // Safari has no idle callbacks: a pause as long as a slice instead (half the time).
+        await new Promise((resolve) => {
+          if (typeof requestIdleCallback === 'function') requestIdleCallback(resolve, { timeout: 1000 }); else setTimeout(resolve, TELEMETRY_MINT_SLICE_MS);
+        });
+        // Turned off, a new id, or the player gone (the original player chosen, the page
+        // left): stops; the work so far is saved and goes on with the next viewing.
+        if (!this.enabled() || this.idNow !== id || !this.current) { save(); return; }
+        const t0 = performance.now();
+        const found = mintSearch(prefix, m.bits, m.from, chunk);
+        const ms = performance.now() - t0;
+        if (found >= 0) m.nonce = found; else m.from += chunk;
+        chunk = clamp(Math.round(chunk * TELEMETRY_MINT_SLICE_MS / Math.max(ms, 1)), 100, 1000000);
+        if (m.nonce != null || performance.now() - saved > TELEMETRY_MINT_SAVE_MS) { save(); saved = performance.now(); }
+      }
+      const r = await platform.post(TELEMETRY_URL + '/v1/register', JSON.stringify({ uid: id.uid, secret: id.secret, day: m.day, nonce: String(m.nonce) }), TELEMETRY_TIMEOUT_MS);
+      const data = this.answer(r);
+      if (r.status === 200) {
+        this.regUid = id.uid;
+        platform.privateKv.set(TELEMETRY_REG_KEY, id.uid);
+        platform.privateKv.set(TELEMETRY_MINT_KEY, '');
+        const list = this.waiting;
+        this.waiting = [];
+        for (const events of list) this.send(events, false, true);
+        return;
+      }
+      // More bits asked, or the day was off (this computer's clock): done again.
+      if (r.status === 403 && data && data.error === 'pow') {
+        m = { uid: id.uid, day: today, from: 0, bits: Math.min(32, Math.max(bits, data.bits | 0)) };
+        save();
+        continue;
+      }
+      return;   // no answer or refused: tried again with the next viewing
+    }
   },
 
   // Failed sends and dropped errors: told with the current viewing, or kept for the next.
@@ -376,13 +499,14 @@ const telemetry = {
   },
 
   // A request with the secret (viewing or deleting one's data): { status, data }.
+  // Deleting also removes the registration on the server.
   // Never rejects (status 0: no answer).
   async ask(path) {
     try {
       const { secret, uid } = await this.identity();
       const r = await platform.post(TELEMETRY_URL + path, JSON.stringify({ uid, secret }), TELEMETRY_TIMEOUT_MS);
-      let data = null;
-      try { data = JSON.parse(r.text); } catch (e) { data = null; }
+      const data = this.answer(r);
+      if (path === '/v1/me/delete' && r.status === 200) this.forgetRegistration();
       return { status: r.status, data };
     } catch (e) {
       return { status: 0, data: null };
@@ -506,8 +630,19 @@ class UsageSession {
     telemetry.current = this;
     telemetry.measureTimer();
     // The id is worked out now: a summary sent as the page closes cannot wait for it.
-    if (telemetry.enabled()) telemetry.identity().catch(() => {});
-    disposer.add(() => { this.report(true); if (telemetry.current === this) telemetry.current = null; });
+    if (telemetry.enabled()) {
+      telemetry.identity().then((id) => {
+        if (telemetry.current === this && !telemetry.registered(id)) telemetry.register(TELEMETRY_MINT_DELAY_MS);
+      }, () => {});
+    }
+    disposer.add(() => {
+      this.report(true);
+      if (telemetry.current !== this) return;
+      telemetry.current = null;
+      // Registering waits for the next viewing (a running proof of work stops by itself).
+      clearTimeout(telemetry.mintTimer);
+      telemetry.mintTimer = 0;
+    });
     const v = deps.video;
     const on = (target, type, fn, opts) => disposer.listen(target, type, (e) => { try { fn(e); } catch (err) { /* not counted */ } }, opts);
     on(v, 'timeupdate', () => this.tick());

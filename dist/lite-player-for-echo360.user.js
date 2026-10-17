@@ -435,6 +435,7 @@ const STRINGS = {
     telemetryKindSession: 'Viewings',
     telemetryKindError: 'Errors',
     telemetryKindFallback: 'Switches to the original player',
+    telemetryKindRegistration: 'Registration (once per ID)',
     telemetryDeleteTitle: 'Delete all your usage data?',
     telemetryDeleteText: 'Everything sent with your ID is deleted from the server now. This cannot be undone. Sending goes on unless you also turn it off.',
     telemetryDeleteConfirm: 'Delete',
@@ -937,6 +938,7 @@ STRINGS.zh = {
   telemetryKindSession: '观看记录',
   telemetryKindError: '错误',
   telemetryKindFallback: '切回原播放器',
+  telemetryKindRegistration: '注册（每个 ID 一次）',
   telemetryDeleteTitle: '删除你的全部使用数据？',
   telemetryDeleteText: '用你的 ID 发送过的数据会立即从服务器删除，无法恢复。之后仍会继续发送，除非你同时关掉发送。',
   telemetryDeleteConfirm: '删除',
@@ -1612,6 +1614,12 @@ const TELEMETRY_SLOW_INPUT_MS = 200;   // a slow interaction: web.dev's INP "goo
 const TELEMETRY_INPUT_MAX_MS = 10000;  // an interaction "answered" later than this was not drawn at all (window covered or not being drawn: Event Timing waits for the next frame shown; seen 181 s in a window behind others), not a delay anyone saw: left out
 const TELEMETRY_WIDE_COLS = 12;        // "View my data": a kind of record with more columns is shown a record at a time (a field per line)
 const TELEMETRY_PRESSURE_SAMPLE_MS = 2000;  // CPU pressure sampling asked of the browser (changes only are reported)
+// Registration with the usage-data server (telemetry-worker/src/auth.js): one proof of work per id.
+const TELEMETRY_MINT_BITS = 18;        // zero bits of the proof of work; the server's MINT_BITS (wrangler.toml) wins if higher. 2^18 hashes on average: desktop Chrome does 2.1 M/s (0.1 s); iPad Pro 1st gen: to be measured
+const TELEMETRY_MINT_DELAY_MS = 30000; // the work starts this long after a viewing starts, once playback has settled (as the environment)
+const TELEMETRY_MINT_SLICE_MS = 20;    // one slice of the work, in idle time (user requirement for background computation: about 20 ms)
+const TELEMETRY_MINT_SAVE_MS = 2000;   // the work done so far is saved at most this often (a page closed early carries on next time)
+const TELEMETRY_WAIT_BATCHES = 10;     // batches the server refused until registered, kept (this page only) and sent once registered
 
 // ---- 03-common.js ----
 // ===================================================================================
@@ -6878,7 +6886,7 @@ class MenuBar {
     set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryLoading') })], [close]);
     telemetry.ask('/v1/me').then((r) => {
       if (r.status !== 200 || !r.data) { set(tr('telemetryDataTitle'), [el('p', { text: failed(r) })], [close]); return; }
-      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback' };
+      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback', registration: 'telemetryKindRegistration' };
       const nodes = [];
       for (const [k, label] of Object.entries(kinds)) {
         const rows = Array.isArray(r.data[k]) ? r.data[k] : [];
@@ -13477,6 +13485,126 @@ const courseList = {
   },
 };
 
+// ---- 84-sha256.js ----
+// SHA-256 (FIPS 180-4) and HMAC-SHA-256 (RFC 2104) that run synchronously. WebCrypto's are
+// asynchronous: a usage-data batch signed while the page closes cannot wait for them
+// (87-telemetry.js), and the mint proof of work hashes in short idle slices where a Promise
+// a hash would cost more than the hash. Tests and a speed benchmark load this file alone, so it
+// uses nothing from the others.
+
+const SHA256_K = new Int32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+const SHA256_IV = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+const sha256W = new Int32Array(64);   // message schedule, reused (one hash at a time: synchronous)
+
+// One 64-byte block: the 16 big-endian words m[off..off+15] into the state h (8 words).
+function sha256Block(h, m, off) {
+  const w = sha256W;
+  for (let i = 0; i < 16; i++) w[i] = m[off + i];
+  for (let i = 16; i < 64; i++) {
+    const x = w[i - 15], y = w[i - 2];
+    const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+    const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+    w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+  }
+  let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+  for (let i = 0; i < 64; i++) {
+    const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+    const t1 = (k + S1 + ((e & f) ^ (~e & g)) + SHA256_K[i] + w[i]) | 0;
+    const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+    const t2 = (S0 + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+    k = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+  }
+  h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+  h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + k) | 0;
+}
+
+// The padded message as big-endian words.
+function sha256Words(bytes) {
+  const len = bytes.length;
+  const m = new Int32Array(((len + 9 + 63) >> 6) << 4);
+  for (let i = 0; i < len; i++) m[i >> 2] |= bytes[i] << (24 - (i & 3) * 8);
+  m[len >> 2] |= 0x80 << (24 - (len & 3) * 8);
+  m[m.length - 2] = Math.floor(len / 0x20000000);   // length in bits, high word
+  m[m.length - 1] = (len * 8) | 0;
+  return m;
+}
+
+// SHA-256 of a Uint8Array, as a Uint8Array of 32 bytes.
+function sha256Sync(bytes) {
+  const h = Int32Array.from(SHA256_IV);
+  const m = sha256Words(bytes);
+  for (let off = 0; off < m.length; off += 16) sha256Block(h, m, off);
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = h[i >> 2] >>> (24 - (i & 3) * 8);
+  return out;
+}
+
+function hmacSha256Sync(key, msg) {
+  if (key.length > 64) key = sha256Sync(key);
+  const inner = new Uint8Array(64 + msg.length), outer = new Uint8Array(96);
+  for (let i = 0; i < 64; i++) {
+    const b = key[i] || 0;
+    inner[i] = b ^ 0x36;
+    outer[i] = b ^ 0x5c;
+  }
+  inner.set(msg, 64);
+  outer.set(sha256Sync(inner), 64);
+  return sha256Sync(outer);
+}
+
+function utf8(text) {
+  return new TextEncoder().encode(text);
+}
+
+function bytesHex(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+  return s;
+}
+
+// Proof of work: looks at nonces from..from+count-1 (whole numbers, written in decimal) for
+// one whose SHA-256(prefix + nonce) starts with at least `bits` zero bits; returns it, or -1.
+// The prefix is ASCII. Its whole blocks are hashed once; each nonce then costs one or two
+// blocks and allocates nothing.
+function mintSearch(prefix, bits, from, count) {
+  const pre = new Uint8Array(prefix.length);
+  for (let i = 0; i < prefix.length; i++) pre[i] = prefix.charCodeAt(i) & 0x7f;
+  const skip = (pre.length >> 6) << 6;
+  const mid = Int32Array.from(SHA256_IV);
+  const head = new Int32Array(skip >> 2);
+  for (let i = 0; i < skip; i++) head[i >> 2] |= pre[i] << (24 - (i & 3) * 8);
+  for (let off = 0; off < head.length; off += 16) sha256Block(mid, head, off);
+  const tail = pre.subarray(skip);
+  const m = new Int32Array(32), h = new Int32Array(8), digits = new Uint8Array(20);
+  for (let nonce = from, end = from + count; nonce < end; nonce++) {
+    let nd = 0;
+    for (let v = nonce; ; v = Math.floor(v / 10)) { digits[nd++] = 48 + v % 10; if (v < 10) break; }
+    const len = tail.length + nd;
+    const words = len + 9 <= 64 ? 16 : 32;
+    m.fill(0, 0, words);
+    for (let i = 0; i < tail.length; i++) m[i >> 2] |= tail[i] << (24 - (i & 3) * 8);
+    for (let j = 0; j < nd; j++) { const i = tail.length + j; m[i >> 2] |= digits[nd - 1 - j] << (24 - (i & 3) * 8); }
+    m[len >> 2] |= 0x80 << (24 - (len & 3) * 8);
+    m[words - 1] = (skip + len) * 8;
+    h.set(mid);
+    sha256Block(h, m, 0);
+    if (words === 32) sha256Block(h, m, 16);
+    let zeros = Math.clz32(h[0]);
+    if (zeros === 32) zeros += Math.clz32(h[1]);
+    if (zeros >= bits) return nonce;
+  }
+  return -1;
+}
+
 // ---- 85-export.js ----
 // ===================================================================================
 // Export and backup.
@@ -13878,6 +14006,10 @@ const TELEMETRY_URL = 'https://lite-player-telemetry.zhenban.workers.dev';
 const TELEMETRY_SECRET_KEY = 'telemetrySecret';
 const TELEMETRY_DAY_KEY = 'telemetryDay';
 const TELEMETRY_PENDING_KEY = 'telemetryPending';   // failed sends and dropped errors not yet reported
+const TELEMETRY_REG_KEY = 'telemetryRegistered';    // the uid the server keeps a signing key for (private store)
+const TELEMETRY_MINT_KEY = 'telemetryMint';         // proof of work in progress: { uid, day, from, bits, nonce } (private store)
+const TELEMETRY_INGEST_INFO = 'lp-ingest-v1';       // signing key = HMAC(secret, this), as the server derives it
+const TELEMETRY_MINT_PREFIX = 'lp-mint-v1|';
 
 // Fixed steps: pieces of the analyses that do the same computation however the recording
 // looks or sounds, so that their time per unit says how fast this computer is (the time of
@@ -14110,6 +14242,11 @@ const telemetry = {
   on: null,            // null: not read yet (from the settings)
   ids: null,           // Promise of { secret, uid }
   idNow: null,         // the same once known (a page that is closing cannot wait)
+  regUid: undefined,   // the uid the server signs for (undefined: not read yet)
+  clockMs: 0,          // the server's clock minus this computer's (from its answers)
+  minting: false,      // the proof of work or the registration is under way
+  mintTimer: 0,        // ... or planned
+  waiting: [],         // batches refused until registered, sent once registered
   current: null,       // the UsageSession of the player on the page
   sessions: 0,         // viewings started on this page
   errors: new Map(),   // key -> error event, waiting to be sent
@@ -14132,7 +14269,7 @@ const telemetry = {
     if (!on) { this.errors.clear(); clearTimeout(this.errorTimer); this.errorTimer = 0; }
   },
 
-  // { secret, uid }: made on first use.
+  // { secret, uid, kv }: made on first use. kv signs batches once registered.
   identity() {
     if (!this.ids) {
       let p; // read inside the function once it has awaited, so set by then
@@ -14142,7 +14279,7 @@ const telemetry = {
           secret = newTelemetrySecret();
           platform.privateKv.set(TELEMETRY_SECRET_KEY, secret);
         }
-        const id = { secret, uid: await sha256Hex(new TextEncoder().encode(secret)) };
+        const id = { secret, uid: await sha256Hex(utf8(secret)), kv: hmacSha256Sync(utf8(secret), utf8(TELEMETRY_INGEST_INFO)) };
         if (this.ids === p) this.idNow = id;
         return id;
       })();
@@ -14156,28 +14293,142 @@ const telemetry = {
     platform.privateKv.set(TELEMETRY_SECRET_KEY, newTelemetrySecret());
     this.ids = null;
     this.idNow = null;
+    this.forgetRegistration();
+    platform.privateKv.set(TELEMETRY_MINT_KEY, '');
     store.set(TELEMETRY_DAY_KEY, null);
   },
 
+  registered(id) {
+    if (this.regUid === undefined) this.regUid = platform.privateKv.get(TELEMETRY_REG_KEY);
+    return this.regUid === id.uid;
+  },
+
+  forgetRegistration() {
+    this.regUid = null;
+    platform.privateKv.set(TELEMETRY_REG_KEY, '');
+  },
+
+  // The body of a batch: signed once registered (a retry sends the same, so the server
+  // recognises a batch that did arrive), plain before (stored as unsigned).
+  payload(id, events) {
+    if (!this.registered(id)) return JSON.stringify({ uid: id.uid, events });
+    const body = JSON.stringify({ events });
+    const ts = Date.now() + this.clockMs;
+    const batch = bytesHex(crypto.getRandomValues(new Uint8Array(12)));
+    const sig = bytesHex(hmacSha256Sync(id.kv, utf8(ts + '.' + batch + '.' + bytesHex(sha256Sync(utf8(body))))));
+    return JSON.stringify({ uid: id.uid, ts, batch, sig, body });
+  },
+
+  // An answer of the server: its JSON (or null), and its clock.
+  answer(r) {
+    let data = null;
+    try { data = JSON.parse(r.text); } catch (e) { data = null; }
+    if (data && typeof data.now === 'number' && Number.isFinite(data.now)) this.clockMs = data.now - Date.now();
+    return data;
+  },
+
   // Sends events; never throws. `last`: the page is being hidden or closed (no retries).
-  async send(events, last, attempt) {
+  // `again`: sent a second time after the server asked to register or fix the clock.
+  async send(events, last, again) {
     try {
       if (!this.enabled() || !events.length || navigator.onLine === false) return;
       // Sent at once while the page closes: nothing is awaited before the request.
-      const { uid } = this.idNow || await this.identity();
+      const id = this.idNow || await this.identity();
       if (!this.enabled()) return;
-      const r = await platform.post(TELEMETRY_URL + '/v1/events', JSON.stringify({ uid, events }), TELEMETRY_TIMEOUT_MS, !!last);
-      const k = attempt || 0;
+      // deliver starts the request before its first await.
+      await this.deliver(id, this.payload(id, events), events, !!last, !!again, 0);
+    } catch (e) { /* dropped */ }
+  },
+
+  async deliver(id, payload, events, last, again, attempt) {
+    try {
+      const r = await platform.post(TELEMETRY_URL + '/v1/events', payload, TELEMETRY_TIMEOUT_MS, last);
+      const data = this.answer(r);
       if (r.status === 200) return;
-      if ((r.status === 0 || r.status >= 500) && !last && k < TELEMETRY_RETRY_MS.length) {
+      if (r.status === 401 && data && !last && !again) {
+        // The clock was off: signed again with the server's.
+        if (data.error === 'clock') { this.send(events, false, true); return; }
+        // Not registered (any more), or the server's key is not ours: register, then send.
+        if (data.register || data.error === 'signature') {
+          if (this.registered(id)) this.forgetRegistration();
+          if (this.waiting.length < TELEMETRY_WAIT_BATCHES) this.waiting.push(events);
+          this.register(0);
+          return;
+        }
+      }
+      if ((r.status === 0 || r.status >= 500) && !last && attempt < TELEMETRY_RETRY_MS.length) {
         setTimeout(() => {
-          if (!document.hidden && navigator.onLine !== false) this.send(events, false, k + 1);
-        }, TELEMETRY_RETRY_MS[k]);
+          if (!document.hidden && navigator.onLine !== false) this.deliver(id, payload, events, false, again, attempt + 1);
+        }, TELEMETRY_RETRY_MS[attempt]);
         return;
       }
       // Given up (a summary sent while the page closes is not waited for: not counted).
       if (!last) this.selfCount('sendFail');
     } catch (e) { /* dropped */ }
+  },
+
+  // Once per id: a proof of work done in short idle slices (saved as it goes, so a page
+  // closed early carries on next time), then the server keeps the signing key. `delay`: ms
+  // before starting (playback settles first).
+  register(delay) {
+    if (this.minting || !this.enabled()) return;
+    // Already planned: kept, unless asked to start sooner (the server asked to register).
+    if (this.mintTimer && delay > 0) return;
+    clearTimeout(this.mintTimer);
+    this.mintTimer = setTimeout(() => {
+      this.mintTimer = 0;
+      this.minting = true;
+      this.mint().catch(() => {}).then(() => { this.minting = false; });
+    }, delay);
+  },
+
+  async mint() {
+    const id = await this.identity();
+    for (let tries = 0; tries < 2 && !this.registered(id); tries++) {
+      const today = Math.floor((Date.now() + this.clockMs) / 86400000);
+      let m = null;
+      try { m = JSON.parse(platform.privateKv.get(TELEMETRY_MINT_KEY) || 'null'); } catch (e) { m = null; }
+      const bits = Math.max(TELEMETRY_MINT_BITS, m && m.uid === id.uid && m.bits <= 32 ? m.bits : 0);
+      // The server takes the day before, the day and the day after.
+      if (!m || m.uid !== id.uid || m.bits !== bits || !(Math.abs(today - m.day) <= 1) || !(m.from >= 0)) m = { uid: id.uid, day: today, from: 0, bits };
+      const save = () => platform.privateKv.set(TELEMETRY_MINT_KEY, JSON.stringify(m));
+      const prefix = TELEMETRY_MINT_PREFIX + id.uid + '|' + m.day + '|';
+      let chunk = 1000;
+      let saved = performance.now();
+      while (m.nonce == null) {
+        // Safari has no idle callbacks: a pause as long as a slice instead (half the time).
+        await new Promise((resolve) => {
+          if (typeof requestIdleCallback === 'function') requestIdleCallback(resolve, { timeout: 1000 }); else setTimeout(resolve, TELEMETRY_MINT_SLICE_MS);
+        });
+        // Turned off, a new id, or the player gone (the original player chosen, the page
+        // left): stops; the work so far is saved and goes on with the next viewing.
+        if (!this.enabled() || this.idNow !== id || !this.current) { save(); return; }
+        const t0 = performance.now();
+        const found = mintSearch(prefix, m.bits, m.from, chunk);
+        const ms = performance.now() - t0;
+        if (found >= 0) m.nonce = found; else m.from += chunk;
+        chunk = clamp(Math.round(chunk * TELEMETRY_MINT_SLICE_MS / Math.max(ms, 1)), 100, 1000000);
+        if (m.nonce != null || performance.now() - saved > TELEMETRY_MINT_SAVE_MS) { save(); saved = performance.now(); }
+      }
+      const r = await platform.post(TELEMETRY_URL + '/v1/register', JSON.stringify({ uid: id.uid, secret: id.secret, day: m.day, nonce: String(m.nonce) }), TELEMETRY_TIMEOUT_MS);
+      const data = this.answer(r);
+      if (r.status === 200) {
+        this.regUid = id.uid;
+        platform.privateKv.set(TELEMETRY_REG_KEY, id.uid);
+        platform.privateKv.set(TELEMETRY_MINT_KEY, '');
+        const list = this.waiting;
+        this.waiting = [];
+        for (const events of list) this.send(events, false, true);
+        return;
+      }
+      // More bits asked, or the day was off (this computer's clock): done again.
+      if (r.status === 403 && data && data.error === 'pow') {
+        m = { uid: id.uid, day: today, from: 0, bits: Math.min(32, Math.max(bits, data.bits | 0)) };
+        save();
+        continue;
+      }
+      return;   // no answer or refused: tried again with the next viewing
+    }
   },
 
   // Failed sends and dropped errors: told with the current viewing, or kept for the next.
@@ -14226,13 +14477,14 @@ const telemetry = {
   },
 
   // A request with the secret (viewing or deleting one's data): { status, data }.
+  // Deleting also removes the registration on the server.
   // Never rejects (status 0: no answer).
   async ask(path) {
     try {
       const { secret, uid } = await this.identity();
       const r = await platform.post(TELEMETRY_URL + path, JSON.stringify({ uid, secret }), TELEMETRY_TIMEOUT_MS);
-      let data = null;
-      try { data = JSON.parse(r.text); } catch (e) { data = null; }
+      const data = this.answer(r);
+      if (path === '/v1/me/delete' && r.status === 200) this.forgetRegistration();
       return { status: r.status, data };
     } catch (e) {
       return { status: 0, data: null };
@@ -14356,8 +14608,19 @@ class UsageSession {
     telemetry.current = this;
     telemetry.measureTimer();
     // The id is worked out now: a summary sent as the page closes cannot wait for it.
-    if (telemetry.enabled()) telemetry.identity().catch(() => {});
-    disposer.add(() => { this.report(true); if (telemetry.current === this) telemetry.current = null; });
+    if (telemetry.enabled()) {
+      telemetry.identity().then((id) => {
+        if (telemetry.current === this && !telemetry.registered(id)) telemetry.register(TELEMETRY_MINT_DELAY_MS);
+      }, () => {});
+    }
+    disposer.add(() => {
+      this.report(true);
+      if (telemetry.current !== this) return;
+      telemetry.current = null;
+      // Registering waits for the next viewing (a running proof of work stops by itself).
+      clearTimeout(telemetry.mintTimer);
+      telemetry.mintTimer = 0;
+    });
     const v = deps.video;
     const on = (target, type, fn, opts) => disposer.listen(target, type, (e) => { try { fn(e); } catch (err) { /* not counted */ } }, opts);
     on(v, 'timeupdate', () => this.tick());

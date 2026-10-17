@@ -21,7 +21,7 @@ const bool = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : null);
 const text = (re, max) => (v) => (typeof v === 'string' && v.length <= max && re.test(v) ? v : null);
 const oneOf = (list) => (v) => (list.includes(v) ? v : null);
 // Two significant digits (the player rounds timings so; done again here).
-const num2 = (lo, hi) => (v) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? Number(v.toPrecision(2)) : null);
+const num2 = (lo, hi) => Object.assign((v) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? Number(v.toPrecision(2)) : null), { twoDigits: true });
 
 // Features whose use is counted (the player's feature ids, 87-telemetry.js).
 export const FEATURES = [

@@ -264,3 +264,9 @@ const TELEMETRY_SLOW_INPUT_MS = 200;   // a slow interaction: web.dev's INP "goo
 const TELEMETRY_INPUT_MAX_MS = 10000;  // an interaction "answered" later than this was not drawn at all (window covered or not being drawn: Event Timing waits for the next frame shown; seen 181 s in a window behind others), not a delay anyone saw: left out
 const TELEMETRY_WIDE_COLS = 12;        // "View my data": a kind of record with more columns is shown a record at a time (a field per line)
 const TELEMETRY_PRESSURE_SAMPLE_MS = 2000;  // CPU pressure sampling asked of the browser (changes only are reported)
+// Registration with the usage-data server (telemetry-worker/src/auth.js): one proof of work per id.
+const TELEMETRY_MINT_BITS = 18;        // zero bits of the proof of work; the server's MINT_BITS (wrangler.toml) wins if higher. 2^18 hashes on average: desktop Chrome does 2.1 M/s (0.1 s); iPad Pro 1st gen: to be measured
+const TELEMETRY_MINT_DELAY_MS = 30000; // the work starts this long after a viewing starts, once playback has settled (as the environment)
+const TELEMETRY_MINT_SLICE_MS = 20;    // one slice of the work, in idle time (user requirement for background computation: about 20 ms)
+const TELEMETRY_MINT_SAVE_MS = 2000;   // the work done so far is saved at most this often (a page closed early carries on next time)
+const TELEMETRY_WAIT_BATCHES = 10;     // batches the server refused until registered, kept (this page only) and sent once registered

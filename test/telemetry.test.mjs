@@ -124,7 +124,9 @@ test('telemetry worker: stores only the listed fields, with country, region and 
     ],
   }), env);
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { stored: 4 });
+  const answer = await r.json();
+  assert.equal(answer.stored, 4);
+  assert.ok(Math.abs(answer.now - Date.now()) < 5000, 'the Worker\'s clock comes back');
   const db = env.DB.db;
   const envRow = db.prepare('SELECT * FROM env').get();
   assert.equal(envRow.uid, uid);
@@ -197,8 +199,8 @@ test('telemetry worker: viewing and deleting need the secret; an id alone or a w
   assert.equal(mine.data.error.length, 1);
   assert.ok(!('uid' in mine.data.fallback[0]) && !('id' in mine.data.fallback[0]));
   const gone = await ask('/v1/me/delete', { uid, secret });
-  assert.deepEqual(gone.data.deleted, { env: 0, session: 0, error: 1, fallback: 1 });
-  assert.deepEqual((await ask('/v1/me', { uid, secret })).data, { env: [], session: [], error: [], fallback: [] });
+  assert.deepEqual(gone.data.deleted, { env: 0, session: 0, error: 1, fallback: 1, registration: 0 });
+  assert.deepEqual((await ask('/v1/me', { uid, secret })).data, { env: [], session: [], error: [], fallback: [], registration: [] });
   // Someone else's data stays.
   assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM fallbacks').get().n, 1);
 });
@@ -208,7 +210,7 @@ test('telemetry worker: every column in the database is one the schema lists', (
   const tables = { env: 'env', session: 'sessions', error: 'errors', fallback: 'fallbacks' };
   for (const [kind, table] of Object.entries(tables)) {
     const cols = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((r) => r.name);
-    const listed = ['id', 'uid', 'at', 'country', 'region', 'asorg', ...(kind === 'env' ? ['day'] : []), ...KINDS[kind].map((f) => f[1].split('.')[0])];
+    const listed = ['id', 'uid', 'at', 'country', 'region', 'asorg', 'auth', 'flags', ...(kind === 'env' ? ['day'] : []), ...KINDS[kind].map((f) => f[1].split('.')[0])];
     assert.deepEqual(cols.slice().sort(), [...new Set(listed)].sort(), table);
   }
   assert.equal(plainMessage('Cannot read "x" of https://a.b/c?d=1 (id 9f8e7d6c5b4a) for me@x.edu'), 'Cannot read <text> of <url> (id <id>) for <email>');
@@ -258,7 +260,7 @@ function fakeHls() {
 }
 
 // A lesson page whose requests to the Worker are recorded (everything else fails).
-function page(prefs, setup) {
+function page(prefs, setup, src = script) {
   const w = newWindow({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
   w.Hls = fakeHls();
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
@@ -275,7 +277,7 @@ function page(prefs, setup) {
   // The script runs at document start (the page has not started its own player yet).
   Object.defineProperty(w.document, 'readyState', { value: 'loading', configurable: true });
   if (setup) setup(w);
-  w.eval(script);
+  w.eval(src);
   w.Echo = { echoPlayerV2FullApp: () => {} };
   w.eval('Echo["echoPlayerV2FullApp"](' + JSON.stringify(boot) + ')');
   return { w, sent, player: () => w.__litePlayerForEcho360, dev: () => w.__litePlayerForEcho360Dev };
@@ -380,6 +382,7 @@ test('telemetry: a Mac without a touch screen stays macOS', async () => {
     Object.defineProperty(w.navigator, 'maxTouchPoints', { value: 0, configurable: true });
   });
   assert.equal((await pg.dev().telemetryEnv()).os, 'macOS');
+  pg.player().destroy();
   await closeWindow(pg.w);
 });
 
@@ -684,4 +687,173 @@ test('telemetry queries: devices in tiers by their fixed-step time, and how well
   assert.deepEqual(rho['luma~scan_frame'], [8, 1], 'same order');
   assert.deepEqual(rho['luma~ocr_mpx'], [8, -1], 'opposite order');
   assert.deepEqual(rho['loud~luma'], [8, 1]);
+});
+
+// ---- registration and signed batches (player and Worker together) ----
+
+// A lesson page whose requests go to the real Worker code over an in-memory D1.
+// bits: the player's proof-of-work bits (fewer than its 18 keeps the test quick).
+function pageWithWorker(env, setup, bits) {
+  const src = bits ? script.replace(/const TELEMETRY_MINT_BITS = \d+;/, 'const TELEMETRY_MINT_BITS = ' + bits + ';') : script;
+  assert.ok(!bits || src.includes('const TELEMETRY_MINT_BITS = ' + bits + ';'));
+  const pg = page(null, setup, src);
+  pg.w.fetch = async (url, opts) => {
+    if (!String(url).startsWith(WORKER)) throw new Error('offline in tests');
+    const body = JSON.parse(opts.body);
+    pg.sent.push({ url: String(url), body, keepalive: opts.keepalive });
+    if (pg.fail && pg.fail(String(url), body)) return new pg.w.Response('', { status: 503 });
+    const req = new Request(String(url).replace(WORKER, 'https://telemetry.example'), { method: 'POST', body: opts.body, headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' } });
+    const r = await worker.fetch(req, env);
+    return new pg.w.Response(await r.text(), { status: r.status });
+  };
+  return pg;
+}
+async function until(cond, ms = 20000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+const fallbackEv = { k: 'fallback', v: '1.0.0', reason: 'user' };
+
+test('telemetry: the player registers once with a proof of work done in slices, then signs its batches (auth 1)', async () => {
+  const env = envOf({ MINT_BITS: '18', ENFORCE_MINT_POW: '1' });
+  const pg = pageWithWorker(env);
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  const id = await t.identity();
+  await t.send([fallbackEv]);
+  assert.equal(env.DB.db.prepare('SELECT auth FROM fallbacks').get().auth, 0, 'unsigned before registering');
+  t.register(0);
+  await until(() => t.registered(id));
+  const reg = pg.sent.find((x) => x.url.endsWith('/v1/register'));
+  assert.equal(reg.body.secret, id.secret);
+  assert.equal(reg.body.day, Math.floor(Date.now() / 86400000));
+  assert.equal(env.DB.db.prepare('SELECT pow_ok FROM uid_keys WHERE uid = ?').get(id.uid).pow_ok, 1);
+  assert.equal(pg.w.localStorage.getItem('lite-player-for-echo360:telemetryRegistered'), id.uid);
+  assert.equal(pg.w.localStorage.getItem('lite-player-for-echo360:telemetryMint'), '', 'progress cleared');
+  await t.send([fallbackEv]);
+  const last = pg.sent[pg.sent.length - 1].body;
+  assert.deepEqual(Object.keys(last).sort(), ['batch', 'body', 'sig', 'ts', 'uid']);
+  assert.ok(!JSON.stringify(last).includes(id.secret), 'the secret is not in a batch');
+  assert.deepEqual(env.DB.db.prepare('SELECT auth FROM fallbacks ORDER BY id').all().map((r) => r.auth), [0, 1]);
+  // Only one registration.
+  t.register(0);
+  await settle();
+  assert.equal(pg.sent.filter((x) => x.url.endsWith('/v1/register')).length, 1);
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
+test('telemetry: a signed summary still goes out at once while the page closes', async () => {
+  const signedSecret = 'C'.repeat(43);
+  const env = envOf();
+  const pg = pageWithWorker(env, (w) => {
+    w.localStorage.setItem('lite-player-for-echo360:telemetrySecret', signedSecret);
+    w.localStorage.setItem('lite-player-for-echo360:telemetryRegistered', createHash('sha256').update(signedSecret).digest('hex'));
+  });
+  const p = pg.player();
+  await settle();
+  p.usage.opened -= 60000;
+  pg.w.dispatchEvent(new pg.w.Event('pagehide'));
+  assert.equal(pg.sent.length, 1, 'sent synchronously in the pagehide handler');
+  assert.equal(pg.sent[0].keepalive, true);
+  assert.match(pg.sent[0].body.sig, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.parse(pg.sent[0].body.body).events[0].k, 'session');
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
+test('telemetry: refused until registered (ENFORCE_AUTH), the batch waits and is sent signed afterwards; a wrong clock is corrected', async () => {
+  const env = envOf({ ENFORCE_AUTH: '1', MINT_BITS: '8' });
+  const pg = pageWithWorker(env, null, 8);
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  await t.send([fallbackEv]);
+  await until(() => env.DB.db.prepare('SELECT count(*) AS n FROM fallbacks').get().n === 1);
+  assert.equal(env.DB.db.prepare('SELECT auth FROM fallbacks').get().auth, 1);
+  // This computer's clock 20 minutes off: refused once, signed again with the server's.
+  t.clockMs = -1200000;
+  await t.send([fallbackEv]);
+  await until(() => env.DB.db.prepare('SELECT count(*) AS n FROM fallbacks').get().n === 2);
+  assert.ok(Math.abs(t.clockMs) < 5000);
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
+test('telemetry: proof-of-work progress is kept when registering fails, and used next time', async () => {
+  const env = envOf({ MINT_BITS: '8', ENFORCE_MINT_POW: '1' });
+  const pg = pageWithWorker(env, null, 8);
+  pg.fail = (url) => url.endsWith('/v1/register');
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  const id = await t.identity();
+  t.register(0);
+  await until(() => pg.sent.some((x) => x.url.endsWith('/v1/register')) && !t.minting);
+  const saved = JSON.parse(pg.w.localStorage.getItem('lite-player-for-echo360:telemetryMint'));
+  assert.equal(saved.uid, id.uid);
+  assert.ok(saved.nonce >= 0 && saved.bits === 8, JSON.stringify(saved));
+  const tries = pg.sent.filter((x) => x.url.endsWith('/v1/register'));
+  assert.equal(tries.length, 1);
+  pg.fail = null;
+  t.register(0);
+  await until(() => t.registered(id));
+  const again = pg.sent.filter((x) => x.url.endsWith('/v1/register'));
+  assert.equal(again[1].body.nonce, String(saved.nonce), 'the same proof, not worked out again');
+  // Deleting one's data removes the registration here too (registered again later).
+  await t.ask('/v1/me/delete');
+  assert.equal(t.registered(id), false);
+  assert.equal(env.DB.db.prepare('SELECT count(*) AS n FROM uid_keys').get().n, 0);
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
+test('telemetry: when the server asks for more bits than the player\'s, the proof is worked out again with them', async () => {
+  const env = envOf({ MINT_BITS: '12', ENFORCE_MINT_POW: '1' });
+  const pg = pageWithWorker(env, null, 8);
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  const id = await t.identity();
+  t.register(0);
+  await until(() => t.registered(id));
+  const regs = pg.sent.filter((x) => x.url.endsWith('/v1/register'));
+  // Refused at 8 bits (unless that proof happened to have 12), then accepted at 12.
+  assert.ok(regs.length >= 1 && regs.length <= 2, String(regs.length));
+  const bits = (r) => { const h = createHash('sha256').update('lp-mint-v1|' + id.uid + '|' + r.body.day + '|' + r.body.nonce).digest(); let n = 0; for (const b of h) { if (b) return n + Math.clz32(b) - 24; n += 8; } return n; };
+  assert.ok(bits(regs[regs.length - 1]) >= 12);
+  assert.equal(env.DB.db.prepare('SELECT pow_ok FROM uid_keys').get().pow_ok, 1);
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
+test('telemetry: registering belongs to the viewing: nothing is left planned or running after the player goes, and the work so far is kept', async () => {
+  // Destroyed before the id is worked out: nothing is planned afterwards.
+  const quick = pageWithWorker(envOf());
+  quick.player().destroy();
+  await settle();
+  assert.equal(quick.dev().telemetry.mintTimer, 0);
+  await closeWindow(quick.w);
+  // Destroyed during the proof of work (24 bits: long enough to be caught running).
+  const env = envOf({ MINT_BITS: '24' });
+  const pg = pageWithWorker(env, null, 24);
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  const id = await t.identity();
+  assert.ok(t.mintTimer, 'planned with the viewing');
+  t.register(0);
+  await until(() => t.minting);
+  await new Promise((r) => setTimeout(r, 200));
+  p.destroy();
+  await until(() => !t.minting);
+  const saved = JSON.parse(pg.w.localStorage.getItem('lite-player-for-echo360:telemetryMint'));
+  assert.equal(saved.uid, id.uid);
+  assert.ok(saved.from > 0, 'progress saved: ' + JSON.stringify(saved));
+  assert.equal(pg.sent.filter((x) => x.url.endsWith('/v1/register')).length, 0);
+  await closeWindow(pg.w);
 });

@@ -27,3 +27,26 @@ simple = { limit = 30, period = 60 }
 name = "ME_LIMIT"
 namespace_id = "41002"
 simple = { limit = 5, period = 60 }
+
+# Registering (once per user, src/auth.js): a few a minute from one address.
+[[ratelimits]]
+name = "REG_LIMIT"
+namespace_id = "41003"
+simple = { limit = 3, period = 60 }
+
+# Batches per minute from one user (the uid is the counter's key).
+[[ratelimits]]
+name = "UID_LIMIT"
+namespace_id = "41004"
+simple = { limit = 10, period = 60 }
+
+# Daily: forget old batch ids and budget counters (src/index.js scheduled).
+[triggers]
+crons = ["17 3 * * *"]
+
+# Against false data (README.md, "Abuse"). "1" turns a check from noting into refusing.
+[vars]
+ENFORCE_AUTH = "0"           # refuse unsigned batches (players before 0.25.0)
+ENFORCE_MINT_POW = "0"       # refuse registrations without a valid proof of work
+MINT_BITS = "18"             # zero bits the proof of work needs (README.md, "Abuse")
+DAILY_WRITE_BUDGET = "60000" # rows written a day (D1 counts index entries too), of D1's 100,000

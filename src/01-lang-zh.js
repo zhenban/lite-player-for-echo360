@@ -44,6 +44,7 @@ STRINGS.zh = {
   telemetryKindSession: '观看记录',
   telemetryKindError: '错误',
   telemetryKindFallback: '切回原播放器',
+  telemetryKindRegistration: '注册（每个 ID 一次）',
   telemetryDeleteTitle: '删除你的全部使用数据？',
   telemetryDeleteText: '用你的 ID 发送过的数据会立即从服务器删除，无法恢复。之后仍会继续发送，除非你同时关掉发送。',
   telemetryDeleteConfirm: '删除',

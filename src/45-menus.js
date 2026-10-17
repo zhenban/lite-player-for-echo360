@@ -294,7 +294,7 @@ class MenuBar {
     set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryLoading') })], [close]);
     telemetry.ask('/v1/me').then((r) => {
       if (r.status !== 200 || !r.data) { set(tr('telemetryDataTitle'), [el('p', { text: failed(r) })], [close]); return; }
-      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback' };
+      const kinds = { env: 'telemetryKindEnv', session: 'telemetryKindSession', error: 'telemetryKindError', fallback: 'telemetryKindFallback', registration: 'telemetryKindRegistration' };
       const nodes = [];
       for (const [k, label] of Object.entries(kinds)) {
         const rows = Array.isArray(r.data[k]) ? r.data[k] : [];

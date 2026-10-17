@@ -47,6 +47,7 @@ const STRINGS = {
     telemetryKindSession: 'Viewings',
     telemetryKindError: 'Errors',
     telemetryKindFallback: 'Switches to the original player',
+    telemetryKindRegistration: 'Registration (once per ID)',
     telemetryDeleteTitle: 'Delete all your usage data?',
     telemetryDeleteText: 'Everything sent with your ID is deleted from the server now. This cannot be undone. Sending goes on unless you also turn it off.',
     telemetryDeleteConfirm: 'Delete',

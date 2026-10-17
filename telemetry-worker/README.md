@@ -5,11 +5,17 @@ Receives the anonymous usage data of Lite Player for Echo360 (what is collected 
 holds no secrets.
 
 - `src/index.js`: the endpoints (all `POST`, JSON body):
-  - `/v1/events` `{ uid, events: [...] }` stores events (at most 25 per request, 16 KB);
-  - `/v1/me` `{ uid, secret }` returns everything stored for that user;
-  - `/v1/me/delete` `{ uid, secret }` deletes it.
+  - `/v1/register` `{ uid, secret, day, nonce }` registers a user once (see "Abuse");
+  - `/v1/events` `{ uid, ts, batch, sig, body }` stores events signed by a registered user
+    (`body` is the JSON text of `{ events: [...] }`); players before 0.25.0 send
+    `{ uid, events: [...] }` unsigned, stored with `auth = 0`. At most 25 events per
+    request, 24 KB;
+  - `/v1/me` `{ uid, secret }` returns everything stored for that user, with the
+    registration (without its key);
+  - `/v1/me/delete` `{ uid, secret }` deletes it, the registration included.
 
-  `uid` must equal SHA-256 of `secret` (hex). The secret is only hashed, never stored.
+  `uid` must equal SHA-256 of `secret` (hex). The secret is never stored. Every answer of
+  `/v1/events` and `/v1/register` carries the Worker's clock (`now`, ms).
 - `src/schema.js` lists the fields kept per kind of event (`env`, `session`, `error`, `fallback`)
   with their checks. Unknown fields are dropped, and invalid values are stored as NULL. The
   main repository's `test/telemetry.test.mjs` runs the Worker against SQLite and checks that
@@ -22,8 +28,52 @@ holds no secrets.
 
 Nothing is logged. The Worker writes nothing to the console, and `observability` is off in
 `wrangler.toml`. The sender's address is used only as the key of the rate limits (30
-requests a minute for events, 5 for viewing and deleting). Country, region and network
+requests a minute for events, 3 for registering, 5 for viewing and deleting). Each user
+also has a limit of 10 batches a minute, keyed by the uid. Country, region and network
 provider come from Cloudflare's `request.cf` and are stored with each row.
+
+## Abuse
+
+The client is open source, so any check it does can be copied: nothing here relies on a
+hidden key. The aim is to make false data costly and visible, without CAPTCHAs, third-party
+scripts or fingerprints.
+
+- **Registration** (`src/auth.js`). The player's uid is SHA-256 of a random secret. Once, it
+  sends `{ uid, secret, day, nonce }`: the Worker checks the secret, checks the proof of work
+  (`SHA-256("lp-mint-v1|" + uid + "|" + day + "|" + nonce)` starts with `MINT_BITS` zero
+  bits; `day` is days since 1970-01-01 UTC, within one of the Worker's), and keeps
+  `kv = HMAC-SHA-256(secret, "lp-ingest-v1")` in `uid_keys`. The player does the work in
+  ~20 ms idle slices during a viewing. Registering again keeps the first day.
+- **Signed batches.** `sig = hex HMAC-SHA-256(kv, ts + "." + batch + "." + hex SHA-256(body))`,
+  `batch` 24 random hex digits, `ts` the sender's time in ms. Refused with 401: a `ts` more
+  than 10 minutes from the Worker's clock (`{ error: "clock", now }`; the player corrects and
+  signs again), an unknown uid (`{ register: true }`), a wrong signature. A batch id already
+  stored (table `batches`, kept a day) is not stored again (`{ duplicate: true }`).
+- **Quotas.** Per user and UTC day: 40 new viewings (a viewing already stored that day may be
+  updated), 50 errors, 50 switches to the original player; one environment row a day anyway.
+  Events over a quota are dropped.
+- **Daily budget.** `DAILY_WRITE_BUDGET` rows written a day in all, counted as D1 counts them
+  (each row plus each index it updates: `WEIGHT` in `src/index.js`), in table `budget`. When
+  spent: 503 for unsigned batches and users registered less than 3 days ago; older registered
+  users store only their environment row. Viewing and deleting always work.
+- **Flags** (`src/plausibility.js`). Values the player cannot produce set a bit in the row's
+  `flags` (stored anyway): played longer than open, an analysis longer than the page was
+  open, first picture after 2 minutes, slide chapters without a slide source, video data per
+  hour outside 20-3000 MB, timings with more than two significant digits.
+- **Cron.** Daily at 03:17 UTC: batch ids older than a day and budget rows older than 30 days
+  are deleted.
+
+Variables (`[vars]` in `wrangler.toml`; `"1"` turns a check from noting into refusing):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `ENFORCE_AUTH` | `"0"` | refuse unsigned batches (players before 0.25.0) with 401 |
+| `ENFORCE_MINT_POW` | `"0"` | refuse registrations without a valid proof of work with 403 `{ error: "pow", bits }` |
+| `MINT_BITS` | `"18"` | zero bits the proof of work needs; the player's `TELEMETRY_MINT_BITS` should match (a higher value here makes players do the work again) |
+| `DAILY_WRITE_BUDGET` | `"60000"` | rows written a day (D1's free plan allows 100,000) |
+
+Rows carry `auth` (1: from a signed batch) and `flags`. `uid_keys.pow_ok` says whether the
+registration had a valid proof of work.
 
 ## Wrangler's own usage statistics
 
@@ -85,7 +135,7 @@ uid (for example from the downloaded JSON) and asks for deletion by other means:
 
 ```sh
 UID=<64 hex characters>
-for t in env sessions errors fallbacks; do
+for t in env sessions errors fallbacks uid_keys batches; do
   npx wrangler d1 execute telemetry --remote --command "DELETE FROM $t WHERE uid = '$UID'"
 done
 ```
