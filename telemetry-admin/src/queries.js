@@ -12,10 +12,17 @@
 //   $since         start of the version list's window (90 days)
 //   $version       one script version, or NULL for all
 //   $exclude       JSON array of uids left out ("exclude my devices"), '[]' for none
+//   $verified      1: verified rows only (see `ok` below), 0: every row
 //   $tz            the viewer's offset from UTC in minutes (days are local days)
 
+// A verified row: it came in a batch signed by a registered user (auth = 1) whose
+// registration carried a proof of work, and none of its values is implausible (flags = 0).
+// While the telemetry Worker still accepts unsigned data, anyone can send rows under a
+// made-up uid; those count in every total unless $verified is 1.
+const ok = (t) => `(${t}.auth = 1 AND ${t}.flags = 0 AND ${t}.uid IN (SELECT k.uid FROM uid_keys k WHERE k.pow_ok = 1))`;
+const trust = (t) => `($verified = 0 OR ${ok(t)})`;
 // The rows of one table in the range, for the chosen version, without excluded devices.
-const scope = (t) => `${t}.at >= $from AND ${t}.at < $to AND ($version IS NULL OR ${t}.version = $version) AND ${t}.uid NOT IN (SELECT value FROM json_each($exclude))`;
+const scope = (t) => `${t}.at >= $from AND ${t}.at < $to AND ($version IS NULL OR ${t}.version = $version) AND ${t}.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust(t)}`;
 const day = (t) => `date(${t}.at / 1000 + $tz * 60, 'unixepoch')`;
 // A viewing in which something went wrong: an uncaught error, a feature turned off after an
 // error, or a video stream error.
@@ -50,25 +57,27 @@ export const DEVICE_DIMS = ['browser', 'os', 'manager', 'form', 'screen', 'cores
   'webcodecs', 'country', 'region', 'network'];
 
 const SQL = {
-  // Totals for the range and the period before it.
+  // Totals for the range and the period before it. verified_users: users in the range with
+  // at least one verified row (equal to users when only verified rows are shown).
   overview: `
 WITH s AS (
-  SELECT s.uid, s.at, s.play_sec, s.keys, s.clicks, s.watched_pct, s.skip_silence_sec FROM sessions s
-  WHERE s.at >= $prev AND s.at < $to AND ($version IS NULL OR s.version = $version) AND s.uid NOT IN (SELECT value FROM json_each($exclude))
+  SELECT s.uid, s.at, s.play_sec, s.keys, s.clicks, s.watched_pct, s.skip_silence_sec, ${ok('s')} AS ok FROM sessions s
+  WHERE s.at >= $prev AND s.at < $to AND ($version IS NULL OR s.version = $version) AND s.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('s')}
 ),
 a AS (
-  SELECT uid, at FROM s
+  SELECT uid, at, ok FROM s
   UNION ALL
-  SELECT e.uid, e.at FROM env e
-  WHERE e.at >= $prev AND e.at < $to AND ($version IS NULL OR e.version = $version) AND e.uid NOT IN (SELECT value FROM json_each($exclude))
+  SELECT e.uid, e.at, ${ok('e')} FROM env e
+  WHERE e.at >= $prev AND e.at < $to AND ($version IS NULL OR e.version = $version) AND e.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('e')}
 ),
 firsts AS (
   SELECT e.uid, MIN(e.at) AS first_at FROM env e
-  WHERE e.uid NOT IN (SELECT value FROM json_each($exclude))
+  WHERE e.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('e')}
   GROUP BY e.uid
 )
 SELECT
   (SELECT COUNT(DISTINCT uid) FROM a WHERE at >= $from) AS users,
+  (SELECT COUNT(DISTINCT uid) FROM a WHERE at >= $from AND ok) AS verified_users,
   (SELECT COUNT(DISTINCT uid) FROM a WHERE at < $from) AS prev_users,
   (SELECT COUNT(*) FROM firsts WHERE first_at >= $from AND first_at < $to) AS new_users,
   (SELECT COUNT(*) FROM s WHERE at >= $from) AS sessions,
@@ -115,9 +124,9 @@ SELECT version, COUNT(*) AS users FROM l WHERE r = 1 GROUP BY version ORDER BY u
   // Versions seen in the last 90 days, for the version filter (not limited by the filters).
   versionList: `
 WITH a AS (
-  SELECT s.version, s.uid, s.at FROM sessions s WHERE s.at >= $since AND s.uid NOT IN (SELECT value FROM json_each($exclude))
+  SELECT s.version, s.uid, s.at FROM sessions s WHERE s.at >= $since AND s.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('s')}
   UNION ALL
-  SELECT e.version, e.uid, e.at FROM env e WHERE e.at >= $since AND e.uid NOT IN (SELECT value FROM json_each($exclude))
+  SELECT e.version, e.uid, e.at FROM env e WHERE e.at >= $since AND e.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('e')}
 )
 SELECT version, COUNT(DISTINCT uid) AS users, MAX(at) AS last_at FROM a GROUP BY version`,
 
@@ -184,7 +193,7 @@ GROUP BY metric`,
   perfByVersion: `
 WITH s AS (
   SELECT s.* FROM sessions s
-  WHERE s.at >= $from AND s.at < $to AND s.uid NOT IN (SELECT value FROM json_each($exclude)) AND s.play_sec >= 60
+  WHERE s.at >= $from AND s.at < $to AND s.uid NOT IN (SELECT value FROM json_each($exclude)) AND ${trust('s')} AND s.play_sec >= 60
 ),
 v AS (
   SELECT s.version, m.value AS metric, ${perfValue} AS value
@@ -272,7 +281,7 @@ WITH s AS (SELECT s.rowid AS rid, s.uid, s.at, s.slide_form FROM sessions s WHER
 x AS (
   SELECT s.uid, s.slide_form AS form, e.os, e.os_v, e.browser, e.browser_v,
          ROW_NUMBER() OVER (PARTITION BY s.rid ORDER BY e.at > s.at, ABS(e.at - s.at)) AS rn
-  FROM s LEFT JOIN env e ON e.uid = s.uid
+  FROM s LEFT JOIN env e ON e.uid = s.uid AND ${trust('e')}
 )
 SELECT os, os_v, browser, browser_v,
        SUM(form = 'avcc') AS avcc, SUM(form = 'annexb') AS annexb, SUM(form = 'neither') AS neither,
@@ -300,8 +309,8 @@ WITH x AS (
 ),
 firsts AS (
   SELECT frontend, MIN(at) AS first_at FROM (
-    SELECT frontend, at FROM sessions WHERE frontend IS NOT NULL
-    UNION ALL SELECT frontend, at FROM fallbacks WHERE frontend IS NOT NULL
+    SELECT frontend, at FROM sessions WHERE frontend IS NOT NULL AND ${trust('sessions')}
+    UNION ALL SELECT frontend, at FROM fallbacks WHERE frontend IS NOT NULL AND ${trust('fallbacks')}
   ) GROUP BY frontend
 )
 SELECT x.frontend, firsts.first_at, (SELECT COUNT(*) FROM firsts older WHERE older.first_at < firsts.first_at) AS older, MAX(x.at) AS last_at, SUM(x.viewing) AS sessions, SUM(x.fallback) AS fallbacks,
@@ -349,7 +358,7 @@ export function compile(name, text) {
 
 export const QUERIES = Object.freeze(Object.fromEntries(Object.entries(SQL).map(([k, v]) => [k, compile(k, v)])));
 
-const PARAMS = ['from', 'to', 'prev', 'since', 'version', 'exclude', 'tz'];
+const PARAMS = ['from', 'to', 'prev', 'since', 'version', 'exclude', 'verified', 'tz'];
 
 // Runs the named statements in one batch and returns their rows, by name. `values` holds
 // the validated parameters; a statement gets only the ones it uses.

@@ -1,6 +1,6 @@
 // The page: filters, the overview (active users, then five health checks), and six
 // sections of detail. Built once per language; data updates move what is already there.
-// Preferences (language, theme, range, devices) stay in this browser only.
+// Preferences (language, theme, range, devices, data) stay in this browser only.
 const PREFS_KEY = 'lpdash';
 const prefs = (() => {
   try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; }
@@ -13,6 +13,7 @@ const state = {
   range: [7, 30, 90].includes(prefs.range) ? prefs.range : 30,
   version: 'all',
   devices: prefs.devices === 'others' ? 'others' : 'all',
+  verified: prefs.data === 'verified',
   data: null,
   seq: 0,
 };
@@ -144,13 +145,19 @@ function build() {
     state.devices = u.exclude.checked ? 'others' : 'all'; prefs.devices = state.devices; savePrefs(); load();
   });
   u.excludeWrap = h('label', { class: 'switch', title: t('excludeMineHint') }, u.exclude, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { text: t('excludeMine') }));
+  u.verified = h('input', { type: 'checkbox', role: 'switch', class: 'switch-input' });
+  u.verified.checked = state.verified;
+  u.verified.addEventListener('change', () => {
+    state.verified = u.verified.checked; prefs.data = state.verified ? 'verified' : 'all'; savePrefs(); load();
+  });
+  const verifiedWrap = h('label', { class: 'switch', title: t('verifiedOnlyHint') }, u.verified, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { text: t('verifiedOnly') }));
   u.asOf = h('p', { class: 'asof' });
 
   const header = h('header', { class: 'top' },
     h('div', { class: 'top-row' },
       h('div', { class: 'brand' }, mark, h('div', null, h('h1', { text: t('title') }), h('p', { class: 'sub', text: t('subtitle') }))),
       h('div', { class: 'prefs' }, langBtn, themeBtn)),
-    h('div', { class: 'filters' }, range, h('label', { class: 'select-wrap' }, h('span', { class: 'sr', text: t('version') }), u.version), u.excludeWrap, u.asOf));
+    h('div', { class: 'filters' }, range, h('label', { class: 'select-wrap' }, h('span', { class: 'sr', text: t('version') }), u.version), u.excludeWrap, verifiedWrap, u.asOf));
 
   // Overview: active users first and largest, then the five checks as one strip.
   u.heroValue = h('span', { class: 'hero-num' });
@@ -187,7 +194,8 @@ function build() {
   });
   u.bDaily = block('w-8', t('dailyUsers'), u.dailyUsers.root);
   tableToggle(u.dailyUsers, u.bDaily);
-  u.userStats = statList(['newInRange', 'watchedShare', 'silenceSkipped', 'keysShare']);
+  u.userStats = statList(['verifiedUsers', 'newInRange', 'watchedShare', 'silenceSkipped', 'keysShare']);
+  u.userStats.vals.verifiedUsers.title = t('verifiedOnlyHint');
   u.versionBars = barList();
   u.bSide = block('w-4', t('versionsInUse'), u.versionBars.root, u.userStats.root);
   u.where = {};
@@ -429,6 +437,7 @@ function render(d, animate) {
     const actions = [];
     if (state.range !== 90) actions.push(h('button', { class: 'pill-btn', type: 'button', text: t('range_90'), onclick: () => { state.range = 90; prefs.range = 90; savePrefs(); rebuild(); load(); } }));
     if (state.devices === 'others') actions.push(h('button', { class: 'pill-btn', type: 'button', text: t('excludeMine') + ' ✕', onclick: () => { state.devices = 'all'; prefs.devices = 'all'; savePrefs(); ui.exclude.checked = false; load(); } }));
+    if (state.verified) actions.push(h('button', { class: 'pill-btn', type: 'button', text: t('verifiedOnly') + ' ✕', onclick: () => { state.verified = false; prefs.data = 'all'; savePrefs(); ui.verified.checked = false; load(); } }));
     ui.notice.replaceChildren(icon('none'), h('p', { text: t('noUsersHint') }), ...actions);
   }
 
@@ -447,6 +456,7 @@ function render(d, animate) {
   ui.bDaily.meta(basedOn('users', o.users), o.users > 0 && o.users < low, anyDays ? '' : t('find_users_none', { range: rangeText }));
   ui.versionBars.update(fold(d.versions.map((v) => ({ key: v.version, label: 'v' + v.version, value: v.users })), 6), o.users, o.users < low);
   const s = ui.userStats.vals;
+  s.verifiedUsers.textContent = o.users ? t('verifiedOf', { v: fmtInt(o.verifiedUsers), n: fmtInt(o.users) }) : '–';
   s.newInRange.textContent = fmtInt(o.newUsers);
   s.watchedShare.textContent = fmtPct(o.watchedPct, 0);
   s.silenceSkipped.textContent = fmtDuration(o.silenceSkippedSec);
@@ -611,7 +621,7 @@ function renderFrontends(list, d) {
 
 async function load() {
   const seq = ++state.seq;
-  const q = new URLSearchParams({ range: String(state.range), devices: state.devices, tz: String(-new Date().getTimezoneOffset()) });
+  const q = new URLSearchParams({ range: String(state.range), devices: state.devices, data: state.verified ? 'verified' : 'all', tz: String(-new Date().getTimezoneOffset()) });
   if (state.version !== 'all') q.set('version', state.version);
   document.body.classList.add('busy');
   ui.status.textContent = t('loading');

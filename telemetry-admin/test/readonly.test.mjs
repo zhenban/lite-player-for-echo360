@@ -28,9 +28,11 @@ test('every statement in the list runs on a read-only database, for every filter
   const before = counts(db);
   for (const version of [null, '0.23.0', '9.9.9']) {
     for (const exclude of ['[]', JSON.stringify(['a'.repeat(63) + '1'])]) {
-      const values = { from: NOW - 30 * 86400000, to: NOW, prev: NOW - 60 * 86400000, since: NOW - 90 * 86400000, version, exclude, tz: 600 };
-      const out = await run(db, Object.keys(QUERIES), values);
-      for (const name of Object.keys(QUERIES)) assert.ok(Array.isArray(out[name]), name);
+      for (const verified of [0, 1]) {
+        const values = { from: NOW - 30 * 86400000, to: NOW, prev: NOW - 60 * 86400000, since: NOW - 90 * 86400000, version, exclude, verified, tz: 600 };
+        const out = await run(db, Object.keys(QUERIES), values);
+        for (const name of Object.keys(QUERIES)) assert.ok(Array.isArray(out[name]), name);
+      }
     }
   }
   assert.deepEqual(counts(db), before);
@@ -63,7 +65,7 @@ test('a statement that could write is refused when the module loads', () => {
 
 test('run() accepts only statements from the list', async () => {
   const db = makeDb('empty');
-  const values = { from: 0, to: 1, prev: 0, since: 0, version: null, exclude: '[]', tz: 0 };
+  const values = { from: 0, to: 1, prev: 0, since: 0, version: null, exclude: '[]', verified: 0, tz: 0 };
   await assert.rejects(run(db, ['SELECT 1'], values), /Unknown statement/);
   await assert.rejects(run(db, ['toString'], values), /Unknown statement/);
   await assert.rejects(run(db, ['constructor'], values), /Unknown statement/);
@@ -93,7 +95,7 @@ test('filters accept only fixed values: SQL or unknown keys in the query string 
   for (const qs of [
     'range=30;DROP TABLE sessions', "range=30'", 'range=31', 'range=1e1',
     'version=0.23.0%27%20OR%201%3D1', 'version=0.23', 'version=x',
-    'devices=mine', 'devices=all&devices=others', 'tz=10000', 'tz=1.5', 'tz=%2B60',
+    'devices=mine', 'devices=all&devices=others', 'data=signed', 'data=1', 'data=all&data=verified', 'tz=10000', 'tz=1.5', 'tz=%2B60',
     'sql=SELECT%201', 'query=DELETE%20FROM%20sessions', 'uid=' + 'a'.repeat(64), 'table=env',
   ]) {
     const res = await handle(req('/api/summary?' + qs, { token: t }), env, {}, deps);

@@ -9,6 +9,8 @@ const STRINGS = {
     rangeLong: 'the last {n} days', prevLong: 'the {n} days before',
     version: 'Version', allVersions: 'All versions',
     excludeMine: 'Exclude my devices', excludeMineHint: 'Leaves out the devices listed in OWNER_UIDS',
+    verifiedOnly: 'Verified data only',
+    verifiedOnlyHint: 'Only data signed by a registered player (with proof of work) and with no implausible values. Until the collector refuses unsigned data, anyone can send data that counts in the totals.',
     language: 'Language', theme: 'Theme', themeSystem: 'System theme', themeLight: 'Light theme', themeDark: 'Dark theme',
     asOf: 'Newest data {time}', noDataYet: 'No data received yet',
     loading: 'Loading', loadFailed: 'Could not load the data ({status}). Reload the page; if it keeps failing, sign in again.',
@@ -70,7 +72,7 @@ const STRINGS = {
     dailyUsers: 'Daily active users', dailyUsersCap: 'People with any activity each day',
     versionsInUse: 'Script version in use', whereFrom: 'Where from', country: 'Country', region: 'Region', network: 'Network',
     watchedShare: 'Average share of a recording watched', silenceSkipped: 'Silence skipped', newInRange: 'New users',
-    keysShare: 'Commands given by keyboard',
+    keysShare: 'Commands given by keyboard', verifiedUsers: 'Verified users', verifiedOf: '{v} of {n}',
     tipUsers: 'active users', tipViews: 'viewings', tipPlayed: 'played',
 
     // Devices
@@ -142,6 +144,8 @@ const STRINGS = {
     rangeLong: '近 {n} 天', prevLong: '之前 {n} 天',
     version: '版本', allVersions: '全部版本',
     excludeMine: '排除我的设备', excludeMineHint: '不计 OWNER_UIDS 里列出的设备',
+    verifiedOnly: '只看已验证数据',
+    verifiedOnlyHint: '只计已注册（带工作量证明）的播放器签名发送、且没有不合理数值的数据。在收集端拒收未签名数据之前，任何人都能发送会计入汇总的数据。',
     language: '语言', theme: '主题', themeSystem: '跟随系统', themeLight: '浅色', themeDark: '深色',
     asOf: '最新数据 {time}', noDataYet: '还没有收到数据',
     loading: '加载中', loadFailed: '数据加载失败（{status}）。请刷新页面；一直失败的话请重新登录。',
@@ -196,7 +200,7 @@ const STRINGS = {
     dailyUsers: '每日活跃用户', dailyUsersCap: '每天有任何活动的人数',
     versionsInUse: '正在用的脚本版本', whereFrom: '来自哪里', country: '国家', region: '地区', network: '网络',
     watchedShare: '平均看完录像的比例', silenceSkipped: '跳过的静音', newInRange: '新用户',
-    keysShare: '用键盘下达的操作',
+    keysShare: '用键盘下达的操作', verifiedUsers: '已验证用户', verifiedOf: '{n} 人中 {v} 人',
     tipUsers: '活跃用户', tipViews: '次观看', tipPlayed: '播放时长',
 
     dim_browser: '浏览器', dim_os: '系统', dim_manager: '脚本管理器', dim_form: '设备类型', dim_screen: '屏幕宽度',
