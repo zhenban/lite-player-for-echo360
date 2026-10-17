@@ -39,7 +39,7 @@ export const WEIGHT = { env: 5, session: 7, error: 4, fallback: 4 };
 const ESTABLISHED_DAYS = 3;
 const BATCH_KEEP_DAYS = 1;   // replayed batches are recognised this long
 // Defaults of the variables in wrangler.toml.
-const DEFAULTS = { MINT_BITS: 18, DAILY_WRITE_BUDGET: 60000 };
+const DEFAULTS = { MINT_BITS: 21, DAILY_WRITE_BUDGET: 60000 };
 // Pages that may call this from a page script (the player uses GM_xmlhttpRequest, which
 // needs no CORS; a development build without it uses fetch from the lecture page).
 const ORIGINS = ['https://echo360.net.au'];

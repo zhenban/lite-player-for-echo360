@@ -48,5 +48,5 @@ crons = ["17 3 * * *"]
 [vars]
 ENFORCE_AUTH = "0"           # refuse unsigned batches (players before 0.25.0)
 ENFORCE_MINT_POW = "0"       # refuse registrations without a valid proof of work
-MINT_BITS = "18"             # zero bits the proof of work needs (README.md, "Abuse")
+MINT_BITS = "21"             # zero bits the proof of work needs (README.md, "Abuse")
 DAILY_WRITE_BUDGET = "60000" # rows written a day (D1 counts index entries too), of D1's 100,000

@@ -69,7 +69,7 @@ Variables (`[vars]` in `wrangler.toml`; `"1"` turns a check from noting into ref
 | --- | --- | --- |
 | `ENFORCE_AUTH` | `"0"` | refuse unsigned batches (players before 0.25.0) with 401 |
 | `ENFORCE_MINT_POW` | `"0"` | refuse registrations without a valid proof of work with 403 `{ error: "pow", bits }` |
-| `MINT_BITS` | `"18"` | zero bits the proof of work needs; the player's `TELEMETRY_MINT_BITS` should match (a higher value here makes players do the work again) |
+| `MINT_BITS` | `"21"` | zero bits the proof of work needs; the player's `TELEMETRY_MINT_BITS` should match (a higher value here makes players do the work again) |
 | `DAILY_WRITE_BUDGET` | `"60000"` | rows written a day (D1's free plan allows 100,000) |
 
 Rows carry `auth` (1: from a signed batch) and `flags`. `uid_keys.pow_ok` says whether the

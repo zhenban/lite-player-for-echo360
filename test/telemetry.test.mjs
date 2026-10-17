@@ -719,7 +719,7 @@ const fallbackEv = { k: 'fallback', v: '1.0.0', reason: 'user' };
 
 test('telemetry: the player registers once with a proof of work done in slices, then signs its batches (auth 1)', async () => {
   const env = envOf({ MINT_BITS: '18', ENFORCE_MINT_POW: '1' });
-  const pg = pageWithWorker(env);
+  const pg = pageWithWorker(env, null, 18);
   const p = pg.player();
   await settle();
   const t = pg.dev().telemetry;
@@ -856,4 +856,11 @@ test('telemetry: registering belongs to the viewing: nothing is left planned or 
   assert.ok(saved.from > 0, 'progress saved: ' + JSON.stringify(saved));
   assert.equal(pg.sent.filter((x) => x.url.endsWith('/v1/register')).length, 0);
   await closeWindow(pg.w);
+});
+
+test('telemetry: the proof-of-work bits agree in the player, the Worker\'s default and wrangler.toml', () => {
+  const player = Number(/const TELEMETRY_MINT_BITS = (\d+);/.exec(script)[1]);
+  const workerBits = Number(/MINT_BITS: (\d+)/.exec(readFileSync(join(root, 'telemetry-worker', 'src', 'index.js'), 'utf8'))[1]);
+  const toml = Number(/^MINT_BITS = "(\d+)"/m.exec(readFileSync(join(root, 'telemetry-worker', 'wrangler.toml'), 'utf8'))[1]);
+  assert.deepEqual([player, workerBits, toml], [21, 21, 21]);
 });
