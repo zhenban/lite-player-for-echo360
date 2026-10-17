@@ -118,6 +118,13 @@ On by default; **Settings (⋮) > Usage data** turns it off, and sending stops a
 - **Your data:** **Settings > Usage data** has *View my data* (a table, and a JSON download), *Delete all my data* (asks first, then deletes at once on the server) and *Reset my ID* (a new secret; it offers to delete the old data first, since the old ID can no longer be used afterwards).
 - Greasy Fork's label for this is `@antifeature tracking`.
 
+The only numbers made public are these totals, updated daily:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-dark.svg">
+  <img alt="Daily active users of Lite Player for Echo360 over the last 90 days" src="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-light.svg">
+</picture>
+
 ## Known limitations
 
 - Live lectures and recordings that require a copyright acknowledgement use the original player.

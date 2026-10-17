@@ -118,6 +118,13 @@
 - **你的数据：****设置 → 使用数据**里有“查看我的数据”（表格，可下载 JSON）、“删除我的全部数据”（先确认，确认后立即从服务器删除）和“重置 ID”（生成新密钥；重置后旧 ID 无法再使用，所以会先问你要不要删除旧数据）。
 - Greasy Fork 对此的标注是 `@antifeature tracking`。
 
+公开的只有下面这些汇总数字，每天更新：
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-dark.svg">
+  <img alt="Echo360 轻量播放器最近 90 天的每日活跃用户" src="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-light.svg">
+</picture>
+
 ## 已知限制
 
 - 直播课程，以及需要先确认版权声明的录像，会使用原播放器。
