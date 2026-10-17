@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.25.0
 New:
 - **Usage data is harder to fake.** About 30 seconds into the first viewing, the player registers its anonymous ID once. To do this it spends a few seconds of computing in small slices that don't disturb playback. After that, each batch of usage data is signed, so the server can tell real batches from made-up or replayed ones. The server also limits how much one ID can send per day. Nothing new is sent about you. "View my data" shows whether the ID is registered, and deleting your data deletes the registration too.
 
