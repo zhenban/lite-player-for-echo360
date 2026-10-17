@@ -863,7 +863,47 @@ test('keyframes and segments: a decoder that gives nothing for the avcC form (Sa
     assert.equal(n, 3, 'segment decoded');
     assert.equal(JSON.stringify(configs), JSON.stringify(safari ? ['avcC', 'annexB', 'annexB'] : ['avcC', 'avcC']), safari ? 'Safari: tried once, then Annex B' : 'others: as before');
     assert.equal(!!r.avc, safari);
+    assert.equal(r.form, safari ? 'annexb' : 'avcc', 'the form that gave pictures (usage data)');
   }
+});
+
+// A segment without a picture once the avcC form has worked is a bad segment: it must not
+// switch the reader (Chrome) to Annex B for the rest of the scan. And a decoder that gives
+// nothing in either form is told as such in the usage data.
+test('keyframes: a picture-less segment after the avcC form worked keeps that form; no picture in either form is "neither"', async () => {
+  const make = (gives) => {
+    const configs = [];
+    const m = loadSources(['00-util', '61-media-io', '62-silence', '64-slides'], {
+      EncodedVideoChunk: class { constructor(o) { Object.assign(this, o); } },
+      VideoDecoder: class {
+        constructor(o) { this.o = o; this.state = 'configured'; }
+        configure(c) { this.c = c; configs.push(c.description ? 'avcC' : 'annexB'); }
+        decode(c) { if (gives(c, !!this.c.description)) this.o.output({ timestamp: c.timestamp, close() {} }); }
+        flush() { return Promise.resolve(); }
+        close() { this.state = 'closed'; }
+      },
+    });
+    const r = Object.create(m.HlsVideoReader.prototype);
+    Object.assign(r, { info: { codec: 'avc1.640029', description: AVCC, timescale: 1000 }, avc: null, form: null });
+    return { r, configs };
+  };
+  const key = (ts) => ({ type: 'key', timestamp: ts, data: new Uint8Array([0, 0, 0, 4, 0x65, 1, 2, 3]) });
+  // Gives a picture in the avcC form except for the keyframe at 5 s (a broken segment).
+  const a = make((c, avcc) => avcc && c.timestamp !== 5000000);
+  let n = 0;
+  await a.r.decodeAny([key(0)], () => { n++; });
+  await a.r.decodeAny([key(5000000)], () => { n++; });
+  await a.r.decodeAny([key(10000000)], () => { n++; });
+  assert.equal(n, 2);
+  assert.equal(JSON.stringify(a.configs), JSON.stringify(['avcC', 'avcC', 'avcC']), 'no Annex B after the avcC form worked');
+  assert.equal(a.r.avc, null);
+  assert.equal(a.r.form, 'avcc');
+  // Nothing in either form: tried once in each, then kept, and reported.
+  const b = make(() => false);
+  await b.r.decodeAny([key(0)], () => {});
+  await b.r.decodeAny([key(5000000)], () => {});
+  assert.equal(JSON.stringify(b.configs), JSON.stringify(['avcC', 'annexB', 'annexB']));
+  assert.equal(b.r.form, 'neither');
 });
 
 test('video variants sorted by height', () => {

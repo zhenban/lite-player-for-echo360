@@ -372,8 +372,25 @@ test('telemetry: an iPad (Safari says Macintosh) is iOS; slides from preview pic
   const s = pg.sent.flatMap((x) => x.body.events).find((e) => e.k === 'session');
   assert.equal(s.slideSrc, 'thumbs');
   assert.equal(s.slideStop, 'noWebCodecs');
+  assert.equal(s.slideForm, undefined, 'no keyframe scan, no form');
   assertAccepted(s);
   await closeWindow(pg.w);
+});
+
+test('telemetry: the session says which form of the video gave pictures (Annex B: iPhone Safari)', async () => {
+  for (const form of ['annexb', 'avcc', 'neither']) {
+    const pg = page();
+    const p = pg.player();
+    await settle();
+    p.usage.opened -= 60000;
+    p.slides = { source: form === 'neither' ? 'thumbs' : 'frames', stopped: form === 'neither' ? 'noFrame' : null, state: 'done', chapters: [{}, {}], screenIndex: 0, manualScreen: null, reader: { form } };
+    p.destroy();
+    await settle();
+    const s = pg.sent.flatMap((x) => x.body.events).find((e) => e.k === 'session');
+    assert.equal(s.slideForm, form);
+    assertAccepted(s);
+    await closeWindow(pg.w);
+  }
 });
 
 test('telemetry: a Mac without a touch screen stays macOS', async () => {

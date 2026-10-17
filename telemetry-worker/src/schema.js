@@ -158,6 +158,7 @@ export const KINDS = {
     ['screen', 'screen', oneOf(['sure', 'guess', 'manual', 'none'])],
     ['slideSrc', 'slide_src', oneOf(['frames', 'thumbs', 'none'])],
     ['slideStop', 'slide_stop', oneOf(['noWebCodecs', 'noFrame', 'decoder', 'playlist', 'network', 'other'])],
+    ['slideForm', 'slide_form', oneOf(['avcc', 'annexb', 'neither'])],
     ['chaptersPerHour', 'chapters_ph', num(0, 3600)],
     ['pdfUnrecPct', 'pdf_unrec_pct', num(0, 100)],
     ['pageFixes', 'page_fixes', int(0, 100000)],

@@ -951,6 +951,7 @@ class UsageSession {
       screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
       slideSrc: !slides ? undefined : slides.source || 'none',
       slideStop: slides ? slides.stopped || undefined : undefined,
+      slideForm: slides && slides.reader ? slides.reader.form || undefined : undefined,
       chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
       pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
       pageFixes: deck ? deck.corrections || 0 : undefined,

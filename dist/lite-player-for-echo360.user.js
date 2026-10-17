@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.25.0
+// @version      0.25.1
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -23,7 +23,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.25.0';
+  const VERSION = '0.25.1';
 
 // ---- 00-boot.js ----
 // ===================================================================================
@@ -10546,6 +10546,7 @@ class HlsVideoReader {
     this.lastNeed = 0;       // bytes the last keyframe needed (header included)
     this.decodeMs = 0;       // how long decoding the last keyframe took, with onFrame (usage data)
     this.avc = null;         // set when the samples go to the decoder in Annex B form (avcConfig)
+    this.form = null;        // which form gave pictures (decodeAny; usage data)
   }
 
   static supported() {
@@ -10624,14 +10625,21 @@ class HlsVideoReader {
 
   // decode(), and when the decoder gives no picture at all from the samples as they are
   // (Safari, see avcConfig), once more in Annex B form; this reader then keeps that form.
+  // Only while the samples as they are never gave a picture: after that, a segment without
+  // one is a bad segment, not the wrong form.
+  // this.form (usage data): 'avcc' | 'annexb', the form that gave pictures; 'neither'; null
+  // before the first decode.
   async decodeAny(samples, onFrame) {
     let n = 0;
     const count = (f) => { n++; onFrame(f); };
     let error = null;
     try { await this.decode(samples, count); } catch (e) { error = e; }
-    if (n || this.avc) { if (error) throw error; return; }
+    if (n) this.form = this.avc ? 'annexb' : 'avcc';
+    if (n || this.avc || this.form === 'avcc') { if (error) throw error; return; }
     this.avc = avcConfig(this.info.description);
+    this.form = 'neither';
     await this.decode(samples, count);
+    if (n) this.form = 'annexb';
   }
 
   // First frame of segment i: fn(frame, seconds) is called once.
@@ -11020,7 +11028,7 @@ class SlideAnalyzer {
     this.took = null;           // ms the whole analysis took in this visit (usage data; null: from the cache)
     this.source = null;         // what the chapters come from: 'frames' (the video's keyframes) | 'thumbs' (preview pictures only)
     this.stopped = null;        // why the keyframe scan stopped early, if it did (usage data, STOP_REASONS)
-    this.reader = null;
+    this.reader = null;         // the reader of the keyframe scan in this visit (its form: usage data; dev/chap-run.mjs)
     this.urls = [];
     this.d.add(() => { for (const u of this.urls) URL.revokeObjectURL(u); this.urlOf = null; });
   }
@@ -11143,6 +11151,7 @@ class SlideAnalyzer {
     this.uniform = [];
     this.source = null;
     this.stopped = null;
+    this.reader = null;
     this.thumbsDone = null;
     this.lumas = null;
     this.pruneThumbs();
@@ -11291,7 +11300,7 @@ class SlideAnalyzer {
     const reader = opened || await new HlsVideoReader(source.v || source.av, 360).open(signal);
     if (this.thumbsDone) await this.thumbsDone;
     if (signal.aborted) return;
-    this.reader = reader;   // read by the development tools (dev/chap-run.mjs)
+    this.reader = reader;
     const picks = reader.sampleSegments(CHAPTER_STEP_SEC);
     const n = picks.length;
     const samples = [];
@@ -14989,6 +14998,7 @@ class UsageSession {
       screen: !slides ? undefined : slides.manualScreen != null ? 'manual' : slides.screenIndex == null ? 'none' : slides.screenSure === false ? 'guess' : 'sure',
       slideSrc: !slides ? undefined : slides.source || 'none',
       slideStop: slides ? slides.stopped || undefined : undefined,
+      slideForm: slides && slides.reader ? slides.reader.form || undefined : undefined,
       chaptersPerHour: slides && slides.state === 'done' && dur > 60 ? Math.round(slides.chapters.length / (dur / 3600) * 10) / 10 : undefined,
       pdfUnrecPct: deck && deck.decided && deck.decided.length ? Math.round(deck.decided.filter((p) => p < 0).length / deck.decided.length * 1000) / 10 : undefined,
       pageFixes: deck ? deck.corrections || 0 : undefined,
