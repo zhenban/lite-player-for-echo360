@@ -144,6 +144,52 @@ function videoVariants(master, base) {
   })).sort((x, y) => x.height - y.height || x.bandwidth - y.bandwidth);
 }
 
+// H.264 from an MP4 comes as length-prefixed NAL units, with the parameter sets (SPS, PPS) in
+// the avcC record given to the decoder as its description. Safari on iOS 17 accepts that
+// configuration for Echo360's streams yet decodes nothing from it (no picture, no error, for
+// a single keyframe; "Decoder failure" for a whole segment), while the same samples in Annex
+// B form (start codes, parameter sets in-line, no description) decode (measured on iOS 17.5,
+// 2026-10-17). These turn one form into the other.
+
+// The avcC record: the size of the NAL length fields and the parameter sets, SPS first.
+function avcConfig(description) {
+  const d = description instanceof Uint8Array ? description : new Uint8Array(description);
+  if (d.length < 7 || d[0] !== 1) throw new Error('not an avcC record');
+  const sets = [];
+  let i = 5;
+  for (const mask of [0x1f, 0xff]) {
+    const count = d[i++] & mask;
+    for (let k = 0; k < count; k++) {
+      const n = (d[i] << 8) | d[i + 1];
+      if (!(i + 2 + n <= d.length)) throw new Error('not an avcC record');
+      sets.push(d.subarray(i + 2, i + 2 + n));
+      i += 2 + n;
+    }
+  }
+  return { lengthSize: (d[4] & 3) + 1, sets };
+}
+
+// One sample in Annex B form; a keyframe starts with the parameter sets.
+function toAnnexB(data, avc, key) {
+  const parts = key ? avc.sets.slice() : [];
+  const L = avc.lengthSize;
+  for (let o = 0; o < data.length;) {
+    let n = 0;
+    for (let j = 0; j < L; j++) n = n * 256 + data[o + j];
+    if (!(o + L + n <= data.length)) throw new Error('bad H.264 sample');
+    parts.push(data.subarray(o + L, o + L + n));
+    o += L + n;
+  }
+  const out = new Uint8Array(parts.reduce((a, x) => a + 4 + x.length, 0));
+  let at = 0;
+  for (const x of parts) {
+    out[at + 3] = 1;   // start code 00 00 00 01
+    out.set(x, at + 4);
+    at += 4 + x.length;
+  }
+  return out;
+}
+
 class HlsVideoReader {
   // maxHeight: the tallest rendition to use (the smallest one if none is small enough).
   // minHeight (optional): use the smallest rendition at least this tall instead (the
@@ -157,6 +203,7 @@ class HlsVideoReader {
     this.bytes = 0;          // downloaded so far
     this.lastNeed = 0;       // bytes the last keyframe needed (header included)
     this.decodeMs = 0;       // how long decoding the last keyframe took, with onFrame (usage data)
+    this.avc = null;         // set when the samples go to the decoder in Annex B form (avcConfig)
   }
 
   static supported() {
@@ -214,22 +261,35 @@ class HlsVideoReader {
     return out;
   }
 
-  // Decodes encoded samples; onFrame(frame) is called in presentation order and the frame
-  // is closed right after it returns.
-  async decode(chunks, onFrame) {
+  // Decodes samples ({ type, timestamp, data }); onFrame(frame) is called in presentation
+  // order and the frame is closed right after it returns.
+  async decode(samples, onFrame) {
     let failed = null;
     const dec = new VideoDecoder({
       output: (frame) => { try { if (!failed) onFrame(frame); } catch (e) { failed = e; } finally { frame.close(); } },
       error: (e) => { failed = failed || e; },
     });
     try {
-      dec.configure({ codec: this.info.codec, description: this.info.description, optimizeForLatency: true });
-      for (const c of chunks) dec.decode(c);
+      const avc = this.avc;
+      dec.configure(avc ? { codec: this.info.codec, optimizeForLatency: true } : { codec: this.info.codec, description: this.info.description, optimizeForLatency: true });
+      for (const x of samples) dec.decode(new EncodedVideoChunk({ type: x.type, timestamp: x.timestamp, data: avc ? toAnnexB(x.data, avc, x.type === 'key') : x.data }));
       await dec.flush();
     } finally {
       if (dec.state !== 'closed') dec.close();
     }
     if (failed) throw failed;
+  }
+
+  // decode(), and when the decoder gives no picture at all from the samples as they are
+  // (Safari, see avcConfig), once more in Annex B form; this reader then keeps that form.
+  async decodeAny(samples, onFrame) {
+    let n = 0;
+    const count = (f) => { n++; onFrame(f); };
+    let error = null;
+    try { await this.decode(samples, count); } catch (e) { error = e; }
+    if (n || this.avc) { if (error) throw error; return; }
+    this.avc = avcConfig(this.info.description);
+    await this.decode(samples, count);
   }
 
   // First frame of segment i: fn(frame, seconds) is called once.
@@ -266,10 +326,10 @@ class HlsVideoReader {
     this.lastNeed = k.offset + k.size;
     await upTo(k.offset + k.size);
     const ts = this.info.timescale;
-    const chunk = new EncodedVideoChunk({ type: 'key', timestamp: Math.round((k.time / ts) * 1e6), data: new Uint8Array(buf, k.offset, k.size) });
+    const sample = { type: 'key', timestamp: Math.round((k.time / ts) * 1e6), data: new Uint8Array(buf, k.offset, k.size) };
     let got = false;
     const t0 = performance.now();
-    await this.decode([chunk], (f) => { if (!got) { got = true; fn(f, k.time / ts); } });
+    await this.decodeAny([sample], (f) => { if (!got) { got = true; fn(f, k.time / ts); } });
     this.decodeMs = performance.now() - t0;
     if (!got) throw new Error('no frame decoded');
   }
@@ -280,11 +340,11 @@ class HlsVideoReader {
     const buf = await fetchRange(s.url, s.offset, s.length, signal);
     const frag = parseFragment(buf, s.offset);
     const ts = this.info.timescale;
-    const chunks = frag.samples
+    const samples = frag.samples
       .filter((x) => x.offset + x.size <= buf.byteLength)
-      .map((x, j) => new EncodedVideoChunk({ type: j === 0 || x.key ? 'key' : 'delta', timestamp: Math.round((x.time / ts) * 1e6), data: new Uint8Array(buf, x.offset, x.size) }));
+      .map((x, j) => ({ type: j === 0 || x.key ? 'key' : 'delta', timestamp: Math.round((x.time / ts) * 1e6), data: new Uint8Array(buf, x.offset, x.size) }));
     let next = -Infinity;
-    await this.decode(chunks, (f) => {
+    await this.decodeAny(samples, (f) => {
       const t = f.timestamp / 1e6;
       if (t + 1e-6 < next) return;
       next = t + stepSec;

@@ -35,7 +35,7 @@ function loadSources(names, overrides) {
   const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('00-boot') || f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
-    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
+    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
       'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
@@ -813,6 +813,57 @@ test('keyframe reading: a header larger than the first request, a tiny static se
   asked.length = 0;
   await r.keyframe(0, null, () => {});
   assert.equal(asked.length, 1);
+});
+
+// Bug (0.24.0): on iPhone (iOS 17.5) slide chapters came only from the preview pictures
+// ("no frame decoded"): Safari decodes nothing from Echo360's H.264 given as length-prefixed
+// samples with the avcC description, but decodes the same samples in Annex B form.
+const AVCC = new Uint8Array([1, 0x64, 0, 0x29, 0xff, 0xe1, 0, 3, 0x67, 0xaa, 0xbb, 1, 0, 2, 0x68, 0xcc]);
+const ANNEXB_KEY = [0, 0, 0, 1, 0x67, 0xaa, 0xbb, 0, 0, 0, 1, 0x68, 0xcc, 0, 0, 0, 1, 0x06, 9, 0, 0, 0, 1, 0x65, 1, 2, 3];
+
+test('H.264 samples in Annex B form: parameter sets from the avcC, start codes instead of lengths', () => {
+  const m = slidesMod();
+  const avc = m.avcConfig(AVCC);
+  assert.equal(avc.lengthSize, 4);
+  assert.equal(JSON.stringify(avc.sets.map((x) => Array.from(x))), JSON.stringify([[0x67, 0xaa, 0xbb], [0x68, 0xcc]]));
+  const sample = new Uint8Array([0, 0, 0, 2, 0x06, 9, 0, 0, 0, 4, 0x65, 1, 2, 3]);   // SEI, IDR slice
+  assert.equal(JSON.stringify(Array.from(m.toAnnexB(sample, avc, true))), JSON.stringify(ANNEXB_KEY));
+  assert.equal(JSON.stringify(Array.from(m.toAnnexB(sample, avc, false))), JSON.stringify(ANNEXB_KEY.slice(13)));
+  assert.throws(() => m.toAnnexB(new Uint8Array([0, 0, 0, 9, 1]), avc, false), /bad H.264 sample/);
+  assert.throws(() => m.avcConfig(new Uint8Array([1, 0x64, 0, 0x29, 0xff, 0xe1, 0, 30, 0x67])), /avcC/);
+});
+
+test('keyframes and segments: a decoder that gives nothing for the avcC form (Safari) gets Annex B, once for the reader; others never do', async () => {
+  for (const safari of [true, false]) {
+    const configs = [];
+    const m = loadSources(['00-util', '61-media-io', '62-silence', '64-slides'], {
+      EncodedVideoChunk: class { constructor(o) { Object.assign(this, o); } },
+      VideoDecoder: class {
+        constructor(o) { this.o = o; this.state = 'configured'; }
+        configure(c) { this.c = c; configs.push(c.description ? 'avcC' : 'annexB'); }
+        decode(c) {
+          const annexB = c.data[0] === 0 && c.data[1] === 0 && c.data[2] === 0 && c.data[3] === 1;
+          // Safari: silent for one keyframe, an error for a run of samples, in the avcC form.
+          if (safari && this.c.description) { if (c.type === 'delta') this.o.error(new Error('Decoder failure')); return; }
+          if (!safari && annexB) throw new Error('not expected');
+          this.o.output({ timestamp: c.timestamp, close() {} });
+        }
+        flush() { return Promise.resolve(); }
+        close() { this.state = 'closed'; }
+      },
+    });
+    const r = Object.create(m.HlsVideoReader.prototype);
+    Object.assign(r, { info: { codec: 'avc1.640029', description: AVCC, timescale: 1000 }, avc: null });
+    const key = { type: 'key', timestamp: 0, data: new Uint8Array([0, 0, 0, 4, 0x65, 1, 2, 3]) };
+    const delta = { type: 'delta', timestamp: 40000, data: new Uint8Array([0, 0, 0, 2, 0x41, 7]) };
+    let n = 0;
+    await r.decodeAny([key], () => { n++; });
+    assert.equal(n, 1, 'keyframe decoded');
+    await r.decodeAny([key, delta], () => { n++; });
+    assert.equal(n, 3, 'segment decoded');
+    assert.equal(JSON.stringify(configs), JSON.stringify(safari ? ['avcC', 'annexB', 'annexB'] : ['avcC', 'avcC']), safari ? 'Safari: tried once, then Annex B' : 'others: as before');
+    assert.equal(!!r.avc, safari);
+  }
 });
 
 test('video variants sorted by height', () => {

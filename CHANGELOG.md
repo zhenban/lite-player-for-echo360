@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+New:
+- **Usage data is harder to fake.** About 30 seconds into the first viewing, the player registers its anonymous ID once. To do this it spends a few seconds of computing in small slices that don't disturb playback. After that, each batch of usage data is signed, so the server can tell real batches from made-up or replayed ones. The server also limits how much one ID can send per day. Nothing new is sent about you. "View my data" shows whether the ID is registered, and deleting your data deletes the registration too.
+
+Fixes:
+- **Slides on iPhone.** Precise slide chapters (read from the video frames) never worked on iPhone. Safari there silently decodes nothing when it is given the video in the form other browsers use, so the analysis fell back to the per-minute preview pictures. The player now notices this and hands Safari the video in the other standard form, which it decodes.
+
 ## 0.24.0
 New:
 - **Phones held upright** show the video on top and the side panel (chapters, notes, discussion…) below it, instead of squeezing both side by side.
