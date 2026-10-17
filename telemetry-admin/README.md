@@ -86,6 +86,7 @@ off. The font is bundled, so the page loads nothing from other sites.
   `app.js`). `build-assets.mjs` packs it, with the font, into `src/assets.gen.js`
   (generated, not committed); `npm test`, `npm run dev` and `npm run deploy` run it first.
 - `test/`: access control, read-only, summary and page tests.
+- `chart/`: the public usage chart (see below).
 - `dev/`: made-up data (`seed.mjs`), local preview (`serve.mjs`), screenshots (`shoot.mjs`).
   `dev/migrations/` holds copies of telemetry Worker migrations this branch's
   `telemetry-worker/` does not have yet; the test schema skips a copy once the Worker's own
@@ -206,6 +207,52 @@ Without `OWNER_UIDS` the toggle simply changes nothing.
 `npm run deploy` again. The secrets stay. Nothing in this directory needs redeploying when
 `telemetry-worker` changes, unless its tables change (then the queries in `src/queries.js`
 and the tests' schema, read from `../telemetry-worker/migrations`, follow).
+
+## Public usage chart
+
+A small chart for the main README: active users in the last 30 days, the total since the
+first report, and daily active users over the last 90 days (UTC days). It shows totals only:
+no uid, no per-user numbers, nothing about devices.
+
+- `chart/usage-chart.mjs` asks D1 for two fixed statements (checked by the same read-only
+  `compile()` as the dashboard's) through Cloudflare's HTTP API and writes
+  `usage-light.svg` and `usage-dark.svg`.
+- `.github/workflows/usage-chart.yml` runs it daily (04:23 UTC, or by hand from the Actions
+  tab) and force-pushes the two files to the `stats` branch, as one commit each time, so the
+  branch never grows. Nothing is committed to `main`.
+- `test/chart.test.mjs` checks the counts against the made-up data, that the SVGs contain no
+  ids, and that the token is sent only to the D1 query endpoint and never appears in errors.
+
+### Setting it up (owner, once)
+
+1. **A read-only Cloudflare API token.** Cloudflare dashboard → your profile → **API Tokens →
+   Create Token → Create Custom Token**:
+   - Name: e.g. `lite-player usage chart (D1 read)`
+   - Permissions: **Account → D1 → Read** (only this one)
+   - Account Resources: Include → your account
+   - Leave IP filtering empty (GitHub's runners have changing addresses). A TTL is optional;
+     if you set one, the chart stops updating when it expires.
+
+   Create it and copy the token (it is shown once).
+2. **Two GitHub Actions secrets** (repository → Settings → Secrets and variables → Actions →
+   New repository secret, or `gh secret set NAME`, which asks for the value):
+   - `CLOUDFLARE_D1_READ_TOKEN`: the token
+   - `CLOUDFLARE_ACCOUNT_ID`: the account ID (`npx wrangler whoami` shows it)
+3. Once the workflow is on `main`: Actions → **Usage chart** → **Run workflow**. The `stats`
+   branch appears with the two SVGs.
+4. In the main README:
+
+   ```html
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-dark.svg">
+     <img alt="Daily active users of Lite Player for Echo360 over the last 90 days" src="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-light.svg">
+   </picture>
+   ```
+
+The token stays in GitHub's encrypted secrets. Workflows started from forks or pull requests
+do not get it, and this workflow runs only on the schedule or by hand, only in this
+repository. It can read the raw rows if it ever leaks, so if that happens revoke it in
+Cloudflare (API Tokens → Roll or Delete) and create a new one.
 
 ## Wrangler's own usage statistics
 
