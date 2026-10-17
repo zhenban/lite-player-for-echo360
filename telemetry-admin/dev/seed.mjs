@@ -67,8 +67,12 @@ function device(r, uid, i) {
   const browser = os === 'iOS' ? 'Safari' : os === 'macOS' ? weighted(r, [['Chrome', 6], ['Safari', 3], ['Firefox', 1]]) :
     weighted(r, [['Chrome', 6], ['Edge', 3], ['Firefox', 2]]);
   const cores = mobile ? 6 : weighted(r, [[4, 2], [8, 5], [12, 2], [16, 1], [2, 1]]);
+  // Major system version, from the uid so the random sequence stays as it was: some iPhones
+  // still on iOS 17 (which decode the slides' frames only after conversion to Annex B).
+  const n = parseInt(uid.slice(-2, -1), 16);
+  const osV = { Windows: n % 4 ? 11 : 10, macOS: 15, iOS: n % 3 ? 18 : 17, Android: 15, Linux: 0, ChromeOS: 140 }[os];
   return {
-    uid, browser, browser_v: browser === 'Firefox' ? 142 : 140, os, mobile: mobile ? 1 : 0, touch: mobile || r() < 0.08 ? 1 : 0,
+    uid, browser, browser_v: browser === 'Firefox' ? 142 : browser === 'Safari' ? (os === 'iOS' ? osV : 18) : 140, os, os_v: osV, mobile: mobile ? 1 : 0, touch: mobile || r() < 0.08 ? 1 : 0,
     manager: browser === 'Safari' ? 'Userscripts' : weighted(r, [['Tampermonkey', 6], ['Violentmonkey', 3], ['ScriptCat', 1]]),
     manager_v: '5.4', lang: 'en', browser_lang: weighted(r, [['en', 6], ['zh', 3], ['ko', 1]]),
     screen_w: mobile ? 390 : weighted(r, [[1280, 1], [1440, 3], [1536, 2], [1920, 4], [2560, 1]]), screen_h: mobile ? 844 : 900,
@@ -115,23 +119,24 @@ function session(r, d, at, version, frontend, extra = {}) {
   };
 }
 
-// Where the slide chapters came from (reported from 0.23.0): keyframes, unless the browser
-// cannot decode them (no WebCodecs; iPhone Safari's decoder giving no picture) or, now and
-// then, the scan stops on a network or decoder failure.
+// Where the slide chapters came from (reported from 0.23.0), and which form of the video
+// gave the keyframe scan its pictures: keyframes as sent, except on iOS 17, which needs
+// conversion to Annex B; no scan without WebCodecs; now and then the scan stops on a
+// network or decoder failure, or neither form gives a picture.
 function slides(d, version, sid) {
   if (version !== '0.23.0') return {};
   if (!d.webcodecs) return { slide_src: 'thumbs', slide_stop: 'noWebCodecs' };
-  if (d.browser === 'Safari' && d.mobile) return { slide_src: 'thumbs', slide_stop: 'noFrame' };
   const k = parseInt(sid.slice(0, 4), 16) % 40;
-  if (k === 0) return { slide_src: 'thumbs', slide_stop: 'network' };
-  if (k === 1) return { slide_src: 'thumbs', slide_stop: 'decoder' };
+  if (k === 0) return { slide_src: 'thumbs', slide_stop: 'network', slide_form: 'avcc' };
+  if (k === 1) return { slide_src: 'thumbs', slide_stop: 'decoder', slide_form: 'avcc' };
   if (k === 2) return { slide_src: 'none' };
-  return { slide_src: 'frames' };
+  if (k === 3 && d.os === 'iOS') return { slide_src: 'thumbs', slide_stop: 'noFrame', slide_form: 'neither' };
+  return { slide_src: 'frames', slide_form: d.os === 'iOS' && d.os_v < 18 ? 'annexb' : 'avcc' };
 }
 
 function envRow(d, at, version) {
   const row = { at, day: new Date(at).toISOString().slice(0, 10), version };
-  for (const k of ['uid', 'browser', 'browser_v', 'os', 'mobile', 'touch', 'manager', 'manager_v', 'lang', 'browser_lang', 'screen_w', 'screen_h',
+  for (const k of ['uid', 'browser', 'browser_v', 'os', 'os_v', 'mobile', 'touch', 'manager', 'manager_v', 'lang', 'browser_lang', 'screen_w', 'screen_h',
     'dpr', 'cores', 'mem_gb', 'gpu_vendor', 'webgpu', 'webcodecs', 'hw720', 'hw1080', 'arch', 'country', 'region', 'asorg']) row[k] = d[k];
   return row;
 }
@@ -144,7 +149,7 @@ export function seed(db, scenario, now) {
   const r = rng(scenario === 'solo' ? 7 : 42);
   if (scenario === 'solo') {
     const d = device(r, OWNER_UID, 0);
-    Object.assign(d, { os: 'Linux', browser: 'Chrome', manager: 'Violentmonkey' });
+    Object.assign(d, { os: 'Linux', os_v: 0, browser: 'Chrome', browser_v: 140, manager: 'Violentmonkey' });
     const days = [3, 1, 0];
     for (const ago of days) {
       const at = now - ago * DAY - 3600000;
@@ -159,6 +164,12 @@ export function seed(db, scenario, now) {
   // busy
   const devices = [];
   for (let i = 0; i < 42; i++) devices.push(device(r, i === 0 ? OWNER_UID : hex(r, 64), i));
+  // Two iPhones still on iOS 17, whose Safari decodes the slides' frames only after
+  // conversion to Annex B.
+  for (const i of [5, 9]) {
+    Object.assign(devices[i], { os: 'iOS', os_v: 17, browser: 'Safari', browser_v: 17, mobile: 1, touch: 1, manager: 'Userscripts',
+      screen_w: 390, screen_h: 844, dpr: 3, cores: 6, mem_gb: 4, gpu_vendor: 'apple', webcodecs: 1, arch: 'arm', speed: 1.6 });
+  }
   const changeAt = now - 20 * DAY; // Echo360 changed its page code
   const fixAt = now - 18 * DAY;    // 0.22.0 handled it
   for (let ago = 90; ago >= 0; ago--) {

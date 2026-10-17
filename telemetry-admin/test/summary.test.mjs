@@ -109,6 +109,23 @@ test('slide sources and why the keyframe scan stopped, from the viewings that re
   for (const x of data.devices.dims.webcodecs) assert.ok(['yes', 'no'].includes(x.value));
 });
 
+test('video form of the keyframe scan: totals, and per system and browser version', async () => {
+  const db = makeDb('busy');
+  const res = await handle(req('/api/summary?range=30', { token }), makeEnv(db), {}, deps);
+  const f = (await res.json()).features;
+  const total = (form) => f.slideForms.find((x) => x.form === form);
+  assert.ok(total('avcc').sessions > total('annexb').sessions && total('annexb').sessions > 0);
+  // Each viewing counted once, though every device has many reports to match against.
+  const sum = (form) => f.slideFormsBySystem.reduce((a, x) => a + x[form], 0);
+  for (const form of ['avcc', 'annexb', 'neither']) assert.equal(sum(form), total(form)?.sessions ?? 0, form);
+  // Conversion was needed only on iOS 17 (as seeded), and those rows come first.
+  for (const x of f.slideFormsBySystem.filter((r) => r.annexb > 0)) assert.deepEqual([x.os, x.osV], ['iOS', 17]);
+  assert.ok(f.slideFormsBySystem[0].annexb + f.slideFormsBySystem[0].neither > 0);
+  assert.ok(f.slideFormsBySystem.some((x) => x.os === 'Windows' && x.osV === 11 && x.browser === 'Chrome'));
+  const empty = (await get('empty')).data.features;
+  assert.deepEqual([empty.slideForms, empty.slideFormsBySystem], [[], []]);
+});
+
 test('HEAD answers without a body', async () => {
   const db = makeDb('busy');
   const res = await handle(req('/api/summary', { method: 'HEAD', token }), makeEnv(db), {}, deps);

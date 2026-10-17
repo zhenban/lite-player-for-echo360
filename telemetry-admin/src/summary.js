@@ -68,7 +68,7 @@ export async function summary(db, filters, owners, now) {
   const exclude = filters.devices === 'others' ? JSON.stringify(owners) : '[]';
   const values = { from: filters.from, to: filters.to, prev: filters.prev, since: filters.since, version: filters.version, exclude, tz: filters.tz };
   const r = await run(db, ['overview', 'daily', 'versions', 'versionList', 'latest', 'devices', 'performance', 'perfByVersion',
-    'stability', 'problems', 'errors', 'features', 'changed', 'speeds', 'slides', 'frontends', 'fallbackReasons', 'boot'], values);
+    'stability', 'problems', 'errors', 'features', 'changed', 'speeds', 'slides', 'slideForms', 'slideFormTotals', 'frontends', 'fallbackReasons', 'boot'], values);
 
   const o = r.overview[0] || {};
   const st = r.stability[0] || {};
@@ -154,6 +154,9 @@ export async function summary(db, filters, owners, now) {
       speeds: r.speeds.map((s) => ({ speed: s.speed, sec: Math.round(num(s.sec)) })),
       slideSources: r.slides.filter((x) => x.kind === 'src').map((x) => ({ source: x.bucket, sessions: num(x.sessions) })),
       slideStops: r.slides.filter((x) => x.kind === 'stop').map((x) => ({ reason: x.bucket, sessions: num(x.sessions) })),
+      slideForms: r.slideFormTotals.map((x) => ({ form: x.form, sessions: num(x.sessions), users: num(x.users) })),
+      slideFormsBySystem: r.slideForms.map((x) => ({ os: x.os, osV: x.os_v, browser: x.browser, browserV: x.browser_v,
+        avcc: num(x.avcc), annexb: num(x.annexb), neither: num(x.neither), users: num(x.users) })),
     },
     compat: {
       fallbacks, fallbackPct,

@@ -27,8 +27,9 @@ English, with Chinese as the second language (`中文` button).
     errors (feature, message, count, versions, last seen);
   - **Features**: share of users who used each feature, features never used, settings
     changed from the default, playback speeds, where slide chapters came from (the video's
-    keyframes, or only Echo360's per-minute preview pictures) and why the keyframe scan
-    stopped early;
+    keyframes, or only Echo360's per-minute preview pictures), why the keyframe scan
+    stopped early, and which form of the video gave it pictures (as sent, converted to
+    Annex B, or neither) per system and browser version;
   - **Echo360 compatibility**: page loads sent to the original player and why, the
     versions of Echo360's page code seen (a new one usually means Echo360 changed its
     player), and how the script started.

@@ -109,6 +109,12 @@ const STRINGS = {
     stop_noWebCodecs: 'Browser can’t decode frames (no WebCodecs)', stop_noFrame: 'Decoder returned no picture', stop_decoder: 'Decoder error',
     stop_playlist: 'Couldn’t read the video playlist', stop_network: 'Network error', stop_other: 'Other',
     noSlideSource: 'No viewing in this range reported where its slide chapters came from.',
+    slideForms: 'Video form that gave slide pictures',
+    slideFormsCap: 'In the keyframe scan for slide chapters. Most browsers decode the video as Echo360 sends it (avcC); some iPhone Safari versions only after it is converted to Annex B. Viewings without a scan are left out.',
+    form_avcc: 'As sent (avcC)', form_annexb: 'Converted to Annex B', form_neither: 'No picture in either form',
+    formWithUsers: '{label}, {users}', bySystem: 'By system and browser', colSystem: 'System and browser',
+    colAvcc: 'As sent', colAnnexb: 'Annex B', colNeither: 'Neither', colUsers: 'Users',
+    noSlideForm: 'No viewing in this range ran the keyframe scan with a player that reports this (0.25.1 or later).',
     noneChanged: 'Nobody changed a setting.',
 
     // Compatibility
@@ -225,6 +231,12 @@ const STRINGS = {
     stop_noWebCodecs: '浏览器无法解码画面（没有 WebCodecs）', stop_noFrame: '解码器没有返回画面', stop_decoder: '解码器出错',
     stop_playlist: '无法读取视频播放列表', stop_network: '网络错误', stop_other: '其他',
     noSlideSource: '这段时间内没有观看报告幻灯片章节的来源。',
+    slideForms: '给出幻灯片画面的视频格式',
+    slideFormsCap: '指幻灯片章节的关键帧扫描。大多数浏览器能直接解码 Echo360 发来的视频（avcC）；部分 iPhone Safari 版本要先转换成 Annex B 才行。没有扫描的观看不计入。',
+    form_avcc: '原样（avcC）', form_annexb: '转换为 Annex B', form_neither: '两种格式都没有画面',
+    formWithUsers: '{label}，{users}', bySystem: '按系统和浏览器', colSystem: '系统和浏览器',
+    colAvcc: '原样', colAnnexb: 'Annex B', colNeither: '都不行', colUsers: '用户',
+    noSlideForm: '这段时间内没有观看用会报告此项的播放器（0.25.1 或更新）运行关键帧扫描。',
     noneChanged: '没有人改过设置。',
 
     dailyFallbacks: '退回原播放器的页面', dailyFallbacksCap: '每天；不含用户主动切换',

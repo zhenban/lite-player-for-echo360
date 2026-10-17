@@ -263,6 +263,31 @@ SELECT 'stop', s.slide_stop, COUNT(*) FROM sessions s
 WHERE ${scope('s')} AND s.slide_stop IS NOT NULL GROUP BY s.slide_stop
 ORDER BY kind, sessions DESC`,
 
+  // Which form of the H.264 video gave pictures in the keyframe scan (avcc: as Echo360 sends
+  // it; annexb: only after conversion to Annex B; neither), per system and browser version.
+  // Viewings carry no device details, so each takes those of its device's report nearest
+  // before it (or, failing that, nearest after). Viewings without a scan (NULL) are left out.
+  slideForms: `
+WITH s AS (SELECT s.rowid AS rid, s.uid, s.at, s.slide_form FROM sessions s WHERE ${scope('s')} AND s.slide_form IS NOT NULL),
+x AS (
+  SELECT s.uid, s.slide_form AS form, e.os, e.os_v, e.browser, e.browser_v,
+         ROW_NUMBER() OVER (PARTITION BY s.rid ORDER BY e.at > s.at, ABS(e.at - s.at)) AS rn
+  FROM s LEFT JOIN env e ON e.uid = s.uid
+)
+SELECT os, os_v, browser, browser_v,
+       SUM(form = 'avcc') AS avcc, SUM(form = 'annexb') AS annexb, SUM(form = 'neither') AS neither,
+       COUNT(DISTINCT uid) AS users
+FROM x WHERE rn = 1
+GROUP BY os, os_v, browser, browser_v
+ORDER BY annexb + neither DESC, avcc DESC
+LIMIT 40`,
+
+  // The same forms in total: viewings and distinct users.
+  slideFormTotals: `
+SELECT s.slide_form AS form, COUNT(*) AS sessions, COUNT(DISTINCT s.uid) AS users FROM sessions s
+WHERE ${scope('s')} AND s.slide_form IS NOT NULL
+GROUP BY s.slide_form`,
+
   // Echo360's page code versions (its script file names): when each was first seen at all,
   // how many were seen before it (0: the first ever seen, so not a change), and in the range its viewings, pages that went to the original player, and users.
   frontends: `
