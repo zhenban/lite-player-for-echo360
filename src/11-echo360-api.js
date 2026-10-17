@@ -31,7 +31,7 @@ class ApiError extends Error {
 // timeout, too many requests or a server error. Any other refusal (401, 403, 404, an
 // answer saying "ko") means the feature is not offered here.
 function isTransient(e) {
-  if (e && e.name === 'TypeError') return true;
+  if (e && (e.name === 'TypeError' || e.name === 'TimeoutError')) return true;
   const s = e && e.status;
   return s === 0 || s === 408 || s === 429 || s >= 500;
 }
@@ -70,6 +70,7 @@ class Echo360Api {
     this.l = lesson;
     const mode = store.get('dryRun', false);
     this.dryRun = mode === 'all' || mode === 'public' ? mode : false;
+    if (this.dryRun) log.info('dry run (' + this.dryRun + '): writes to Echo360 are not sent');
   }
 
   async request(method, path, body) {
@@ -81,10 +82,18 @@ class Echo360Api {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
-    const r = await fetch(path, opts);
-    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
+    opts.signal = requestSignal();
+    let r;
     let j = null;
-    try { j = await r.json(); } catch (e) { /* empty body */ }
+    try {
+      r = await fetch(path, opts);
+      if (r.type !== 'opaqueredirect') { try { j = await r.json(); } catch (e) { if (e && e.name === 'TimeoutError') throw e; /* empty body */ } }
+    } catch (e) {
+      // No answer in time: as a server that says so (transient, see isTransient).
+      if (e && e.name === 'TimeoutError') throw new ApiError(408);
+      throw e;
+    }
+    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
     if (!r.ok || (j && j.status === 'ko')) throw new ApiError(r.status, j && j.message);
     return j && 'data' in j ? j.data : j;
   }

@@ -72,7 +72,7 @@ class ABLoop {
       move: (e) => {
         const r = seek.getBoundingClientRect();
         const tm = clamp((e.clientX - r.left) / r.width, 0, 1) * this.p.duration();
-        if (isA) this.a = Math.min(tm, this.b - LOOP_MIN_SEC); else this.b = Math.max(tm, this.a + LOOP_MIN_SEC);
+        if (isA) this.a = Math.max(0, Math.min(tm, (this.b ?? Infinity) - LOOP_MIN_SEC)); else this.b = Math.max(tm, this.a + LOOP_MIN_SEC);
         this.render();
       },
       done: (e) => { e.stopPropagation(); this.announce(); },

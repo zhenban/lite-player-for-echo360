@@ -9,7 +9,7 @@ import { newWindow, closeWindow, same } from './dom-guard.mjs';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
-const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,'
+const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,platform,'
   + 'setPdfLib: (lib) => { pdfjsPromise = Promise.resolve(lib); }';
 
 // The sources in a page of their own; nothing reaches the network.
@@ -153,6 +153,25 @@ test('audit 4b: a note being edited survives a redraw of the list', async () => 
   area.dispatchEvent(new w.Event('input'));
   notes.render();   // e.g. a tag was added to another note
   assert.equal(pane.querySelector('.card[data-id="n1"] textarea').value, 'half-typed change');
+  d.dispose();
+}));
+
+test('review 2 A7: the note being edited is found again when the page has replaced the global CSS object', async () => withPage(async (w, m) => {
+  const d = new m.Disposer();
+  const pane = w.document.createElement('div');
+  const p = { video: { currentTime: 0 }, duration: () => 100, updateMarkers() {}, tags: { tags: [], byId: () => null, of: () => [] }, lesson: {}, sidebar: { has: () => false } };
+  const notes = new m.NotesPane(p, pane, {}, false, d);
+  notes.items = [{ id: 'n"1', type: 'note', time: 5, text: 'old text', createdAt: '' }];
+  notes.visible = true;
+  notes.render();
+  const card = [...pane.querySelectorAll('.card')].find((c) => c.dataset.id === 'n"1');
+  notes.startEdit(notes.items[0], card);
+  const area = card.querySelector('textarea');
+  area.value = 'half-typed change';
+  area.dispatchEvent(new w.Event('input'));
+  Object.defineProperty(w, 'CSS', { value: {}, configurable: true, writable: true });   // as Echo360's page does
+  try { notes.render(); } finally { delete w.CSS; }
+  assert.equal(pane.querySelector('.card textarea').value, 'half-typed change');
   d.dispose();
 }));
 
@@ -388,6 +407,37 @@ test('audit 10: closing while a slide file is being read makes no PDF Worker', a
   assert.equal(deck.pdfWorker, null);
 }));
 
+test('review 2 F6: a PDF declaring very many pages is read up to the cap; an oversized file is refused', async () => withPage(async (w, m) => {
+  w.Worker = class { terminate() {} };
+  let reads = 0;
+  const long = 'word '.repeat(10000);
+  const doc = {
+    numPages: 1e6,
+    getPage: async () => { reads++; return { view: [0, 0, 100, 75], getTextContent: async () => ({ items: [{ str: long, transform: [1, 0, 0, 1, 0, 70], height: 5 }] }) }; },
+  };
+  m.setPdfLib({ PDFWorker: class { destroy() {} }, getDocument: () => ({ promise: Promise.resolve(doc), destroy: async () => {} }) });
+  m.idbCache.get = async () => ({ arrayBuffer: async () => new ArrayBuffer(8) });
+  m.platform.libBlobUrl = async () => 'blob:pdf-worker';
+  const d = new m.Disposer();
+  const deck = new m.SlideDeckController({ lesson: { mediaId: 'test' }, video: {}, disposer: d });
+  deck.startReading = () => {};
+  deck.decide = () => {};
+  deck.files = [{ hash: 'abc', name: 'test.pdf' }];
+  await deck.reload();
+  assert.equal(deck.pages.length, 3000, deck.state + ' ' + deck.error);
+  assert.equal(reads, 3000);
+  assert.equal(deck.capped, true);
+  assert.ok(deck.pages.every((pg) => pg.text.length <= 20000), 'text of a page capped');
+  // A file over the size limit is refused before it is read or stored.
+  let stored = 0;
+  m.idbCache.updateMany = async () => { stored++; return {}; };
+  const big = { name: 'Big.pdf', type: 'application/pdf', size: 400 * 1024 * 1024, arrayBuffer: async () => assert.fail('read') };
+  await assert.rejects(deck.addFiles([big]), /Big\.pdf/);
+  assert.equal(deck.state, 'error');
+  assert.equal(stored, 0);
+  d.dispose();
+}));
+
 test('audit 11: in the floating window, captions follow that window\'s visibility, not the page behind', async () => withPage(async (w, m) => {
   const other = newWindow();
   try {
@@ -426,6 +476,45 @@ test('audit 6b: other drags (zoom pan, loop handle) ignore a second finger and u
   hd.dispatchEvent(pointer(w, 'pointercancel', { pointerId: 1 }));
   assert.equal(loop.a, 10, 'cancelled: back to where it was');
   d.dispose();
+}));
+
+test('review 2 B8: dragging A of a loop with no end yet keeps it inside the recording', async () => withPage(async (w, m) => {
+  const root = w.document.createElement('div');
+  root.innerHTML = '<div class="m"></div><div class="seek"></div>';
+  const rail = root.querySelector('.seek');
+  rail.getBoundingClientRect = () => ({ left: 0, width: 100 });
+  const d = new m.Disposer();
+  w.document.body.append(root);
+  const loop = new m.ABLoop({ pops: new m.Popovers(root.querySelector('.m'), d), rail, video: { currentTime: 0 }, duration: () => 100, seek() {}, toast() {} }, d);
+  loop.a = 10;
+  loop.b = null;
+  loop.render();
+  const hd = loop.band.querySelector('.la');
+  hd.setPointerCapture = () => {};
+  hd.dispatchEvent(pointer(w, 'pointerdown', { pointerId: 1, clientX: 10 }));
+  hd.dispatchEvent(pointer(w, 'pointermove', { pointerId: 1, clientX: 30 }));
+  assert.equal(loop.a, 30);
+  hd.dispatchEvent(pointer(w, 'pointermove', { pointerId: 1, clientX: -20 }));
+  assert.equal(loop.a, 0);
+  d.dispose();
+}));
+
+test('review 2 C9: in the floating window, lifting the pointer after dragging the transcript scroll bar ends the drag', async () => withPage(async (w, m) => {
+  const other = newWindow();
+  try {
+    const pane = w.document.createElement('div');
+    pane.innerHTML = '<input class="tsearch"><span class="tcount"></span><button class="tback"></button><button class="tprev"></button><button class="tnext"></button><div class="tlist"></div>';
+    const d = new m.Disposer();
+    const t = new m.TranscriptPanel({ duration: () => 100, video: { currentTime: 0 }, seek() {} }, pane, w.document.createElement('div'), d);
+    other.document.body.append(pane);   // the player moved into the floating window
+    t.list.dispatchEvent(new other.PointerEvent('pointerdown', { bubbles: true }));
+    assert.equal(t.dragScroll, true);
+    other.dispatchEvent(new other.PointerEvent('pointerup', { bubbles: true }));
+    assert.equal(t.dragScroll, false, 'the drag ended');
+    d.dispose();
+  } finally {
+    await closeWindow(other);
+  }
 }));
 
 test('transcript search marks exactly the matched characters, in every line of a cue', async () => withPage(async (w, m) => {
@@ -761,6 +850,33 @@ test('review R9: a reply that was sent cannot be sent again while the list reloa
   assert.deepEqual(sent, ['my reply'], 'sent once');
   releaseLoad();
   for (let i = 0; i < 5; i++) await tick();
+  d.dispose();
+}));
+
+test('review 2 F1: a held key does a toggle once (no bookmark added and removed on Echo360 again and again); steps repeat', async () => withPage(async (w, m) => {
+  const root = w.document.createElement('div');
+  root.innerHTML = '<div class="keyhelp" hidden><button class="khclose"></button><div class="khlist"></div></div>';
+  w.document.body.append(root);
+  const d = new m.Disposer();
+  const calls = [];
+  const act = (name) => () => calls.push(name);
+  new m.KeyboardShortcuts({ $: (s) => root.querySelector(s), isDestroyed: () => false, wake() {},
+    actions: { bookmark: act('bookmark'), flag: act('flag'), togglePlay: act('play'), seekBy: act('seek'), volumeBy: act('volume') } }, d);
+  const hold = (k, n) => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const e = new w.KeyboardEvent('keydown', { key: k, repeat: i > 0, bubbles: true, composed: true, cancelable: true });
+      w.document.body.dispatchEvent(e);
+      out.push(e.defaultPrevented);
+    }
+    return out;
+  };
+  assert.deepEqual(hold('b', 5), [true, true, true, true, true], 'the page does not get the repeats either');
+  hold('u', 4);
+  hold(' ', 3);
+  hold('ArrowRight', 3);
+  hold('ArrowUp', 2);
+  assert.deepEqual(calls, ['bookmark', 'flag', 'play', 'seek', 'seek', 'seek', 'volume', 'volume']);
   d.dispose();
 }));
 

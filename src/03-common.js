@@ -133,7 +133,7 @@ function saveDataOn() {
 // A course's recordings as listed by Echo360 (the JSON `data` array). Rejects when the
 // list cannot be had.
 async function fetchSyllabus(section) {
-  const r = await fetch('/section/' + encodeURIComponent(section) + '/syllabus', { credentials: 'include', headers: { Accept: 'application/json' } });
+  const r = await fetch('/section/' + encodeURIComponent(section) + '/syllabus', { credentials: 'include', headers: { Accept: 'application/json' }, signal: requestSignal() });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const j = await r.json();
   return j && Array.isArray(j.data) ? j.data : [];

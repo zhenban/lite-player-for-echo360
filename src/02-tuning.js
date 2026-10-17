@@ -123,6 +123,13 @@ const DECK_RENDER_BUDGET = 40e6;       // rendered pages kept, in pixels (about 
 // scroll) is drawn smaller rather than as one huge canvas. 8192 px is within every
 // browser's canvas limit; 16 M pixels is 64 MB, two 4096-wide 16:9 pages.
 const PAGE_RENDER_MAX_SIDE = 8192;
+// PDFs added to a recording: a lecture's slides are a few hundred pages and tens of MB at
+// most, a page's text a few thousand characters. Past these a file is refused or reading
+// stops, so a crafted file (a small PDF can declare a huge number of pages) cannot hold the
+// matcher (time and memory grow with pages x pictures) or the page.
+const DECK_MAX_FILE_BYTES = 300 * 1024 * 1024; // one file
+const DECK_MAX_PAGES = 3000;                    // all files of a recording together
+const DECK_MAX_PAGE_CHARS = 20000;              // text read from one page
 const PAGE_RENDER_MAX_PX = 16e6;
 const PAGE_TITLE_TOP = 0.4;            // a page's title is the largest text in this top share of the page
 const PAGE_AR_DEFAULT = 9 / 16;        // height / width of a page not opened yet (slides are mostly 16:9)
@@ -229,12 +236,33 @@ const VOLUME_WHEEL_PX = 50;            // wheel distance for one volume step; a 
 const VOLUME_OSD_MS = 1000;            // the level shown on the picture after a key or wheel change
 const VOLUME_SLIDER_PX = 64;           // width of the volume slider when it is shown
 
+// ---- backup files (85-export.js, 55-notes.js) ----
+// A backup file may come from someone else: past these it is refused, or the record is
+// skipped (a real backup is far below them; a crafted one could otherwise freeze a lecture
+// or fill the site's storage).
+const BACKUP_MAX_BYTES = 300 * 1024 * 1024;   // the file (PDFs included, as base64)
+const BACKUP_MAX_ENTRIES = 50000;      // stored records in one file
+const BACKUP_MAX_POSITIONS = 5000;     // remembered positions (one per recording)
+const BACKUP_MAX_TAGS = 500;           // tags of one course
+const BACKUP_MAX_TAGGED = 5000;        // tagged notes of one recording
+const BACKUP_MAX_TAGS_EACH = 100;      // tags of one note
+const BACKUP_MAX_RANGES = 2000;        // watched stretches of one recording (each saved visit adds them all again: quadratic)
+const BACKUP_MAX_FILES = 100;          // PDF files of one recording
+const BACKUP_MAX_FIXES = 5000;         // slide corrections of one recording
+const BACKUP_MAX_USERS = 10000;        // recordings that use one PDF file
+
 // ---- session (36-session.js) ----
 const SESSION_RETRY_MS = [2000, 5000]; // waits before the two retries of a failed renewal
 const SESSION_DEFAULT_RENEW_MS = 3600000;   // when Echo360 does not say (it says 1 h; access lasts about 2 h)
 const SESSION_MIN_RENEW_MS = 60000;    // never renew more often than this
+const SESSION_MAX_RENEW_MS = 7200000;  // nor less often (access lasts about 2 h; a longer wait is past what a timer can hold, 2^31 ms, and fired at once)
+// A request to Echo360's pages and API (not media downloads) with no full answer by then
+// is given up (its replies take well under a few seconds; a transcript is at most a few
+// hundred KB, seconds on a slow mobile link).
+const REQUEST_TIMEOUT_MS = 30000;
 
 // ---- page and course list (10-adapter-echo360.js, 80-course-list.js, 90-main.js) ----
+const CUE_MAX_CHARS = 5000;            // of one captions-file cue (a cue is a line or two, under 200; a longer one is cut)
 const CUE_DEFAULT_MS = 3000;           // length of a transcript line without an end time
 const LIST_CONCURRENT = 2;             // course page: player requests at a time
 const LIST_GAP_MS = 150;               // and between them

@@ -75,12 +75,10 @@ function wordBag(words) {
   return b;
 }
 
-// scores[f * P + p]: cosine between picture f and page p. explained[f * P + p]: share of
-// the picture's text that is on page p (each word weighted by how rare it is among the
-// pictures, so the viewer's own words count little): a slide on screen, even zoomed in,
-// explains much of what is readable; a code editor showing the slide's code next to a file
-// tree, menus and other code does not. words[f]: distinct page words in picture f.
-function textScores(pageTexts, frameTexts, scripts) {
+// Words of the pages and pictures, shared by textScores and pageSimilarity. row(f, scores,
+// explained, o, acc) writes picture f's cosine with every page to scores[o..o+P) and, when
+// explained is given, the share of its text explained by each page (see textScores).
+function textIndex(pageTexts, frameTexts, scripts) {
   const P = pageTexts.length;
   const F = frameTexts.length;
   const pdf = new Map();
@@ -113,19 +111,18 @@ function textScores(pageTexts, frameTexts, scripts) {
   // picture, near 0 for a word on all of them.
   const lf = Math.log(F + 1);
   const fw = (w) => (F > 1 ? Math.log((F + 1) / fdf.get(w)) / lf : 1);
-  const scores = new Float32Array(F * P);
-  const explained = new Float32Array(F * P);
-  const words = new Int32Array(F);
-  const acc = new Float64Array(P);
-  frameBags.forEach((b, f) => {
+  const row = (f, scores, explained, o, acc) => {
+    const b = frameBags[f];
     acc.fill(0);
-    let all = 0;
-    for (const w of allBags[f].keys()) all += fw(w) ** 2;
-    if (all > 0) {
-      for (const w of b.keys()) {
-        const x = fw(w) ** 2 / all;
-        const l = post.get(w);
-        for (let k = 0; k < l.length; k += 2) explained[f * P + l[k]] += x;
+    if (explained) {
+      let all = 0;
+      for (const w of allBags[f].keys()) all += fw(w) ** 2;
+      if (all > 0) {
+        for (const w of b.keys()) {
+          const x = fw(w) ** 2 / all;
+          const l = post.get(w);
+          for (let k = 0; k < l.length; k += 2) explained[o + l[k]] += x;
+        }
       }
     }
     let n2 = 0;
@@ -136,17 +133,42 @@ function textScores(pageTexts, frameTexts, scripts) {
       const l = post.get(w);
       for (let k = 0; k < l.length; k += 2) acc[l[k]] += x * l[k + 1];
     }
-    words[f] = b.size;
     const n = Math.sqrt(n2) || 1;
-    for (let p = 0; p < P; p++) scores[f * P + p] = acc[p] / (n * pnorm[p]);
-  });
-  return { scores, explained, words, raw, P, F, pageWords: Int32Array.from(pageBags, (b) => [...b.keys()].filter((w) => idf(w) > 0).length) };
+    for (let p = 0; p < P; p++) scores[o + p] = acc[p] / (n * pnorm[p]);
+  };
+  return { P, F, raw, row, frameBags, pageWords: Int32Array.from(pageBags, (b) => [...b.keys()].filter((w) => idf(w) > 0).length) };
 }
 
-// Cosine similarity between every two pages (P x P), from their text alone.
+// scores[f * P + p]: cosine between picture f and page p. explained[f * P + p]: share of
+// the picture's text that is on page p (each word weighted by how rare it is among the
+// pictures, so the viewer's own words count little): a slide on screen, even zoomed in,
+// explains much of what is readable; a code editor showing the slide's code next to a file
+// tree, menus and other code does not. words[f]: distinct page words in picture f.
+function textScores(pageTexts, frameTexts, scripts) {
+  const { P, F, raw, row, frameBags, pageWords } = textIndex(pageTexts, frameTexts, scripts);
+  const scores = new Float32Array(F * P);
+  const explained = new Float32Array(F * P);
+  const words = new Int32Array(F);
+  const acc = new Float64Array(P);
+  for (let f = 0; f < F; f++) {
+    row(f, scores, explained, f * P, acc);
+    words[f] = frameBags[f].size;
+  }
+  return { scores, explained, words, raw, P, F, pageWords };
+}
+
+// Cosine similarity between page b and every page, from their text alone: sim(b) is a row of
+// the P x P matrix, computed when first asked for (only the rows of pages some picture is
+// closest to are used, and a whole matrix of a long PDF would take P^2 memory).
 function pageSimilarity(pageTexts, scripts) {
-  const r = textScores(pageTexts, pageTexts, scripts);
-  return r.scores;
+  const { P, row } = textIndex(pageTexts, pageTexts, scripts);
+  const rows = new Map();
+  const acc = new Float64Array(P);
+  return (b) => {
+    let r = rows.get(b);
+    if (!r) { row(b, (r = new Float32Array(P)), null, 0, acc); rows.set(b, r); }
+    return r;
+  };
 }
 
 // ---- evidence ----
@@ -169,8 +191,9 @@ function scoreModel(ts, pageSim) {
     for (let p = 0; p < P; p++) if (scores[f * P + p] > b) { b = scores[f * P + p]; bi = p; }
     // Pages at least as close to the best page as the picture is cannot be told apart
     // from it: they are not "wrong".
+    const near = pageSim(bi);
     let si = -1;
-    for (let p = 0; p < P; p++) if (p !== bi && pageSim[bi * P + p] < b && (si < 0 || scores[f * P + p] > scores[f * P + si])) si = p;
+    for (let p = 0; p < P; p++) if (p !== bi && near[p] < b && (si < 0 || scores[f * P + p] > scores[f * P + si])) si = p;
     best.push([b, explained[f * P + bi]]);
     second.push(si >= 0 ? [scores[f * P + si], explained[f * P + si]] : [0, 0]);
   }
@@ -369,7 +392,7 @@ function followLecture(input) {
 // Source of a Worker running followLecture, assembled from the functions above so the code
 // that runs is exactly the code in this file.
 function slideTextWorkerSource() {
-  const fns = [slideWords, wordBag, textScores, pageSimilarity, scoreModel, slideEvidence, decodeSlides, followLecture];
+  const fns = [slideWords, wordBag, textIndex, textScores, pageSimilarity, scoreModel, slideEvidence, decodeSlides, followLecture];
   return '"use strict";\n'
     + 'const SLIDE_STOP = new Set(' + JSON.stringify([...SLIDE_STOP]) + ');\n'
     + 'const WORD_RE = new RegExp(' + JSON.stringify(WORD_RE.source) + ', ' + JSON.stringify(WORD_RE.flags) + ');\n'

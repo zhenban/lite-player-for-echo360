@@ -108,7 +108,7 @@ const courseList = {
       if (s && s.read) {
         try {
           const r = await fetch('/api/ui/echoplayer/lessons/' + encodeURIComponent(lid) + '/media/' + encodeURIComponent(s.mediaId) + '/player-properties',
-            { credentials: 'include', headers: { Accept: 'application/json' } });
+            { credentials: 'include', headers: { Accept: 'application/json' }, signal: requestSignal() });
           if (r.ok) {
             const d = (await r.json()).data || {};
             const dur = parseIsoDuration(d.playableAudioVideo && d.playableAudioVideo.duration);

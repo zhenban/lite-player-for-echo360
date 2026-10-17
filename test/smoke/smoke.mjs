@@ -394,6 +394,44 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     putBack().finally(() => Promise.resolve(driver.close()).catch(() => {}).finally(() => process.exit(130)));
   });
 }
+// ---- signed in to Echo360? ----
+// Signed out, every lesson page goes to Echo360's login page and every check would fail as
+// "no player": checked once first. A lost Echo360 session is renewed through Moodle (an
+// Echo360 link in a course; Moodle stays signed in for weeks, and its "Agree and sign on"
+// was allowed by the user for this testing). Nothing is typed: a password page stops here.
+const MOODLE_LOGIN = 'https://moodle.telt.unsw.edu.au/login/index.php';
+const MOODLE_ECHO360 = 'https://moodle.telt.unsw.edu.au/mod/lti/launch.php?id=9043844&triggerview=0';
+const signedIn = async () => {
+  await driver.navigate(NEUTRAL);
+  await sleep(1000);
+  const r = await evalIn(`fetch('/lesson/${lectures[0].lesson}/classroom', { redirect: 'manual' }).then((r) => (r.type === 'opaqueredirect' ? 302 : r.status), () => 0)`).catch(() => 0);
+  return r === 200;
+};
+const signIn = async () => {
+  await driver.navigate(MOODLE_LOGIN);
+  await sleep(4000);
+  if (!(await evalIn('!!document.querySelector("a[href*=logout]")').catch(() => false))) {
+    await evalIn('(() => { const b = document.querySelector("a[href*=oidc]"); if (b) b.click(); return !!b; })()').catch(() => false);
+    if (!(await until('/^moodle\\./.test(location.hostname) && !!document.querySelector("a[href*=logout]")', 30))) {
+      return 'Moodle is signed out too and needs the Microsoft sign-in (now at ' + await evalIn('location.hostname').catch(() => '?') + ')';
+    }
+  }
+  await driver.navigate(MOODLE_ECHO360);
+  if (!(await until('/^echo360\\./.test(location.hostname)', 30))) return 'the Echo360 link in Moodle did not reach Echo360';
+  return null;
+};
+if (!(await signedIn())) {
+  process.stderr.write('smoke: Echo360 is signed out; signing in again through Moodle...\n');
+  const why = await signIn();
+  if (why || !(await signedIn())) {
+    console.error('smoke: NOT RUN: the test browser is not signed in to Echo360 (' + (why || 'still signed out after Moodle') + '). Sign in once in the test Chrome, then run again.');
+    await putBack();
+    await Promise.resolve(driver.close()).catch(() => {});
+    process.exit(2);
+  }
+  process.stderr.write('smoke: signed in again\n');
+}
+
 const results = [];
 for (const lec of lectures) {
   process.stderr.write('smoke: ' + lec.name + '...\n');

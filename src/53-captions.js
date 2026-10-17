@@ -257,8 +257,19 @@ class TranscriptPanel {
     d.listen(this.list, 'touchmove', userScroll, { passive: true });
     d.listen(this.list, 'keydown', (e) => { if (/^(Arrow|Page|Home|End| )/.test(e.key)) userScroll(); });
     d.listen(this.list, 'scroll', () => { if (performance.now() > this.programmaticScrollUntil && this.dragScroll) userScroll(); }, { passive: true });
-    d.listen(this.list, 'pointerdown', (e) => { if (e.target === this.list) this.dragScroll = true; });
-    d.listen(window, 'pointerup', () => { this.dragScroll = false; });
+    // A drag of the scroll bar ends where the pointer is lifted, in the window the list is
+    // in at that time (the floating window, once moved there).
+    this.dragUp = null;
+    d.listen(this.list, 'pointerdown', (e) => {
+      if (e.target !== this.list) return;
+      if (this.dragUp) this.dragUp();
+      this.dragScroll = true;
+      const win = windowOf(this.list);
+      const up = () => { this.dragScroll = false; win.removeEventListener('pointerup', up, true); this.dragUp = null; };
+      win.addEventListener('pointerup', up, true);
+      this.dragUp = up;
+    });
+    d.add(() => { if (this.dragUp) this.dragUp(); });
     d.listen(this.backBtn, 'click', () => {
       this.follow = true;
       this.backBtn.hidden = true;

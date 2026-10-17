@@ -153,7 +153,7 @@ class NotesPane {
     const ed = this.editing;
     if (ed) {
       const item = this.items.find((x) => x.id === ed.id);
-      const card = item && this.list.querySelector('.card[data-id="' + CSS.escape(String(item.id)) + '"]');
+      const card = item && [...this.list.querySelectorAll('.card[data-id]')].find((c) => c.dataset.id === String(item.id));
       if (card) this.startEdit(item, card, ed.text); else this.editing = null;
     }
   }
@@ -420,6 +420,7 @@ class NotesPane {
       const f = file.files[0];
       if (!f) return;
       try {
+        if (f.size > BACKUP_MAX_BYTES) throw new Error(tr('backupTooBig', { max: Math.round(BACKUP_MAX_BYTES / 1048576) }));
         const n = await restoreBackup(JSON.parse(await f.text()));
         // From now on this page must not write its older data over the restored one (its
         // settings on leaving, the watched record): stop all writes and reload at once.

@@ -3,9 +3,11 @@
 // IndexedDB cache, and a gate that keeps background downloads from competing with playback.
 // ===================================================================================
 
+// Each name starts the list or follows a comma: unanchored, a long run of name characters
+// with no "=" would be scanned again from each of its characters (quadratic).
 function parseAttrs(s) {
   const out = {};
-  const re = /([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
+  const re = /(?:^|,)\s*([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
   let m;
   while ((m = re.exec(s))) out[m[1]] = m[2].replace(/^"|"$/g, '');
   return out;
@@ -35,11 +37,15 @@ function parseMediaPlaylist(text, base) {
   let range = null;
   let t = 0;
   const nextOffset = new Map();
+  // A range that is not a positive length at a whole offset makes the playlist unusable
+  // (an empty range would be asked for again and again).
   const parseRange = (spec, url) => {
     const [len, off] = spec.split('@');
     const offset = off !== undefined ? +off : (nextOffset.get(url) || 0);
-    nextOffset.set(url, offset + +len);
-    return { offset, length: +len };
+    const length = +len;
+    if (!(Number.isSafeInteger(length) && length > 0 && Number.isSafeInteger(offset) && offset >= 0)) throw new Error('bad byte range in playlist');
+    nextOffset.set(url, offset + length);
+    return { offset, length };
   };
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
@@ -49,7 +55,8 @@ function parseMediaPlaylist(text, base) {
       const url = new URL(a.URI, base).href;
       out.init = Object.assign({ url }, a.BYTERANGE ? parseRange(a.BYTERANGE, url) : { offset: 0, length: null });
     } else if (line.startsWith('#EXTINF:')) {
-      dur = parseFloat(line.slice(8));
+      const d = parseFloat(line.slice(8));
+      dur = d > 0 && d < Infinity ? d : 0;
     } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
       range = line.slice(17);
     } else if (!line.startsWith('#')) {
@@ -81,9 +88,16 @@ function fetchOk(url, init, renewed) {
 }
 
 // Used by the background analyses only: what they download is counted (usage data).
+// A server that ignores Range sends the whole file (200): the range is cut from it; a
+// partial answer longer than asked for is cut to the length.
 function fetchRange(url, offset, length, signal) {
   const headers = length === null ? {} : { Range: 'bytes=' + offset + '-' + (offset + length - 1) };
-  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer()).then((b) => { usageNote('bgBytes', null, b.byteLength); return b; });
+  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer().then((b) => {
+    usageNote('bgBytes', null, b.byteLength);
+    if (length === null) return b;
+    if (r.status !== 206) return b.slice(offset, offset + length);
+    return b.byteLength > length ? b.slice(0, length) : b;
+  }));
 }
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot

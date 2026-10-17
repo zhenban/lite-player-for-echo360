@@ -8,6 +8,7 @@ declare const GM_getValue: any;         // values kept by the userscript manager
 declare const GM_setValue: any;
 declare const unsafeWindow: any;
 declare const VERSION: string;          // set by build.mjs around the joined sources
+declare const DEV_HOOKS: boolean;       // set by build.mjs: true only in the tests' builds
 declare const webkitAudioContext: typeof AudioContext;
 
 interface Window {

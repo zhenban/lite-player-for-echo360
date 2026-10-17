@@ -31,6 +31,10 @@ const KEY_ACTIONS = {
   ']': ['speed', 1], '[': ['speed', -1],
 };
 
+// Actions a held key repeats (steps); every other action is one per press: a held B
+// would otherwise add and remove the bookmark on Echo360 again and again.
+const KEY_REPEATS = new Set(['seekBy', 'volumeBy', 'zoom', 'speed', 'stepChapter']);
+
 // Whether the focused element `t` handles key k itself (see KeyboardShortcuts.handle).
 function ownsKey(t, k) {
   if (!t.matches || !keyboardFocused(t)) return false;
@@ -74,6 +78,8 @@ class KeyboardShortcuts {
     if (e.key === '?') entry = ['help'];
     if (!entry) return;
     const [name, arg] = entry;
+    // A held key's repeats of a one-per-press action: kept from the page too, done nothing.
+    if (e.repeat && !KEY_REPEATS.has(name)) { e.preventDefault(); e.stopPropagation(); return; }
     const fn = name === 'help' ? () => this.showHelp(this.x.$('.keyhelp').hidden) : this.x.actions[name];
     if (!fn || fn(arg, e) === false) return;
     telemetry.use(KEY_FEATURES[name], 'key');

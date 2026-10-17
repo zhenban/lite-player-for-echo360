@@ -114,7 +114,9 @@ function unsupportedReason() {
     }
     const done = () => { if (screen) { try { screen.dispose(); } catch (e) { /* gone with the page */ } screen = null; } };
     platform.loadHls(HLS_LOAD_TIMEOUT_MS, screen ? (n) => { if (screen) screen.progress(n); } : undefined).then(
-      () => { if (left) return; try { go(); } finally { done(); } },
+      // The loading screen goes first: the player keeps the page's state as it finds it (a
+      // fallback later puts that back), so it must not find the loading screen's.
+      () => { if (left) return; done(); go(); },
       (e) => { if (left) return; done(); giveUp('libFailed', e); });
   }
 
@@ -141,20 +143,28 @@ function unsupportedReason() {
         fetchCues: adapter.fetchCues ? (l) => adapter.fetchCues(l) : null,
         api: adapter.api ? (l) => adapter.api(l) : null,
         takeover: stopped ? { at: stopped.at, playing: stopped.playing } : null,
+        // The position handed over is the stream's: while it loads, the element says 0.
         onFallback(reason) {
           fellBack(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
-          try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
+          try { if (player) handoff = adapter.withStartTime(arg, player.clock.position()); } catch (e) { /* keep original arg */ }
           startOriginal(original, handoff, null);
         },
       });
-      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2, boot, bgWork, netGuard, OWN_REQUEST }; } // development only
+      // Development only. `debug` is in the page's storage, which any script on the page can
+      // set: what reaches the usage-data secret or lets a request past the page's reporting
+      // guard is only there in the tests' builds.
+      if (store.get('debug', false)) {
+        platform.page.__litePlayerForEcho360 = player;
+        platform.page.__litePlayerForEcho360Dev = Object.assign({ HlsVideoReader, frameLuma, thumbChange, learnThreshold, boot, bgWork },
+          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST } : {});
+      }
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
         fellBack('coreError');
         let handoff = arg;
-        try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
+        try { handoff = adapter.withStartTime(arg, player.clock.position()); } catch (e) { /* keep original arg */ }
         startOriginal(original, handoff, tr('errorNotice'));
       };
       boot.path = takeover ? 'takeover' : 'intercept';

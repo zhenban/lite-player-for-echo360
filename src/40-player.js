@@ -143,6 +143,9 @@ class LitePlayer {
     this.loadClock(this.clockPos, start, !!(opts.takeover && opts.takeover.playing));
     this.applyLayout();
     if (start > 1) this.toast(tr('resumedAt', { time: fmtTime(start) }), tr('startOver'), () => this.seek(0));
+    // Development's dry run is a switch in the page's storage: never on without saying so,
+    // or writes would look saved while nothing is sent.
+    if (this.writesHeld) this.toast(tr(this.writesHeld === 'all' ? 'dryRunAll' : 'dryRunPublic'), null, null, { later: true, from: 'dryRun' });
   }
 
   // An element of the player's own markup. Each selector must name exactly one element:
@@ -245,15 +248,16 @@ class LitePlayer {
     // Taken over from the original player (90-main.js): where it was.
     const took = this.opts.takeover;
     if (took && took.at != null) return took.at;
+    const dur = this.lesson.duration;
+    // A link's time past the end (a link to another recording, a typo) starts at the end.
     const link = this.linkTime();
-    if (link != null) return link;
+    if (link != null) return isFinite(dur) && dur > 0 ? Math.min(link, dur) : link;
     // Back from a reload the player made (reloadHere): where it was, once.
     const back = store.get('reloadAt', null);
     if (back) {
       store.set('reloadAt', null);
       if (back.id === this.lesson.id && typeof back.t === 'number' && back.t >= 0 && Math.abs(Date.now() - back.at) < RELOAD_RESUME_MS) return back.t;
     }
-    const dur = this.lesson.duration;
     let t0 = this.lesson.resumeAt;
     if (t0 == null) {
       const local = sanitizePos(store.get('pos:' + this.lesson.id, null));
@@ -691,28 +695,44 @@ class LitePlayer {
     on('seeked', clearWaiting);
     on('canplay', clearWaiting);
     const invalidate = () => this.frame.request();
+    // The optional features these events update: an error in one is not a playback error.
+    // It is reported once and that feature is no longer updated here (these run several
+    // times a second).
+    const broken = new Set();
+    const feature = (name, fn) => {
+      if (broken.has(name)) return;
+      try { fn(); } catch (e) { broken.add(name); reportFeatureError(name, e); }
+    };
     const onTime = () => {
       const ct = v.currentTime;
-      if (this.loop) this.loop.tick(ct);
-      this.cc.update(ct);
-      this.transcript.update(ct);
-      const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
-      if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
-      this.renderBookmarkButton();
       // Where playback is meant to be: while the start position loads, the element still
       // says 0, and nothing may act on that moment (skip a silence, switch the layout).
       const pos = this.clock.position();
-      if (this.silence) this.silence.tick(pos);
-      if (this.slidesPane) this.slidesPane.update(ct);
-      if (this.reader) this.reader.update(ct);
-      if (this.notes && this.notesReady) this.notes.update();
-      if (this.emptyScreen) this.emptyScreen.tick(pos);
-      if (this.discussion) this.discussion.update();
+      if (this.loop) feature('A-B loop', () => this.loop.tick(ct));
+      feature('captions', () => { this.cc.update(ct); this.transcript.update(ct); });
+      feature('notes', () => {
+        const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
+        if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
+        this.renderBookmarkButton();
+      });
+      if (this.silence) feature('silence detection', () => this.silence.tick(pos));
+      if (this.slidesPane) feature('slide chapters', () => this.slidesPane.update(ct));
+      if (this.reader) feature('slide reader', () => this.reader.update(ct));
+      if (this.notes && this.notesReady) feature('notes', () => this.notes.update());
+      if (this.emptyScreen) feature('camera for an empty screen', () => this.emptyScreen.tick(pos));
+      if (this.discussion) feature('discussion', () => this.discussion.update());
     };
     on('timeupdate', () => { invalidate(); onTime(); });
     on('seeked', onTime);
     on('progress', invalidate);
-    on('durationchange', () => { this.render(true); if (this.loop) this.loop.render(); this.renderWatched(); this.updateMarkers(); if (this.silence) this.silence.update(); this.renderChapterMarks(); });
+    on('durationchange', () => {
+      this.render(true);
+      if (this.loop) feature('A-B loop', () => this.loop.render());
+      feature('watched parts', () => this.renderWatched());
+      feature('notes', () => this.updateMarkers());
+      if (this.silence) feature('silence detection', () => this.silence.update());
+      feature('slide chapters', () => this.renderChapterMarks());
+    });
     on('ratechange', () => this.speed.render(v.playbackRate));
     on('volumechange', () => {
       this.volumeCtl.render();
@@ -1132,6 +1152,7 @@ class LitePlayer {
     const l = this.lesson;
     const api = this.opts.api && l.lessonId && l.mediaId ? this.opts.api(l) : null;
     if (!api) return;
+    this.writesHeld = api.dryRun;
     const canFlag = !!l.sectionId && !l.isAnonymousUser;
     this.tags = new TagStore(l, () => { if (!this.destroyed && this.notes) this.notes.changed(); });
     this.tags.load().catch((e) => log.warn('tags:', e && e.message ? e.message : e));

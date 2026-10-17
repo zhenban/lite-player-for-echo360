@@ -28,7 +28,7 @@ class SessionKeeper {
   // state: 'renewing' (after a failure) | 'ok' | 'failed' ({ login: bool })
   constructor(opts) {
     this.url = opts.url;
-    this.renewMs = opts.renewMs > 0 ? opts.renewMs : SESSION_DEFAULT_RENEW_MS;
+    this.renewMs = opts.renewMs > 0 ? Math.min(opts.renewMs, SESSION_MAX_RENEW_MS) : SESSION_DEFAULT_RENEW_MS;
     this.onState = opts.onState || (() => {});
     this.retryMs = opts.retryMs || SESSION_RETRY_MS;
     this.last = Date.now();       // the page load renewed the cookies if they needed it
@@ -91,7 +91,7 @@ class SessionKeeper {
     if (this.disposed) throw new Error('stopped');
     let r = null;
     try {
-      r = await fetch(this.url, { credentials: 'include', cache: 'no-store', redirect: 'manual', signal: this.ac.signal });
+      r = await fetch(this.url, { credentials: 'include', cache: 'no-store', redirect: 'manual', signal: requestSignal(this.ac.signal) });
     } catch (e) {
       if (this.disposed) throw new Error('stopped');
       r = null;

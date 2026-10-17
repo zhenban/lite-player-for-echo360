@@ -50,7 +50,7 @@ class Reporter {
     this.d.listen(window, 'pagehide', onUnload);
     this.d.add(() => this.detach());
     // The original player validates the session on load; the response may carry a fresh token.
-    fetch(info.appUrl + '/api/ui/sessions/' + encodeURIComponent(info.sessionId), { credentials: 'include', headers: this.headers(false) })
+    fetch(info.appUrl + '/api/ui/sessions/' + encodeURIComponent(info.sessionId), { credentials: 'include', headers: this.headers(false), signal: requestSignal() })
       .then((r) => this.saveToken(r))
       .catch((e) => log.info('watch report (session) failed:', e));
   }
@@ -74,11 +74,11 @@ class Reporter {
     // OWN_REQUEST: ours, let through while the original player's reports are stopped
     // (15-takeover.js).
     const sent = fetch(this.info.gatewayUrl + path, /** @type {RequestInit} */ ({
-      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), [OWN_REQUEST]: true,
+      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), signal: requestSignal(), [OWN_REQUEST]: true,
     }));
     return sent.then((r) => {
       if (r.status === 401 && !retried) {
-        return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false) })
+        return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false), signal: requestSignal() })
           .then((rr) => this.saveToken(rr))
           .then(() => this.post(path, body, true));
       }

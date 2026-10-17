@@ -239,7 +239,7 @@ test('telemetry queries: each runs on the stored tables within D1\'s limits, and
 
 // ---- the player ----
 
-const script = assemble().out;
+const script = assemble({ dev: true }).out;
 const boot = readFileSync(join(root, 'test', 'fixtures', 'boot-echo360-classroom.json'), 'utf8');
 const WORKER = /const TELEMETRY_URL = '([^']+)'/.exec(script)[1];
 

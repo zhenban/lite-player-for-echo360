@@ -50,34 +50,40 @@ class AudioChain {
     // bypassed; prefer the media playback route and its power-efficient buffering.
     const ctx = new Ctx({ latencyHint: 'playback' });
     const n = {};
-    n.src = ctx.createMediaElementSource(this.video);
-    n.mono = ctx.createGain();
-    n.mono.channelCount = 1;
-    n.mono.channelCountMode = 'explicit';
-    n.mono.channelInterpretation = 'speakers';
-    n.highpass = ctx.createBiquadFilter();
-    n.highpass.type = 'highpass';
-    n.highpass.frequency.value = VOICE_FILTERS.highpassHz;
-    n.highpass.Q.value = VOICE_FILTERS.highpassQ;
-    n.presence = ctx.createBiquadFilter();
-    n.presence.type = 'peaking';
-    n.presence.frequency.value = VOICE_FILTERS.presenceHz;
-    n.presence.Q.value = VOICE_FILTERS.presenceQ;
-    n.presence.gain.value = VOICE_FILTERS.presenceDb;
-    n.leveller = ctx.createDynamicsCompressor();
-    for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n.leveller[k].value = LEVELLER[k];
-    n.makeup = ctx.createGain();
-    n.limiter = ctx.createDynamicsCompressor();
-    n.limiter.threshold.value = LIMIT_THRESHOLD_DB;
-    for (const k of ['knee', 'ratio', 'attack', 'release']) n.limiter[k].value = LIMITER[k];
-    n.trim = ctx.createGain();
-    n.trim.gain.value = Math.pow(10, LIMIT_TRIM_DB / 20);
-    n.analyser = ctx.createAnalyser();
-    n.analyser.fftSize = 2048;
-    // The level stage is internally always wired; only its entry and exit move.
-    n.leveller.connect(n.makeup).connect(n.limiter).connect(n.trim);
-    n.leveller.connect(n.analyser);
-    n.highpass.connect(n.presence);
+    // A graph that cannot be made leaves no context behind (each try would add one).
+    try {
+      n.src = ctx.createMediaElementSource(this.video);
+      n.mono = ctx.createGain();
+      n.mono.channelCount = 1;
+      n.mono.channelCountMode = 'explicit';
+      n.mono.channelInterpretation = 'speakers';
+      n.highpass = ctx.createBiquadFilter();
+      n.highpass.type = 'highpass';
+      n.highpass.frequency.value = VOICE_FILTERS.highpassHz;
+      n.highpass.Q.value = VOICE_FILTERS.highpassQ;
+      n.presence = ctx.createBiquadFilter();
+      n.presence.type = 'peaking';
+      n.presence.frequency.value = VOICE_FILTERS.presenceHz;
+      n.presence.Q.value = VOICE_FILTERS.presenceQ;
+      n.presence.gain.value = VOICE_FILTERS.presenceDb;
+      n.leveller = ctx.createDynamicsCompressor();
+      for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n.leveller[k].value = LEVELLER[k];
+      n.makeup = ctx.createGain();
+      n.limiter = ctx.createDynamicsCompressor();
+      n.limiter.threshold.value = LIMIT_THRESHOLD_DB;
+      for (const k of ['knee', 'ratio', 'attack', 'release']) n.limiter[k].value = LIMITER[k];
+      n.trim = ctx.createGain();
+      n.trim.gain.value = Math.pow(10, LIMIT_TRIM_DB / 20);
+      n.analyser = ctx.createAnalyser();
+      n.analyser.fftSize = 2048;
+      // The level stage is internally always wired; only its entry and exit move.
+      n.leveller.connect(n.makeup).connect(n.limiter).connect(n.trim);
+      n.leveller.connect(n.analyser);
+      n.highpass.connect(n.presence);
+    } catch (e) {
+      ctx.close().catch(() => {});
+      throw e;
+    }
     this.ctx = ctx;
     this.n = n;
     this.buf = new Float32Array(n.analyser.fftSize);

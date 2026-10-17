@@ -8,11 +8,12 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { newWindow, closeWindow, patchProto, same } from './dom-guard.mjs';
 import { assemble } from '../build.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const script = assemble().out;
+const script = assemble({ dev: true }).out;
 const cfg = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'boot-echo360-classroom.json'), 'utf8'));
 cfg.id = 'r00000000-test';
 const bootText = JSON.stringify(cfg);
@@ -43,7 +44,8 @@ function fakeHls() {
 //   hls         hls.js already on the page (else it is loaded, and fails: offline)
 //   ua, setup   a user agent; changes to the page before the script runs
 //   cdn         (url) => Promise of a Response: the CDN's answer for hls.js (default: offline)
-function page({ state = 'loading', started = false, react = true, inline = true, arg = bootText, hls = true, ua, setup, cdn } = {}) {
+//   src         the userscript (default: the build)
+function page({ state = 'loading', started = false, react = true, inline = true, arg = bootText, hls = true, ua, setup, cdn, src = script } = {}) {
   const w = newWindow({ url: 'https://echo360.net.au/lesson/x/classroom', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true, ...(ua ? { navigator: { userAgent: ua } } : {}) } });
   if (hls) w.Hls = fakeHls();
   w.localStorage.setItem('lite-player-for-echo360:debug', 'true');
@@ -88,7 +90,7 @@ function page({ state = 'loading', started = false, react = true, inline = true,
   }
   Object.defineProperty(w.document, 'readyState', { value: state, configurable: true });
   if (setup) setup(w);
-  w.eval(script);
+  w.eval(src);
   if (!started) {
     // The page's inline bootstrap, as at document complete.
     w.Echo = { echoPlayerV2FullApp: original };
@@ -341,6 +343,48 @@ test('start-up: the loading screen shows the download\'s progress and goes when 
   await t.close();
 });
 
+// A stand-in for hls.js, pinned in a copy of the userscript, and served as the CDN's file:
+// the real download path (hash check, module import) runs. Blob URLs cannot be imported in
+// Node, so the module's blob is handed over as a data: URL.
+const FAKE_HLS = 'module.exports = ' + fakeHls.toString() + '\n();';
+function withFakeHls() {
+  const realHash = /'hls\.js@[^']+': '([0-9a-f]{64})'/.exec(script)[1];
+  const realSize = /'hls\.js@[^']+': (\d+),/.exec(script)[1];
+  const src = script.replace(realHash, createHash('sha256').update(FAKE_HLS).digest('hex')).replace("hls.min.js': " + realSize + ',', "hls.min.js': " + Buffer.byteLength(FAKE_HLS) + ',');
+  const setup = (w) => {
+    const parts = new WeakMap();
+    const RealBlob = w.Blob;
+    // happy-dom's Blob does not take an ArrayBuffer of another realm (the downloaded bytes).
+    w.Blob = class extends RealBlob {
+      constructor(bits, opts) {
+        const list = (bits || []).map((x) => (typeof x === 'string' ? Buffer.from(x) : Buffer.from(x.buffer ? new Uint8Array(x.buffer, x.byteOffset, x.byteLength) : new Uint8Array(x))));
+        super([], opts);
+        parts.set(this, Buffer.concat(list));
+      }
+    };
+    w.URL.createObjectURL = (b) => 'data:text/javascript;base64,' + parts.get(b).toString('base64');
+    w.URL.revokeObjectURL = () => {};
+  };
+  return { src, setup };
+}
+
+test('review 2 F3: after the loading screen, the player and a later fallback leave the page scrollable', async () => {
+  let arrive;
+  const t = page({ hls: false, ...withFakeHls(), cdn: (url, w) => new Promise((r) => { arrive = () => r(new w.Response(FAKE_HLS, { status: 200 })); }) });
+  await settle(560);
+  assert.ok(loading(t), 'the loading screen is up');
+  assert.equal(t.w.document.documentElement.style.overflow, 'hidden');
+  arrive();
+  await settle(200);
+  assert.ok(t.player(), 'the player started with the downloaded hls.js: ' + JSON.stringify(t.boot()));
+  assert.equal(loading(t), null);
+  assert.equal(t.w.document.documentElement.style.overflow, 'hidden', 'the player keeps the page still');
+  t.player().opts.onFallback('user');
+  assert.equal(t.calls.length, 1, 'the original player started');
+  assert.equal(t.w.document.documentElement.style.overflow, '', 'and the page scrolls again');
+  await t.close();
+});
+
 test('start-up: with hls.js at hand no loading screen is shown', async () => {
   const t = page();
   await settle(600);
@@ -351,7 +395,7 @@ test('start-up: with hls.js at hand no loading screen is shown', async () => {
 
 // The helpers alone (00-util.js, 03-common.js), in a context of their own.
 function helpers(globals) {
-  const ctx = vm.createContext(Object.assign({ console, setTimeout, clearTimeout, AbortController, URL, performance }, globals));
+  const ctx = vm.createContext(Object.assign({ console, setTimeout, clearTimeout, AbortController, DOMException, URL, performance }, globals));
   vm.runInContext(['00-util.js', '03-common.js'].map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__x = { timeoutSignal, readJsString };', ctx);
   return ctx.__x;

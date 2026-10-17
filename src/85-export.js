@@ -204,19 +204,45 @@ class Exporter {
 
 const BACKUP_KEYS = /^(tags|tagmap|deck|deckref|watched|screenpick):/;
 
-// The shape each restored IndexedDB entry must have (anything else is skipped, so a
-// damaged backup cannot plant data that breaks a later visit).
+// Each restored IndexedDB entry, rebuilt from its known fields within BACKUP_MAX_* (02-tuning),
+// or null: skipped. A backup may come from someone else, so a damaged or crafted one can
+// neither plant data that breaks a later visit nor freeze one with its size.
 const isStr = (x) => typeof x === 'string' && x.length < 2000;
 const isNum = (x) => typeof x === 'number' && isFinite(x);
-const BACKUP_DB_SHAPES = {
-  tags: (v) => v && Array.isArray(v.tags) && v.tags.every((g) => g && isStr(g.id) && isStr(g.name) && isStr(g.color)),
-  tagmap: (v) => v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((a) => Array.isArray(a) && a.every(isStr)),
-  deck: (v) => v && Array.isArray(v.files) && v.files.every((f) => f && isStr(f.hash) && isStr(f.name))
-    && (v.fixes == null || (Array.isArray(v.fixes) && v.fixes.every((x) => x && isNum(x.a) && isNum(x.b) && isStr(String(x.page))))),
-  deckref: (v) => Array.isArray(v) && v.every(isStr),
-  watched: (v) => v && isNum(v.d) && Array.isArray(v.r) && v.r.every((x) => Array.isArray(x) && x.length === 2 && isNum(x[0]) && isNum(x[1])) && (v.e == null || isNum(v.e)),
-  deckfile: (v) => v instanceof Blob,
-  screenpick: (v) => v && isNum(v.index),
+const isHash = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+const listOf = (v, max, each) => Array.isArray(v) && v.length <= max && v.every(each);
+const BACKUP_DB_CLEAN = {
+  // Tags keep a plain colour (review R1).
+  tags: (v) => (v && listOf(v.tags, BACKUP_MAX_TAGS, (g) => g && isStr(g.id) && isStr(g.name) && isStr(g.color))
+    ? { tags: v.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) } : null),
+  tagmap: (v) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const items = Object.keys(v).filter((k) => k !== '__proto__');
+    if (items.length > BACKUP_MAX_TAGGED || !items.every((k) => listOf(v[k], BACKUP_MAX_TAGS_EACH, isStr))) return null;
+    const out = {};
+    for (const k of items) out[k] = v[k].slice();
+    return out;
+  },
+  deck: (v) => (v && listOf(v.files, BACKUP_MAX_FILES, (f) => f && isHash(f.hash) && isStr(f.name))
+    && (v.fixes == null || listOf(v.fixes, BACKUP_MAX_FIXES, (x) => x && isNum(x.a) && isNum(x.b) && isStr(String(x.page))))
+    ? { files: v.files.map((f) => ({ hash: f.hash, name: f.name })), fixes: (v.fixes || []).map((x) => ({ a: x.a, b: x.b, page: String(x.page) })) } : null),
+  deckref: (v) => (listOf(v, BACKUP_MAX_USERS, isStr) ? v.slice() : null),
+  watched: (v) => {
+    if (!v || !isNum(v.d) || !(v.d > 0) || !listOf(v.r, BACKUP_MAX_RANGES, (x) => Array.isArray(x) && x.length === 2 && isNum(x[0]) && isNum(x[1]) && x[0] >= 0 && x[0] < x[1])) return null;
+    if (v.e != null && !isNum(v.e)) return null;
+    const out = { d: v.d, r: v.r.map(([a, b]) => [a, b]) };
+    if (isNum(v.at)) out.at = v.at;
+    if (v.e != null) out.e = v.e;
+    return out;
+  },
+  screenpick: (v) => (v && Number.isInteger(v.index) && v.index >= 0 && v.index < 100 ? { index: v.index } : null),
+};
+// Kept with what this browser has (another recording's use of a PDF, a course's other
+// tags): replacing them would let a later removal delete a PDF still in use, or drop tags
+// that notes still carry.
+const BACKUP_MERGE = {
+  tags: (mine, theirs) => ({ tags: theirs.tags.concat(((mine && BACKUP_DB_CLEAN.tags(mine)) || { tags: [] }).tags.filter((g) => !theirs.tags.some((x) => x.id === g.id))) }),
+  deckref: (mine, theirs) => theirs.concat((Array.isArray(mine) ? mine : []).filter((m) => !theirs.includes(m))),
 };
 
 async function blobToBase64(blob) {
@@ -242,40 +268,59 @@ async function makeBackup(withPdfs) {
   return out;
 }
 
-// Restores a backup: its entries replace the ones with the same keys. Everything is checked
-// first; the IndexedDB entries are then written in one transaction (all or none), and only
-// then the settings. Returns the number of entries written.
+// Restores a backup: its entries replace the ones with the same keys (tags and the users of
+// a PDF are merged, BACKUP_MERGE). Everything is checked first; the IndexedDB entries are
+// then written in one transaction (all or none), and only then the settings. Returns the
+// number of entries written. Whether usage data is sent is never taken from a file: it
+// stays as this browser has it.
 async function restoreBackup(data, db = idbCache) {
   if (!data || data.app !== 'lite-player-for-echo360' || data.v !== 1 || !data.db || typeof data.db !== 'object') throw new Error(tr('backupInvalid'));
+  if (Object.keys(data.db).length > BACKUP_MAX_ENTRIES) throw new Error(tr('backupInvalid'));
   // Settings and positions: only known keys, each validated like the player does (a
   // damaged value becomes the default instead of breaking every later visit).
   const local = [];
+  let positions = 0;
   for (const [k, v] of Object.entries(data.local && typeof data.local === 'object' ? data.local : {})) {
     const rule = BACKUP_LOCAL.find((x) => x.match(k));
     if (!rule) continue;
+    if (k.startsWith('pos:') && ++positions > BACKUP_MAX_POSITIONS) continue;
     let parsed = null;
     try { parsed = JSON.parse(v); } catch (e) { parsed = null; }
     const clean = rule.clean(parsed);
-    if (clean != null) local.push([k, clean]);
+    if (clean == null) continue;
+    if (k === 'prefs') clean.telemetry = sanitizePrefs(store.get('prefs', null)).telemetry;
+    local.push([k, clean]);
   }
   const entries = [];
   for (const [k, v] of Object.entries(data.db)) {
-    if (!BACKUP_KEYS.test(k) && !k.startsWith('deckfile:')) continue;
-    let val = v;
-    if (v && typeof v === 'object' && typeof v.$blob === 'string') {
-      const bin = atob(v.$blob);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      val = new Blob([bytes], { type: v.type || 'application/octet-stream' });
+    if (k.startsWith('deckfile:')) {
+      // A PDF is kept under the hash of its bytes: checked, so a file cannot stand in for
+      // another (or replace a good copy of it).
+      if (!v || typeof v !== 'object' || typeof v.$blob !== 'string' || !isHash(k.slice(9))) continue;
+      let bytes;
+      try {
+        const bin = atob(v.$blob);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } catch (e) { continue; }
+      if ((await sha256Hex(bytes)) !== k.slice(9)) continue;
+      entries.push([k, new Blob([bytes], { type: 'application/pdf' })]);
+      continue;
     }
-    const kind = k.split(':')[0];
-    const shape = BACKUP_DB_SHAPES[kind];
-    if (!shape || !shape(val)) continue;
-    // Tags keep only their known fields, with a plain colour (review R1).
-    if (kind === 'tags') val = { tags: val.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) };
-    entries.push([k, val]);
+    if (!BACKUP_KEYS.test(k)) continue;
+    const clean = BACKUP_DB_CLEAN[k.split(':')[0]];
+    const val = clean ? clean(v) : null;
+    if (val != null) entries.push([k, val]);
   }
-  await db.putMany(entries);
+  const merged = entries.filter(([k]) => BACKUP_MERGE[k.split(':')[0]]).map(([k]) => k);
+  await db.updateMany(merged, (old) => {
+    const next = {};
+    for (const [k, val] of entries) {
+      const merge = BACKUP_MERGE[k.split(':')[0]];
+      next[k] = merge ? merge(old[k], val) : val;
+    }
+    return next;
+  });
   let n = entries.length;
   for (const [k, clean] of local) {
     try { platform.kv.set(NS + k, JSON.stringify(clean)); n++; } catch (e) { /* storage full */ }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.25.2
+// @version      0.25.3
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -23,7 +23,8 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.25.2';
+  const VERSION = '0.25.3';
+  const DEV_HOOKS = false;
 
 // ---- 00-boot.js ----
 // ===================================================================================
@@ -276,7 +277,21 @@ const eventLog = [];
 function timeoutSignal(ms) {
   if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
   const ac = new AbortController();
-  setTimeout(() => ac.abort(), ms);
+  setTimeout(() => ac.abort(new DOMException('timed out', 'TimeoutError')), ms);
+  return ac.signal;
+}
+
+// The signal of a request to Echo360: aborted with `signal` (optional) or, with a
+// TimeoutError, when no full answer came within REQUEST_TIMEOUT_MS (a hung request would
+// otherwise keep a write busy or a renewal pending for good).
+function requestSignal(signal) {
+  const t = timeoutSignal(REQUEST_TIMEOUT_MS);
+  if (!signal) return t;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, t]);
+  const ac = new AbortController();
+  const stop = (s) => () => ac.abort(s.reason);
+  if (signal.aborted) stop(signal)();
+  else { signal.addEventListener('abort', stop(signal), { once: true }); t.addEventListener('abort', stop(t), { once: true }); }
   return ac.signal;
 }
 
@@ -601,6 +616,8 @@ const STRINGS = {
     deckWaiting: 'Waiting to find the screen view…',
     deckLangLoading: 'Getting text recognition for {lang} ({mb} MB, once)…',
     deckError: 'Could not read the slide file ({msg}).',
+    deckTooBig: '{name} is too large for a slide file (at most {max} MB).',
+    deckCapped: 'Only the first {n} pages are used to follow the lecture.',
     deckSaveFailed: 'Could not store {name} on this device ({msg}). Is the disk full?',
     prevPage: 'Previous page',
     nextPage: 'Next page',
@@ -740,6 +757,7 @@ const STRINGS = {
     backupMade: 'Backup saved ({n} items)',
     backupRestored: 'Restored {n} items. Reloading…',
     backupInvalid: 'This is not a Lite Player for Echo360 backup file',
+    backupTooBig: 'This file is too large for a backup (at most {max} MB)',
     mdRecorded: 'Recorded {date}',
     mdOpen: 'Open in Echo360',
     mdNothing: 'No notes or bookmarks.',
@@ -805,6 +823,9 @@ const STRINGS = {
     featureNotes: 'notes',
     featureSession: 'session renewal',
     featureZoom: 'zoom',
+    dryRunAll: 'Test mode: notes, posts and other changes are not sent to Echo360.',
+    dryRunPublic: 'Test mode: posts, replies, likes and "didn\'t understand" marks are not sent to Echo360.',
+    featureWatched: 'the watched parts',
     layoutPdfNote: 'With the PDF view open, the layout button switches between side by side and picture in picture.',
     captionsPage: 'Captions',
     silencePage: 'Skip silence',
@@ -877,7 +898,7 @@ const FEATURE_NAMES = {
   player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
   'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
   'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'usage data': 'featureUsage', 'slide reader': 'featureSlideReader',
-  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
+  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom', 'watched parts': 'featureWatched',
 };
 function featureName(id) {
   const k = FEATURE_NAMES[String(id).replace(/ \(display\)$/, '')];
@@ -1104,6 +1125,8 @@ STRINGS.zh = {
   deckWaiting: '正在查找屏幕画面…',
   deckLangLoading: '正在下载{lang}文字识别数据（{mb} MB，只需一次）…',
   deckError: '无法读取幻灯片文件（{msg}）。',
+  deckTooBig: '{name} 太大，不能作为幻灯片文件（最多 {max} MB）。',
+  deckCapped: '只用前 {n} 页跟随讲课。',
   deckSaveFailed: '无法把 {name} 存到本设备（{msg}）。磁盘满了吗？',
   prevPage: '上一页',
   nextPage: '下一页',
@@ -1243,6 +1266,7 @@ STRINGS.zh = {
   backupMade: '已保存备份（{n} 项）',
   backupRestored: '已恢复 {n} 项，正在刷新…',
   backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
+  backupTooBig: '这个文件太大，不像备份文件（最多 {max} MB）',
   mdRecorded: '录制于 {date}',
   mdOpen: '在 Echo360 中打开',
   mdNothing: '没有笔记或书签。',
@@ -1306,6 +1330,9 @@ STRINGS.zh = {
   featureNotes: '笔记',
   featureSession: '会话续期',
   featureZoom: '缩放',
+  dryRunAll: '测试模式：笔记、帖子等改动不会发送到 Echo360。',
+  dryRunPublic: '测试模式：帖子、回复、点赞和“没听懂”不会发送到 Echo360。',
+  featureWatched: '已看部分',
   layoutPdfNote: '打开 PDF 视图时，布局按钮在并排和画中画之间切换。',
   captionsPage: '字幕',
   silencePage: '跳过无声段',
@@ -1473,6 +1500,13 @@ const DECK_RENDER_BUDGET = 40e6;       // rendered pages kept, in pixels (about 
 // scroll) is drawn smaller rather than as one huge canvas. 8192 px is within every
 // browser's canvas limit; 16 M pixels is 64 MB, two 4096-wide 16:9 pages.
 const PAGE_RENDER_MAX_SIDE = 8192;
+// PDFs added to a recording: a lecture's slides are a few hundred pages and tens of MB at
+// most, a page's text a few thousand characters. Past these a file is refused or reading
+// stops, so a crafted file (a small PDF can declare a huge number of pages) cannot hold the
+// matcher (time and memory grow with pages x pictures) or the page.
+const DECK_MAX_FILE_BYTES = 300 * 1024 * 1024; // one file
+const DECK_MAX_PAGES = 3000;                    // all files of a recording together
+const DECK_MAX_PAGE_CHARS = 20000;              // text read from one page
 const PAGE_RENDER_MAX_PX = 16e6;
 const PAGE_TITLE_TOP = 0.4;            // a page's title is the largest text in this top share of the page
 const PAGE_AR_DEFAULT = 9 / 16;        // height / width of a page not opened yet (slides are mostly 16:9)
@@ -1579,12 +1613,33 @@ const VOLUME_WHEEL_PX = 50;            // wheel distance for one volume step; a 
 const VOLUME_OSD_MS = 1000;            // the level shown on the picture after a key or wheel change
 const VOLUME_SLIDER_PX = 64;           // width of the volume slider when it is shown
 
+// ---- backup files (85-export.js, 55-notes.js) ----
+// A backup file may come from someone else: past these it is refused, or the record is
+// skipped (a real backup is far below them; a crafted one could otherwise freeze a lecture
+// or fill the site's storage).
+const BACKUP_MAX_BYTES = 300 * 1024 * 1024;   // the file (PDFs included, as base64)
+const BACKUP_MAX_ENTRIES = 50000;      // stored records in one file
+const BACKUP_MAX_POSITIONS = 5000;     // remembered positions (one per recording)
+const BACKUP_MAX_TAGS = 500;           // tags of one course
+const BACKUP_MAX_TAGGED = 5000;        // tagged notes of one recording
+const BACKUP_MAX_TAGS_EACH = 100;      // tags of one note
+const BACKUP_MAX_RANGES = 2000;        // watched stretches of one recording (each saved visit adds them all again: quadratic)
+const BACKUP_MAX_FILES = 100;          // PDF files of one recording
+const BACKUP_MAX_FIXES = 5000;         // slide corrections of one recording
+const BACKUP_MAX_USERS = 10000;        // recordings that use one PDF file
+
 // ---- session (36-session.js) ----
 const SESSION_RETRY_MS = [2000, 5000]; // waits before the two retries of a failed renewal
 const SESSION_DEFAULT_RENEW_MS = 3600000;   // when Echo360 does not say (it says 1 h; access lasts about 2 h)
 const SESSION_MIN_RENEW_MS = 60000;    // never renew more often than this
+const SESSION_MAX_RENEW_MS = 7200000;  // nor less often (access lasts about 2 h; a longer wait is past what a timer can hold, 2^31 ms, and fired at once)
+// A request to Echo360's pages and API (not media downloads) with no full answer by then
+// is given up (its replies take well under a few seconds; a transcript is at most a few
+// hundred KB, seconds on a slow mobile link).
+const REQUEST_TIMEOUT_MS = 30000;
 
 // ---- page and course list (10-adapter-echo360.js, 80-course-list.js, 90-main.js) ----
+const CUE_MAX_CHARS = 5000;            // of one captions-file cue (a cue is a line or two, under 200; a longer one is cut)
 const CUE_DEFAULT_MS = 3000;           // length of a transcript line without an end time
 const LIST_CONCURRENT = 2;             // course page: player requests at a time
 const LIST_GAP_MS = 150;               // and between them
@@ -1757,7 +1812,7 @@ function saveDataOn() {
 // A course's recordings as listed by Echo360 (the JSON `data` array). Rejects when the
 // list cannot be had.
 async function fetchSyllabus(section) {
-  const r = await fetch('/section/' + encodeURIComponent(section) + '/syllabus', { credentials: 'include', headers: { Accept: 'application/json' } });
+  const r = await fetch('/section/' + encodeURIComponent(section) + '/syllabus', { credentials: 'include', headers: { Accept: 'application/json' }, signal: requestSignal() });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const j = await r.json();
   return j && Array.isArray(j.data) ? j.data : [];
@@ -2404,7 +2459,7 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
   const fromTranscript = () => {
     if (!lesson.transcriptUrl) return Promise.reject(new Error('no transcript url'));
     // As Echo360Api.request: a redirect only goes to the login page (sign-in expired).
-    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } })
+    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' }, signal: requestSignal() })
       .then((r) => {
         if (r.type === 'opaqueredirect') throw Object.assign(new Error('HTTP 401'), { status: 401, login: true });
         return r.ok ? r.json() : Promise.reject(Object.assign(new Error('HTTP ' + r.status), { status: r.status }));
@@ -2419,7 +2474,7 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
   };
   const fromVtt = () => {
     if (!lesson.captionsUrl) return [];
-    return fetch(lesson.captionsUrl)
+    return fetch(lesson.captionsUrl, { signal: requestSignal() })
       .then((r) => (r.ok ? r.text() : ''))
       .then(parseVtt);
   };
@@ -2433,8 +2488,10 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
     });
 };
 
+// Only the start of each side of the arrow is looked at: a long run of digits would
+// otherwise be tried from each of its characters (quadratic).
 function parseVttTime(s) {
-  const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(s);
+  const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(String(s).trim().slice(0, 32));
   if (!m) return NaN;
   return (+m[1] || 0) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4].padEnd(3, '0')) / 1000;
 }
@@ -2453,7 +2510,7 @@ function parseVtt(text) {
     const end = parseVttTime(b);
     if (!isFinite(start) || !isFinite(end)) continue;
     let speaker = '';
-    const body = lines.slice(ti + 1).join(' ').replace(/<v\s+([^>]*)>/g, (m, who) => { speaker = who.trim(); return ''; })
+    const body = lines.slice(ti + 1).join(' ').slice(0, CUE_MAX_CHARS).replace(/<v\s+([^>]*)>/g, (m, who) => { speaker = who.trim(); return ''; })
       .replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
     if (body) cues.push({ start, end, text: decodeEntities(body), speaker });
   }
@@ -2501,7 +2558,7 @@ class ApiError extends Error {
 // timeout, too many requests or a server error. Any other refusal (401, 403, 404, an
 // answer saying "ko") means the feature is not offered here.
 function isTransient(e) {
-  if (e && e.name === 'TypeError') return true;
+  if (e && (e.name === 'TypeError' || e.name === 'TimeoutError')) return true;
   const s = e && e.status;
   return s === 0 || s === 408 || s === 429 || s >= 500;
 }
@@ -2540,6 +2597,7 @@ class Echo360Api {
     this.l = lesson;
     const mode = store.get('dryRun', false);
     this.dryRun = mode === 'all' || mode === 'public' ? mode : false;
+    if (this.dryRun) log.info('dry run (' + this.dryRun + '): writes to Echo360 are not sent');
   }
 
   async request(method, path, body) {
@@ -2551,10 +2609,18 @@ class Echo360Api {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
-    const r = await fetch(path, opts);
-    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
+    opts.signal = requestSignal();
+    let r;
     let j = null;
-    try { j = await r.json(); } catch (e) { /* empty body */ }
+    try {
+      r = await fetch(path, opts);
+      if (r.type !== 'opaqueredirect') { try { j = await r.json(); } catch (e) { if (e && e.name === 'TimeoutError') throw e; /* empty body */ } }
+    } catch (e) {
+      // No answer in time: as a server that says so (transient, see isTransient).
+      if (e && e.name === 'TimeoutError') throw new ApiError(408);
+      throw e;
+    }
+    if (r.type === 'opaqueredirect') throw Object.assign(new ApiError(401), { login: true });
     if (!r.ok || (j && j.status === 'ko')) throw new ApiError(r.status, j && j.message);
     return j && 'data' in j ? j.data : j;
   }
@@ -2881,7 +2947,7 @@ class Reporter {
     this.d.listen(window, 'pagehide', onUnload);
     this.d.add(() => this.detach());
     // The original player validates the session on load; the response may carry a fresh token.
-    fetch(info.appUrl + '/api/ui/sessions/' + encodeURIComponent(info.sessionId), { credentials: 'include', headers: this.headers(false) })
+    fetch(info.appUrl + '/api/ui/sessions/' + encodeURIComponent(info.sessionId), { credentials: 'include', headers: this.headers(false), signal: requestSignal() })
       .then((r) => this.saveToken(r))
       .catch((e) => log.info('watch report (session) failed:', e));
   }
@@ -2905,11 +2971,11 @@ class Reporter {
     // OWN_REQUEST: ours, let through while the original player's reports are stopped
     // (15-takeover.js).
     const sent = fetch(this.info.gatewayUrl + path, /** @type {RequestInit} */ ({
-      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), [OWN_REQUEST]: true,
+      method: 'POST', credentials: 'include', keepalive: true, headers: this.headers(true), body: JSON.stringify(body), signal: requestSignal(), [OWN_REQUEST]: true,
     }));
     return sent.then((r) => {
       if (r.status === 401 && !retried) {
-        return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false) })
+        return fetch(this.info.gatewayUrl + '/authn/token/refresh-header', { method: 'POST', credentials: 'include', headers: this.headers(false), signal: requestSignal() })
           .then((rr) => this.saveToken(rr))
           .then(() => this.post(path, body, true));
       }
@@ -4385,7 +4451,7 @@ class SessionKeeper {
   // state: 'renewing' (after a failure) | 'ok' | 'failed' ({ login: bool })
   constructor(opts) {
     this.url = opts.url;
-    this.renewMs = opts.renewMs > 0 ? opts.renewMs : SESSION_DEFAULT_RENEW_MS;
+    this.renewMs = opts.renewMs > 0 ? Math.min(opts.renewMs, SESSION_MAX_RENEW_MS) : SESSION_DEFAULT_RENEW_MS;
     this.onState = opts.onState || (() => {});
     this.retryMs = opts.retryMs || SESSION_RETRY_MS;
     this.last = Date.now();       // the page load renewed the cookies if they needed it
@@ -4448,7 +4514,7 @@ class SessionKeeper {
     if (this.disposed) throw new Error('stopped');
     let r = null;
     try {
-      r = await fetch(this.url, { credentials: 'include', cache: 'no-store', redirect: 'manual', signal: this.ac.signal });
+      r = await fetch(this.url, { credentials: 'include', cache: 'no-store', redirect: 'manual', signal: requestSignal(this.ac.signal) });
     } catch (e) {
       if (this.disposed) throw new Error('stopped');
       r = null;
@@ -4792,6 +4858,9 @@ class LitePlayer {
     this.loadClock(this.clockPos, start, !!(opts.takeover && opts.takeover.playing));
     this.applyLayout();
     if (start > 1) this.toast(tr('resumedAt', { time: fmtTime(start) }), tr('startOver'), () => this.seek(0));
+    // Development's dry run is a switch in the page's storage: never on without saying so,
+    // or writes would look saved while nothing is sent.
+    if (this.writesHeld) this.toast(tr(this.writesHeld === 'all' ? 'dryRunAll' : 'dryRunPublic'), null, null, { later: true, from: 'dryRun' });
   }
 
   // An element of the player's own markup. Each selector must name exactly one element:
@@ -4894,15 +4963,16 @@ class LitePlayer {
     // Taken over from the original player (90-main.js): where it was.
     const took = this.opts.takeover;
     if (took && took.at != null) return took.at;
+    const dur = this.lesson.duration;
+    // A link's time past the end (a link to another recording, a typo) starts at the end.
     const link = this.linkTime();
-    if (link != null) return link;
+    if (link != null) return isFinite(dur) && dur > 0 ? Math.min(link, dur) : link;
     // Back from a reload the player made (reloadHere): where it was, once.
     const back = store.get('reloadAt', null);
     if (back) {
       store.set('reloadAt', null);
       if (back.id === this.lesson.id && typeof back.t === 'number' && back.t >= 0 && Math.abs(Date.now() - back.at) < RELOAD_RESUME_MS) return back.t;
     }
-    const dur = this.lesson.duration;
     let t0 = this.lesson.resumeAt;
     if (t0 == null) {
       const local = sanitizePos(store.get('pos:' + this.lesson.id, null));
@@ -5340,28 +5410,44 @@ class LitePlayer {
     on('seeked', clearWaiting);
     on('canplay', clearWaiting);
     const invalidate = () => this.frame.request();
+    // The optional features these events update: an error in one is not a playback error.
+    // It is reported once and that feature is no longer updated here (these run several
+    // times a second).
+    const broken = new Set();
+    const feature = (name, fn) => {
+      if (broken.has(name)) return;
+      try { fn(); } catch (e) { broken.add(name); reportFeatureError(name, e); }
+    };
     const onTime = () => {
       const ct = v.currentTime;
-      if (this.loop) this.loop.tick(ct);
-      this.cc.update(ct);
-      this.transcript.update(ct);
-      const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
-      if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
-      this.renderBookmarkButton();
       // Where playback is meant to be: while the start position loads, the element still
       // says 0, and nothing may act on that moment (skip a silence, switch the layout).
       const pos = this.clock.position();
-      if (this.silence) this.silence.tick(pos);
-      if (this.slidesPane) this.slidesPane.update(ct);
-      if (this.reader) this.reader.update(ct);
-      if (this.notes && this.notesReady) this.notes.update();
-      if (this.emptyScreen) this.emptyScreen.tick(pos);
-      if (this.discussion) this.discussion.update();
+      if (this.loop) feature('A-B loop', () => this.loop.tick(ct));
+      feature('captions', () => { this.cc.update(ct); this.transcript.update(ct); });
+      feature('notes', () => {
+        const scene = Math.floor(ct / FLAG_SCENE_SECONDS);
+        if (scene !== this.flagScene) { this.flagScene = scene; this.renderFlagButton(); }
+        this.renderBookmarkButton();
+      });
+      if (this.silence) feature('silence detection', () => this.silence.tick(pos));
+      if (this.slidesPane) feature('slide chapters', () => this.slidesPane.update(ct));
+      if (this.reader) feature('slide reader', () => this.reader.update(ct));
+      if (this.notes && this.notesReady) feature('notes', () => this.notes.update());
+      if (this.emptyScreen) feature('camera for an empty screen', () => this.emptyScreen.tick(pos));
+      if (this.discussion) feature('discussion', () => this.discussion.update());
     };
     on('timeupdate', () => { invalidate(); onTime(); });
     on('seeked', onTime);
     on('progress', invalidate);
-    on('durationchange', () => { this.render(true); if (this.loop) this.loop.render(); this.renderWatched(); this.updateMarkers(); if (this.silence) this.silence.update(); this.renderChapterMarks(); });
+    on('durationchange', () => {
+      this.render(true);
+      if (this.loop) feature('A-B loop', () => this.loop.render());
+      feature('watched parts', () => this.renderWatched());
+      feature('notes', () => this.updateMarkers());
+      if (this.silence) feature('silence detection', () => this.silence.update());
+      feature('slide chapters', () => this.renderChapterMarks());
+    });
     on('ratechange', () => this.speed.render(v.playbackRate));
     on('volumechange', () => {
       this.volumeCtl.render();
@@ -5781,6 +5867,7 @@ class LitePlayer {
     const l = this.lesson;
     const api = this.opts.api && l.lessonId && l.mediaId ? this.opts.api(l) : null;
     if (!api) return;
+    this.writesHeld = api.dryRun;
     const canFlag = !!l.sectionId && !l.isAnonymousUser;
     this.tags = new TagStore(l, () => { if (!this.destroyed && this.notes) this.notes.changed(); });
     this.tags.load().catch((e) => log.warn('tags:', e && e.message ? e.message : e));
@@ -6179,6 +6266,10 @@ const KEY_ACTIONS = {
   ']': ['speed', 1], '[': ['speed', -1],
 };
 
+// Actions a held key repeats (steps); every other action is one per press: a held B
+// would otherwise add and remove the bookmark on Echo360 again and again.
+const KEY_REPEATS = new Set(['seekBy', 'volumeBy', 'zoom', 'speed', 'stepChapter']);
+
 // Whether the focused element `t` handles key k itself (see KeyboardShortcuts.handle).
 function ownsKey(t, k) {
   if (!t.matches || !keyboardFocused(t)) return false;
@@ -6222,6 +6313,8 @@ class KeyboardShortcuts {
     if (e.key === '?') entry = ['help'];
     if (!entry) return;
     const [name, arg] = entry;
+    // A held key's repeats of a one-per-press action: kept from the page too, done nothing.
+    if (e.repeat && !KEY_REPEATS.has(name)) { e.preventDefault(); e.stopPropagation(); return; }
     const fn = name === 'help' ? () => this.showHelp(this.x.$('.keyhelp').hidden) : this.x.actions[name];
     if (!fn || fn(arg, e) === false) return;
     telemetry.use(KEY_FEATURES[name], 'key');
@@ -7735,7 +7828,7 @@ class ABLoop {
       move: (e) => {
         const r = seek.getBoundingClientRect();
         const tm = clamp((e.clientX - r.left) / r.width, 0, 1) * this.p.duration();
-        if (isA) this.a = Math.min(tm, this.b - LOOP_MIN_SEC); else this.b = Math.max(tm, this.a + LOOP_MIN_SEC);
+        if (isA) this.a = Math.max(0, Math.min(tm, (this.b ?? Infinity) - LOOP_MIN_SEC)); else this.b = Math.max(tm, this.a + LOOP_MIN_SEC);
         this.render();
       },
       done: (e) => { e.stopPropagation(); this.announce(); },
@@ -8143,8 +8236,19 @@ class TranscriptPanel {
     d.listen(this.list, 'touchmove', userScroll, { passive: true });
     d.listen(this.list, 'keydown', (e) => { if (/^(Arrow|Page|Home|End| )/.test(e.key)) userScroll(); });
     d.listen(this.list, 'scroll', () => { if (performance.now() > this.programmaticScrollUntil && this.dragScroll) userScroll(); }, { passive: true });
-    d.listen(this.list, 'pointerdown', (e) => { if (e.target === this.list) this.dragScroll = true; });
-    d.listen(window, 'pointerup', () => { this.dragScroll = false; });
+    // A drag of the scroll bar ends where the pointer is lifted, in the window the list is
+    // in at that time (the floating window, once moved there).
+    this.dragUp = null;
+    d.listen(this.list, 'pointerdown', (e) => {
+      if (e.target !== this.list) return;
+      if (this.dragUp) this.dragUp();
+      this.dragScroll = true;
+      const win = windowOf(this.list);
+      const up = () => { this.dragScroll = false; win.removeEventListener('pointerup', up, true); this.dragUp = null; };
+      win.addEventListener('pointerup', up, true);
+      this.dragUp = up;
+    });
+    d.add(() => { if (this.dragUp) this.dragUp(); });
     d.listen(this.backBtn, 'click', () => {
       this.follow = true;
       this.backBtn.hidden = true;
@@ -8451,7 +8555,7 @@ class NotesPane {
     const ed = this.editing;
     if (ed) {
       const item = this.items.find((x) => x.id === ed.id);
-      const card = item && this.list.querySelector('.card[data-id="' + CSS.escape(String(item.id)) + '"]');
+      const card = item && [...this.list.querySelectorAll('.card[data-id]')].find((c) => c.dataset.id === String(item.id));
       if (card) this.startEdit(item, card, ed.text); else this.editing = null;
     }
   }
@@ -8718,6 +8822,7 @@ class NotesPane {
       const f = file.files[0];
       if (!f) return;
       try {
+        if (f.size > BACKUP_MAX_BYTES) throw new Error(tr('backupTooBig', { max: Math.round(BACKUP_MAX_BYTES / 1048576) }));
         const n = await restoreBackup(JSON.parse(await f.text()));
         // From now on this page must not write its older data over the restored one (its
         // settings on leaving, the watched record): stop all writes and reload at once.
@@ -9448,34 +9553,40 @@ class AudioChain {
     // bypassed; prefer the media playback route and its power-efficient buffering.
     const ctx = new Ctx({ latencyHint: 'playback' });
     const n = {};
-    n.src = ctx.createMediaElementSource(this.video);
-    n.mono = ctx.createGain();
-    n.mono.channelCount = 1;
-    n.mono.channelCountMode = 'explicit';
-    n.mono.channelInterpretation = 'speakers';
-    n.highpass = ctx.createBiquadFilter();
-    n.highpass.type = 'highpass';
-    n.highpass.frequency.value = VOICE_FILTERS.highpassHz;
-    n.highpass.Q.value = VOICE_FILTERS.highpassQ;
-    n.presence = ctx.createBiquadFilter();
-    n.presence.type = 'peaking';
-    n.presence.frequency.value = VOICE_FILTERS.presenceHz;
-    n.presence.Q.value = VOICE_FILTERS.presenceQ;
-    n.presence.gain.value = VOICE_FILTERS.presenceDb;
-    n.leveller = ctx.createDynamicsCompressor();
-    for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n.leveller[k].value = LEVELLER[k];
-    n.makeup = ctx.createGain();
-    n.limiter = ctx.createDynamicsCompressor();
-    n.limiter.threshold.value = LIMIT_THRESHOLD_DB;
-    for (const k of ['knee', 'ratio', 'attack', 'release']) n.limiter[k].value = LIMITER[k];
-    n.trim = ctx.createGain();
-    n.trim.gain.value = Math.pow(10, LIMIT_TRIM_DB / 20);
-    n.analyser = ctx.createAnalyser();
-    n.analyser.fftSize = 2048;
-    // The level stage is internally always wired; only its entry and exit move.
-    n.leveller.connect(n.makeup).connect(n.limiter).connect(n.trim);
-    n.leveller.connect(n.analyser);
-    n.highpass.connect(n.presence);
+    // A graph that cannot be made leaves no context behind (each try would add one).
+    try {
+      n.src = ctx.createMediaElementSource(this.video);
+      n.mono = ctx.createGain();
+      n.mono.channelCount = 1;
+      n.mono.channelCountMode = 'explicit';
+      n.mono.channelInterpretation = 'speakers';
+      n.highpass = ctx.createBiquadFilter();
+      n.highpass.type = 'highpass';
+      n.highpass.frequency.value = VOICE_FILTERS.highpassHz;
+      n.highpass.Q.value = VOICE_FILTERS.highpassQ;
+      n.presence = ctx.createBiquadFilter();
+      n.presence.type = 'peaking';
+      n.presence.frequency.value = VOICE_FILTERS.presenceHz;
+      n.presence.Q.value = VOICE_FILTERS.presenceQ;
+      n.presence.gain.value = VOICE_FILTERS.presenceDb;
+      n.leveller = ctx.createDynamicsCompressor();
+      for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n.leveller[k].value = LEVELLER[k];
+      n.makeup = ctx.createGain();
+      n.limiter = ctx.createDynamicsCompressor();
+      n.limiter.threshold.value = LIMIT_THRESHOLD_DB;
+      for (const k of ['knee', 'ratio', 'attack', 'release']) n.limiter[k].value = LIMITER[k];
+      n.trim = ctx.createGain();
+      n.trim.gain.value = Math.pow(10, LIMIT_TRIM_DB / 20);
+      n.analyser = ctx.createAnalyser();
+      n.analyser.fftSize = 2048;
+      // The level stage is internally always wired; only its entry and exit move.
+      n.leveller.connect(n.makeup).connect(n.limiter).connect(n.trim);
+      n.leveller.connect(n.analyser);
+      n.highpass.connect(n.presence);
+    } catch (e) {
+      ctx.close().catch(() => {});
+      throw e;
+    }
     this.ctx = ctx;
     this.n = n;
     this.buf = new Float32Array(n.analyser.fftSize);
@@ -9547,9 +9658,11 @@ class AudioChain {
 // IndexedDB cache, and a gate that keeps background downloads from competing with playback.
 // ===================================================================================
 
+// Each name starts the list or follows a comma: unanchored, a long run of name characters
+// with no "=" would be scanned again from each of its characters (quadratic).
 function parseAttrs(s) {
   const out = {};
-  const re = /([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
+  const re = /(?:^|,)\s*([A-Z0-9-]+)=("[^"]*"|[^,]*)/g;
   let m;
   while ((m = re.exec(s))) out[m[1]] = m[2].replace(/^"|"$/g, '');
   return out;
@@ -9579,11 +9692,15 @@ function parseMediaPlaylist(text, base) {
   let range = null;
   let t = 0;
   const nextOffset = new Map();
+  // A range that is not a positive length at a whole offset makes the playlist unusable
+  // (an empty range would be asked for again and again).
   const parseRange = (spec, url) => {
     const [len, off] = spec.split('@');
     const offset = off !== undefined ? +off : (nextOffset.get(url) || 0);
-    nextOffset.set(url, offset + +len);
-    return { offset, length: +len };
+    const length = +len;
+    if (!(Number.isSafeInteger(length) && length > 0 && Number.isSafeInteger(offset) && offset >= 0)) throw new Error('bad byte range in playlist');
+    nextOffset.set(url, offset + length);
+    return { offset, length };
   };
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
@@ -9593,7 +9710,8 @@ function parseMediaPlaylist(text, base) {
       const url = new URL(a.URI, base).href;
       out.init = Object.assign({ url }, a.BYTERANGE ? parseRange(a.BYTERANGE, url) : { offset: 0, length: null });
     } else if (line.startsWith('#EXTINF:')) {
-      dur = parseFloat(line.slice(8));
+      const d = parseFloat(line.slice(8));
+      dur = d > 0 && d < Infinity ? d : 0;
     } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
       range = line.slice(17);
     } else if (!line.startsWith('#')) {
@@ -9625,9 +9743,16 @@ function fetchOk(url, init, renewed) {
 }
 
 // Used by the background analyses only: what they download is counted (usage data).
+// A server that ignores Range sends the whole file (200): the range is cut from it; a
+// partial answer longer than asked for is cut to the length.
 function fetchRange(url, offset, length, signal) {
   const headers = length === null ? {} : { Range: 'bytes=' + offset + '-' + (offset + length - 1) };
-  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer()).then((b) => { usageNote('bgBytes', null, b.byteLength); return b; });
+  return fetchOk(url, { headers, signal }).then((r) => r.arrayBuffer().then((b) => {
+    usageNote('bgBytes', null, b.byteLength);
+    if (length === null) return b;
+    if (r.status !== 206) return b.slice(offset, offset + length);
+    return b.byteLength > length ? b.slice(0, length) : b;
+  }));
 }
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot
@@ -10676,6 +10801,7 @@ class HlsVideoReader {
       const want = Math.min(s.length, n);
       if (want <= buf.byteLength) return;
       const more = await fetchRange(s.url, s.offset + buf.byteLength, want - buf.byteLength, signal);
+      if (!more.byteLength) throw new Error('empty answer for a segment range'); // asked again, it would loop
       this.bytes += more.byteLength;
       const all = new Uint8Array(buf.byteLength + more.byteLength);
       all.set(new Uint8Array(buf), 0);
@@ -11761,6 +11887,7 @@ class SlidesPane {
     else if (!deck.files.length) msg = tr('slidesLocal');
     box.append(files);
     if (msg) box.append(el('div.sdmsg', { text: msg }));
+    if (deck.capped && deck.state !== 'error') box.append(el('div.sdmsg', { text: tr('deckCapped', { n: DECK_MAX_PAGES }) }));
   }
 
   render() {
@@ -12312,12 +12439,10 @@ function wordBag(words) {
   return b;
 }
 
-// scores[f * P + p]: cosine between picture f and page p. explained[f * P + p]: share of
-// the picture's text that is on page p (each word weighted by how rare it is among the
-// pictures, so the viewer's own words count little): a slide on screen, even zoomed in,
-// explains much of what is readable; a code editor showing the slide's code next to a file
-// tree, menus and other code does not. words[f]: distinct page words in picture f.
-function textScores(pageTexts, frameTexts, scripts) {
+// Words of the pages and pictures, shared by textScores and pageSimilarity. row(f, scores,
+// explained, o, acc) writes picture f's cosine with every page to scores[o..o+P) and, when
+// explained is given, the share of its text explained by each page (see textScores).
+function textIndex(pageTexts, frameTexts, scripts) {
   const P = pageTexts.length;
   const F = frameTexts.length;
   const pdf = new Map();
@@ -12350,19 +12475,18 @@ function textScores(pageTexts, frameTexts, scripts) {
   // picture, near 0 for a word on all of them.
   const lf = Math.log(F + 1);
   const fw = (w) => (F > 1 ? Math.log((F + 1) / fdf.get(w)) / lf : 1);
-  const scores = new Float32Array(F * P);
-  const explained = new Float32Array(F * P);
-  const words = new Int32Array(F);
-  const acc = new Float64Array(P);
-  frameBags.forEach((b, f) => {
+  const row = (f, scores, explained, o, acc) => {
+    const b = frameBags[f];
     acc.fill(0);
-    let all = 0;
-    for (const w of allBags[f].keys()) all += fw(w) ** 2;
-    if (all > 0) {
-      for (const w of b.keys()) {
-        const x = fw(w) ** 2 / all;
-        const l = post.get(w);
-        for (let k = 0; k < l.length; k += 2) explained[f * P + l[k]] += x;
+    if (explained) {
+      let all = 0;
+      for (const w of allBags[f].keys()) all += fw(w) ** 2;
+      if (all > 0) {
+        for (const w of b.keys()) {
+          const x = fw(w) ** 2 / all;
+          const l = post.get(w);
+          for (let k = 0; k < l.length; k += 2) explained[o + l[k]] += x;
+        }
       }
     }
     let n2 = 0;
@@ -12373,17 +12497,42 @@ function textScores(pageTexts, frameTexts, scripts) {
       const l = post.get(w);
       for (let k = 0; k < l.length; k += 2) acc[l[k]] += x * l[k + 1];
     }
-    words[f] = b.size;
     const n = Math.sqrt(n2) || 1;
-    for (let p = 0; p < P; p++) scores[f * P + p] = acc[p] / (n * pnorm[p]);
-  });
-  return { scores, explained, words, raw, P, F, pageWords: Int32Array.from(pageBags, (b) => [...b.keys()].filter((w) => idf(w) > 0).length) };
+    for (let p = 0; p < P; p++) scores[o + p] = acc[p] / (n * pnorm[p]);
+  };
+  return { P, F, raw, row, frameBags, pageWords: Int32Array.from(pageBags, (b) => [...b.keys()].filter((w) => idf(w) > 0).length) };
 }
 
-// Cosine similarity between every two pages (P x P), from their text alone.
+// scores[f * P + p]: cosine between picture f and page p. explained[f * P + p]: share of
+// the picture's text that is on page p (each word weighted by how rare it is among the
+// pictures, so the viewer's own words count little): a slide on screen, even zoomed in,
+// explains much of what is readable; a code editor showing the slide's code next to a file
+// tree, menus and other code does not. words[f]: distinct page words in picture f.
+function textScores(pageTexts, frameTexts, scripts) {
+  const { P, F, raw, row, frameBags, pageWords } = textIndex(pageTexts, frameTexts, scripts);
+  const scores = new Float32Array(F * P);
+  const explained = new Float32Array(F * P);
+  const words = new Int32Array(F);
+  const acc = new Float64Array(P);
+  for (let f = 0; f < F; f++) {
+    row(f, scores, explained, f * P, acc);
+    words[f] = frameBags[f].size;
+  }
+  return { scores, explained, words, raw, P, F, pageWords };
+}
+
+// Cosine similarity between page b and every page, from their text alone: sim(b) is a row of
+// the P x P matrix, computed when first asked for (only the rows of pages some picture is
+// closest to are used, and a whole matrix of a long PDF would take P^2 memory).
 function pageSimilarity(pageTexts, scripts) {
-  const r = textScores(pageTexts, pageTexts, scripts);
-  return r.scores;
+  const { P, row } = textIndex(pageTexts, pageTexts, scripts);
+  const rows = new Map();
+  const acc = new Float64Array(P);
+  return (b) => {
+    let r = rows.get(b);
+    if (!r) { row(b, (r = new Float32Array(P)), null, 0, acc); rows.set(b, r); }
+    return r;
+  };
 }
 
 // ---- evidence ----
@@ -12406,8 +12555,9 @@ function scoreModel(ts, pageSim) {
     for (let p = 0; p < P; p++) if (scores[f * P + p] > b) { b = scores[f * P + p]; bi = p; }
     // Pages at least as close to the best page as the picture is cannot be told apart
     // from it: they are not "wrong".
+    const near = pageSim(bi);
     let si = -1;
-    for (let p = 0; p < P; p++) if (p !== bi && pageSim[bi * P + p] < b && (si < 0 || scores[f * P + p] > scores[f * P + si])) si = p;
+    for (let p = 0; p < P; p++) if (p !== bi && near[p] < b && (si < 0 || scores[f * P + p] > scores[f * P + si])) si = p;
     best.push([b, explained[f * P + bi]]);
     second.push(si >= 0 ? [scores[f * P + si], explained[f * P + si]] : [0, 0]);
   }
@@ -12606,7 +12756,7 @@ function followLecture(input) {
 // Source of a Worker running followLecture, assembled from the functions above so the code
 // that runs is exactly the code in this file.
 function slideTextWorkerSource() {
-  const fns = [slideWords, wordBag, textScores, pageSimilarity, scoreModel, slideEvidence, decodeSlides, followLecture];
+  const fns = [slideWords, wordBag, textIndex, textScores, pageSimilarity, scoreModel, slideEvidence, decodeSlides, followLecture];
   return '"use strict";\n'
     + 'const SLIDE_STOP = new Set(' + JSON.stringify([...SLIDE_STOP]) + ');\n'
     + 'const WORD_RE = new RegExp(' + JSON.stringify(WORD_RE.source) + ', ' + JSON.stringify(WORD_RE.flags) + ');\n'
@@ -12720,7 +12870,7 @@ function pageTitle(items, pageHeight) {
   for (const it of items) if (it.str.trim() && it.transform[5] > pageHeight * (1 - PAGE_TITLE_TOP)) size = Math.max(size, it.height);
   if (!size) return '';
   return items.filter((it) => it.str.trim() && it.transform[5] > pageHeight * (1 - PAGE_TITLE_TOP) && Math.abs(it.height - size) < 1)
-    .map((it) => it.str.trim()).join(' ').replace(/\s+/g, ' ').slice(0, 120);
+    .map((it) => it.str.trim()).join(' ').slice(0, 1000).replace(/\s+/g, ' ').slice(0, 120);
 }
 
 // A page's key is this prefix (its file) and the page number.
@@ -12800,6 +12950,7 @@ class SlideDeckController {
     this.docs = [];           // pdf.js loading tasks of the open documents, per file
     /** @type {DeckPage[]} */
     this.pages = [];
+    this.capped = false;      // more pages than DECK_MAX_PAGES: the rest are not read
     this.fixes = [];          // the user's corrections [{ a, b, page }]
     this.ocr = null;          // SlideTextReader
     this.worker = new SlideTextWorker(this.d);
@@ -12883,6 +13034,13 @@ class SlideDeckController {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
     telemetry.use('pdfAdd');
+    const big = pdfs.filter((f) => f.size > DECK_MAX_FILE_BYTES);
+    if (big.length) {
+      this.state = 'error';
+      this.error = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
+      this.onChange();
+      throw new Error(this.error);
+    }
     const added = [];
     const blobs = new Map();
     for (const f of pdfs) {
@@ -12939,6 +13097,7 @@ class SlideDeckController {
     this.again = false; // a pending recompute was for the old files
     this.closeDocs(this.files.length > 0);
     this.pages = [];
+    this.capped = false;
     this.decided = null;
     this.shown = null;
     if (!this.files.length) {
@@ -12958,6 +13117,7 @@ class SlideDeckController {
       const workerUrl = await pdfWorkerUrl();
       if (gone()) return;
       const pages = [];
+      let capped = false;
       for (const f of this.files) {
         const blob = await idbCache.get('deckfile:' + f.hash);
         if (gone()) return;
@@ -12970,18 +13130,20 @@ class SlideDeckController {
         if (gone()) { task.destroy().catch(() => {}); return; }
         this.docs.push(task);
         for (let n = 1; n <= doc.numPages; n++) {
+          if (pages.length >= DECK_MAX_PAGES) { capped = true; break; }
           const page = await doc.getPage(n);
           const tc = await page.getTextContent();
           const [x0, y0, x1, y1] = page.view;
           pages.push({
             key: pageKeyPrefix(f.hash) + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
             title: pageTitle(tc.items, y1 - y0),
-            text: tc.items.map((x) => x.str).join(' ').replace(/\s+/g, ' ').trim(),
+            text: tc.items.map((x) => x.str).join(' ').slice(0, DECK_MAX_PAGE_CHARS * 2).replace(/\s+/g, ' ').trim().slice(0, DECK_MAX_PAGE_CHARS),
           });
         }
       }
       if (this.job !== job) return;
       this.pages = pages;
+      this.capped = capped;
       this.state = 'reading';
       // Files in another language need the screen read again in that language.
       if (this.ocr && this.ocr.lang !== ocrLanguage(pages.map((x) => x.text))) this.stopReading();
@@ -13552,7 +13714,7 @@ const courseList = {
       if (s && s.read) {
         try {
           const r = await fetch('/api/ui/echoplayer/lessons/' + encodeURIComponent(lid) + '/media/' + encodeURIComponent(s.mediaId) + '/player-properties',
-            { credentials: 'include', headers: { Accept: 'application/json' } });
+            { credentials: 'include', headers: { Accept: 'application/json' }, signal: requestSignal() });
           if (r.ok) {
             const d = (await r.json()).data || {};
             const dur = parseIsoDuration(d.playableAudioVideo && d.playableAudioVideo.duration);
@@ -13923,19 +14085,45 @@ class Exporter {
 
 const BACKUP_KEYS = /^(tags|tagmap|deck|deckref|watched|screenpick):/;
 
-// The shape each restored IndexedDB entry must have (anything else is skipped, so a
-// damaged backup cannot plant data that breaks a later visit).
+// Each restored IndexedDB entry, rebuilt from its known fields within BACKUP_MAX_* (02-tuning),
+// or null: skipped. A backup may come from someone else, so a damaged or crafted one can
+// neither plant data that breaks a later visit nor freeze one with its size.
 const isStr = (x) => typeof x === 'string' && x.length < 2000;
 const isNum = (x) => typeof x === 'number' && isFinite(x);
-const BACKUP_DB_SHAPES = {
-  tags: (v) => v && Array.isArray(v.tags) && v.tags.every((g) => g && isStr(g.id) && isStr(g.name) && isStr(g.color)),
-  tagmap: (v) => v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((a) => Array.isArray(a) && a.every(isStr)),
-  deck: (v) => v && Array.isArray(v.files) && v.files.every((f) => f && isStr(f.hash) && isStr(f.name))
-    && (v.fixes == null || (Array.isArray(v.fixes) && v.fixes.every((x) => x && isNum(x.a) && isNum(x.b) && isStr(String(x.page))))),
-  deckref: (v) => Array.isArray(v) && v.every(isStr),
-  watched: (v) => v && isNum(v.d) && Array.isArray(v.r) && v.r.every((x) => Array.isArray(x) && x.length === 2 && isNum(x[0]) && isNum(x[1])) && (v.e == null || isNum(v.e)),
-  deckfile: (v) => v instanceof Blob,
-  screenpick: (v) => v && isNum(v.index),
+const isHash = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+const listOf = (v, max, each) => Array.isArray(v) && v.length <= max && v.every(each);
+const BACKUP_DB_CLEAN = {
+  // Tags keep a plain colour (review R1).
+  tags: (v) => (v && listOf(v.tags, BACKUP_MAX_TAGS, (g) => g && isStr(g.id) && isStr(g.name) && isStr(g.color))
+    ? { tags: v.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) } : null),
+  tagmap: (v) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const items = Object.keys(v).filter((k) => k !== '__proto__');
+    if (items.length > BACKUP_MAX_TAGGED || !items.every((k) => listOf(v[k], BACKUP_MAX_TAGS_EACH, isStr))) return null;
+    const out = {};
+    for (const k of items) out[k] = v[k].slice();
+    return out;
+  },
+  deck: (v) => (v && listOf(v.files, BACKUP_MAX_FILES, (f) => f && isHash(f.hash) && isStr(f.name))
+    && (v.fixes == null || listOf(v.fixes, BACKUP_MAX_FIXES, (x) => x && isNum(x.a) && isNum(x.b) && isStr(String(x.page))))
+    ? { files: v.files.map((f) => ({ hash: f.hash, name: f.name })), fixes: (v.fixes || []).map((x) => ({ a: x.a, b: x.b, page: String(x.page) })) } : null),
+  deckref: (v) => (listOf(v, BACKUP_MAX_USERS, isStr) ? v.slice() : null),
+  watched: (v) => {
+    if (!v || !isNum(v.d) || !(v.d > 0) || !listOf(v.r, BACKUP_MAX_RANGES, (x) => Array.isArray(x) && x.length === 2 && isNum(x[0]) && isNum(x[1]) && x[0] >= 0 && x[0] < x[1])) return null;
+    if (v.e != null && !isNum(v.e)) return null;
+    const out = { d: v.d, r: v.r.map(([a, b]) => [a, b]) };
+    if (isNum(v.at)) out.at = v.at;
+    if (v.e != null) out.e = v.e;
+    return out;
+  },
+  screenpick: (v) => (v && Number.isInteger(v.index) && v.index >= 0 && v.index < 100 ? { index: v.index } : null),
+};
+// Kept with what this browser has (another recording's use of a PDF, a course's other
+// tags): replacing them would let a later removal delete a PDF still in use, or drop tags
+// that notes still carry.
+const BACKUP_MERGE = {
+  tags: (mine, theirs) => ({ tags: theirs.tags.concat(((mine && BACKUP_DB_CLEAN.tags(mine)) || { tags: [] }).tags.filter((g) => !theirs.tags.some((x) => x.id === g.id))) }),
+  deckref: (mine, theirs) => theirs.concat((Array.isArray(mine) ? mine : []).filter((m) => !theirs.includes(m))),
 };
 
 async function blobToBase64(blob) {
@@ -13961,40 +14149,59 @@ async function makeBackup(withPdfs) {
   return out;
 }
 
-// Restores a backup: its entries replace the ones with the same keys. Everything is checked
-// first; the IndexedDB entries are then written in one transaction (all or none), and only
-// then the settings. Returns the number of entries written.
+// Restores a backup: its entries replace the ones with the same keys (tags and the users of
+// a PDF are merged, BACKUP_MERGE). Everything is checked first; the IndexedDB entries are
+// then written in one transaction (all or none), and only then the settings. Returns the
+// number of entries written. Whether usage data is sent is never taken from a file: it
+// stays as this browser has it.
 async function restoreBackup(data, db = idbCache) {
   if (!data || data.app !== 'lite-player-for-echo360' || data.v !== 1 || !data.db || typeof data.db !== 'object') throw new Error(tr('backupInvalid'));
+  if (Object.keys(data.db).length > BACKUP_MAX_ENTRIES) throw new Error(tr('backupInvalid'));
   // Settings and positions: only known keys, each validated like the player does (a
   // damaged value becomes the default instead of breaking every later visit).
   const local = [];
+  let positions = 0;
   for (const [k, v] of Object.entries(data.local && typeof data.local === 'object' ? data.local : {})) {
     const rule = BACKUP_LOCAL.find((x) => x.match(k));
     if (!rule) continue;
+    if (k.startsWith('pos:') && ++positions > BACKUP_MAX_POSITIONS) continue;
     let parsed = null;
     try { parsed = JSON.parse(v); } catch (e) { parsed = null; }
     const clean = rule.clean(parsed);
-    if (clean != null) local.push([k, clean]);
+    if (clean == null) continue;
+    if (k === 'prefs') clean.telemetry = sanitizePrefs(store.get('prefs', null)).telemetry;
+    local.push([k, clean]);
   }
   const entries = [];
   for (const [k, v] of Object.entries(data.db)) {
-    if (!BACKUP_KEYS.test(k) && !k.startsWith('deckfile:')) continue;
-    let val = v;
-    if (v && typeof v === 'object' && typeof v.$blob === 'string') {
-      const bin = atob(v.$blob);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      val = new Blob([bytes], { type: v.type || 'application/octet-stream' });
+    if (k.startsWith('deckfile:')) {
+      // A PDF is kept under the hash of its bytes: checked, so a file cannot stand in for
+      // another (or replace a good copy of it).
+      if (!v || typeof v !== 'object' || typeof v.$blob !== 'string' || !isHash(k.slice(9))) continue;
+      let bytes;
+      try {
+        const bin = atob(v.$blob);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } catch (e) { continue; }
+      if ((await sha256Hex(bytes)) !== k.slice(9)) continue;
+      entries.push([k, new Blob([bytes], { type: 'application/pdf' })]);
+      continue;
     }
-    const kind = k.split(':')[0];
-    const shape = BACKUP_DB_SHAPES[kind];
-    if (!shape || !shape(val)) continue;
-    // Tags keep only their known fields, with a plain colour (review R1).
-    if (kind === 'tags') val = { tags: val.tags.map((g) => ({ id: g.id, name: g.name, color: plainColor(g.color, TAG_FALLBACK_COLOR) })) };
-    entries.push([k, val]);
+    if (!BACKUP_KEYS.test(k)) continue;
+    const clean = BACKUP_DB_CLEAN[k.split(':')[0]];
+    const val = clean ? clean(v) : null;
+    if (val != null) entries.push([k, val]);
   }
-  await db.putMany(entries);
+  const merged = entries.filter(([k]) => BACKUP_MERGE[k.split(':')[0]]).map(([k]) => k);
+  await db.updateMany(merged, (old) => {
+    const next = {};
+    for (const [k, val] of entries) {
+      const merge = BACKUP_MERGE[k.split(':')[0]];
+      next[k] = merge ? merge(old[k], val) : val;
+    }
+    return next;
+  });
   let n = entries.length;
   for (const [k, clean] of local) {
     try { platform.kv.set(NS + k, JSON.stringify(clean)); n++; } catch (e) { /* storage full */ }
@@ -15342,7 +15549,9 @@ function unsupportedReason() {
     }
     const done = () => { if (screen) { try { screen.dispose(); } catch (e) { /* gone with the page */ } screen = null; } };
     platform.loadHls(HLS_LOAD_TIMEOUT_MS, screen ? (n) => { if (screen) screen.progress(n); } : undefined).then(
-      () => { if (left) return; try { go(); } finally { done(); } },
+      // The loading screen goes first: the player keeps the page's state as it finds it (a
+      // fallback later puts that back), so it must not find the loading screen's.
+      () => { if (left) return; done(); go(); },
       (e) => { if (left) return; done(); giveUp('libFailed', e); });
   }
 
@@ -15369,20 +15578,28 @@ function unsupportedReason() {
         fetchCues: adapter.fetchCues ? (l) => adapter.fetchCues(l) : null,
         api: adapter.api ? (l) => adapter.api(l) : null,
         takeover: stopped ? { at: stopped.at, playing: stopped.playing } : null,
+        // The position handed over is the stream's: while it loads, the element says 0.
         onFallback(reason) {
           fellBack(FALLBACK_REASON[reason] || 'user');
           let handoff = arg;
-          try { if (player) handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
+          try { if (player) handoff = adapter.withStartTime(arg, player.clock.position()); } catch (e) { /* keep original arg */ }
           startOriginal(original, handoff, null);
         },
       });
-      if (store.get('debug', false)) { platform.page.__litePlayerForEcho360 = player; platform.page.__litePlayerForEcho360Dev = { HlsVideoReader, frameLuma, thumbChange, learnThreshold, telemetry, telemetryEnv, TelemetryValues, sig2, boot, bgWork, netGuard, OWN_REQUEST }; } // development only
+      // Development only. `debug` is in the page's storage, which any script on the page can
+      // set: what reaches the usage-data secret or lets a request past the page's reporting
+      // guard is only there in the tests' builds.
+      if (store.get('debug', false)) {
+        platform.page.__litePlayerForEcho360 = player;
+        platform.page.__litePlayerForEcho360Dev = Object.assign({ HlsVideoReader, frameLuma, thumbChange, learnThreshold, boot, bgWork },
+          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST } : {});
+      }
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
         if (!player) return;
         fellBack('coreError');
         let handoff = arg;
-        try { handoff = adapter.withStartTime(arg, player.video.currentTime); } catch (e) { /* keep original arg */ }
+        try { handoff = adapter.withStartTime(arg, player.clock.position()); } catch (e) { /* keep original arg */ }
         startOriginal(original, handoff, tr('errorNotice'));
       };
       boot.path = takeover ? 'takeover' : 'intercept';

@@ -16,8 +16,9 @@ const CJK = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
 const LANG_FILE = /^01-lang-[a-z]+\.js$/;
 
 // The whole userscript as one string (the tests use it too, to run the player in a
-// simulated page). Returns null after reporting what is wrong.
-export function assemble() {
+// simulated page). Returns null after reporting what is wrong. dev: with the test hooks
+// (DEV_HOOKS), which a built script never has.
+export function assemble({ dev = false } = {}) {
   const version = readFileSync(join(root, 'VERSION'), 'utf8').trim();
   const files = readdirSync(srcDir).filter((f) => f.endsWith('.js')).sort();
   let failed = false;
@@ -71,6 +72,7 @@ export function assemble() {
   'use strict';
 
   const VERSION = '${version}';
+  const DEV_HOOKS = ${dev ? 'true' : 'false'};
 
 ${parts.join('\n')}
 })();

@@ -12,6 +12,21 @@ import vm from 'node:vm';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+// IndexedDB (idbCache) over a Map: each call is one transaction.
+function memIdb(db) {
+  return {
+    get: async (k) => db.get(k), put: async (k, v) => { db.set(k, v); }, del: async (k) => { db.delete(k); }, keys: async () => [...db.keys()],
+    putMany: async (es) => { for (const [k, v] of es) db.set(k, v); },
+    updateMany: async (keys, fn) => {
+      const old = {};
+      for (const k of keys) old[k] = db.get(k);
+      const next = fn(old);
+      for (const [k, v] of Object.entries(next)) { if (v === undefined) db.delete(k); else db.set(k, v); }
+      return next;
+    },
+  };
+}
+
 function loadSources(names, overrides) {
   const timers = [];
   const ctx = {
@@ -21,7 +36,7 @@ function loadSources(names, overrides) {
     document: { hidden: false, addEventListener() {}, removeEventListener() {} },
     localStorage: { getItem: () => null, setItem() {} },
     fetch: (...a) => ctx.__fetch(...a),
-    Blob, TextEncoder, AbortController, performance, location: { origin: 'https://echo360.example', hash: '' },
+    Blob, TextEncoder, AbortController, AbortSignal, DOMException, performance, location: { origin: 'https://echo360.example', hash: '' },
     setInterval: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearInterval: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
     setTimeout, clearTimeout,
@@ -35,7 +50,7 @@ function loadSources(names, overrides) {
   const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('00-boot') || f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
-    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
+    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'parseMaster', 'fetchRange', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'pageSimilarity', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
       'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
@@ -300,6 +315,45 @@ test('AudioChain refuses to build when unsupported', () => {
   chain.reason = 'nativeHls';
   assert.equal(chain.build(), false);
   assert.equal(chain.built, false);
+});
+
+test('review 2 small fixes: playlist and captions parsing stay linear, byte ranges are checked, a failed audio graph closes its context', async () => {
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api', '61-media-io', '64-slides', '60-audio']);
+  const quick = (what, fn) => { const t0 = performance.now(); fn(); const ms = performance.now() - t0; assert.ok(ms < 300, what + ' took ' + Math.round(ms) + ' ms'); };
+  // C2: attributes as before, and a long run of name characters is not quadratic.
+  const v = m.parseMaster('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200,CODECS="avc1.4d401f,mp4a.40.2", RESOLUTION=1280x720\nv.m3u8\n').variants[0];
+  assert.equal(JSON.stringify(v.attrs), JSON.stringify({ BANDWIDTH: '1200', CODECS: 'avc1.4d401f,mp4a.40.2', RESOLUTION: '1280x720' }));
+  quick('a long attribute name', () => m.parseMaster('#EXT-X-MEDIA:' + 'A'.repeat(100000)));
+  // A10: a captions file with a long run of digits or of "<".
+  quick('long digits', () => m.parseVtt('WEBVTT\n\n' + '1'.repeat(100000) + ' --> 00:00:02.000\nx'));
+  quick('long tag start', () => m.parseVtt('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n' + '<'.repeat(100000)));
+  assert.equal(m.parseVtt('WEBVTT\n\n01:00:01.500 --> 01:00:02.000 align:start\n<v Ann>Hi <b>there</b>')[0].start, 3601.5);
+  // C3: a range is a positive length; a server ignoring Range has the range cut from the file.
+  assert.throws(() => m.parseMediaPlaylist('#EXTM3U\n#EXTINF:4,\n#EXT-X-BYTERANGE:0@0\ns.mp4\n', 'https://h/p.m3u8'), /byte range/);
+  assert.throws(() => m.parseMediaPlaylist('#EXTM3U\n#EXTINF:4,\n#EXT-X-BYTERANGE:abc\ns.mp4\n', 'https://h/p.m3u8'), /byte range/);
+  assert.equal(m.parseMediaPlaylist('#EXTM3U\n#EXTINF:NaN,\ns.mp4\n', 'https://h/p.m3u8').segments[0].dur, 0);
+  const file = Uint8Array.from({ length: 10 }, (_, i) => i).buffer;
+  m.setFetch(async () => ({ ok: true, status: 200, arrayBuffer: async () => file.slice(0) }));
+  assert.equal(JSON.stringify([...new Uint8Array(await m.fetchRange('https://h/s.mp4', 3, 4))]), '[3,4,5,6]');
+  // C3: an empty answer to a range ends the read instead of asking again for good.
+  const ac = new AbortController();
+  let asked = 0;
+  m.setFetch((u, init) => new Promise((ok, no) => setTimeout(() => (init.signal.aborted ? no(new Error('aborted')) : ok({ ok: true, status: 206, arrayBuffer: async () => { asked++; return new ArrayBuffer(0); } })), 1)));
+  const reader = { segments: [{ url: 'https://h/s.mp4', offset: 0, length: 100000 }], bytes: 0, lastNeed: 0 };
+  const read = m.HlsVideoReader.prototype.keyframe.call(reader, 0, ac.signal, () => {});
+  const result = await Promise.race([read.then(() => 'done', (e) => e.message), new Promise((r) => setTimeout(() => r('still asking'), 500))]);
+  ac.abort();
+  await read.catch(() => {});
+  assert.match(result, /empty/);
+  assert.ok(asked <= 2, asked + ' requests');
+  // C10: a graph that fails to build closes the context it made.
+  let closed = 0;
+  m.window.AudioContext = class { constructor() {} createMediaElementSource() { return {}; } createGain() { return { gain: {} }; } createBiquadFilter() { throw new Error('no filters'); } close() { closed++; return Promise.resolve(); } };
+  const chain = new m.AudioChain({ paused: true });
+  chain.reason = null;
+  assert.throws(() => chain.build(), /no filters/);
+  assert.equal(closed, 1);
+  assert.equal(chain.ctx, null);
 });
 
 test('API paths and thumbnailUri match what the original player sends', () => {
@@ -1122,6 +1176,28 @@ test('T1.6: the Worker source runs on its own and decides as the page does', () 
   assert.equal(JSON.stringify(Array.from(posted[0].result.pages)), JSON.stringify(Array.from(here.pages)));
 });
 
+test('review 2 F6: page similarity rows are made only when used, equal to the whole matrix, never P x P', () => {
+  const m = deckMod();
+  const fx = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'text-2026-06-01-comp1521.json'), 'utf8'));
+  // The same values as the whole matrix (textScores of the pages against themselves).
+  const P = fx.pages.length;
+  const full = m.textScores(fx.pages, fx.pages).scores;
+  const sim = m.pageSimilarity(fx.pages);
+  for (let b = 0; b < P; b++) {
+    const row = sim(b);
+    for (let p = 0; p < P; p++) if (row[p] !== full[b * P + p]) assert.fail('row ' + b + ', page ' + p);
+  }
+  // A PDF of many pages, read on one picture: no array grows with pages x pages (20,000
+  // pages would be two arrays of 1.6 GB).
+  let biggest = 0;
+  class Counted extends Float32Array { constructor(n) { super(n); biggest = Math.max(biggest, this.length); } }
+  const c = loadSources(['00-util', '61-media-io', '64-slides', '67-slide-text', '66-slide-ocr', '68-slide-deck'], { Float32Array: Counted });
+  const pages = Array.from({ length: 20000 }, (_, i) => 'page' + i + ' topic' + (i % 50));
+  const r = c.followLecture({ pageTexts: pages, fileOf: pages.map(() => 0), texts: [pages[7]], at: [0, 0] });
+  assert.equal(JSON.stringify(Array.from(r.pages)), '[7,7]');
+  assert.ok(biggest <= 2 * pages.length, 'largest Float32Array ' + biggest);
+});
+
 // T2: two hand-labelled lectures replayed through followLecture (texts as hashed word bags,
 // see dev/make-text-fixture.mjs). Scored as dev/text-eval.mjs does, on slide time: the page
 // shown (after followSamples) is the labelled one or next to it, and the page decided is
@@ -1313,7 +1389,7 @@ test('E2: a backup restore takes only known keys, validated, and skips damaged e
     localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
   });
   // In-memory IndexedDB stand-in.
-  const ctxIdb = { get: async (k) => db.get(k), put: async (k, v) => { db.set(k, v); }, putMany: async (es) => { for (const [k, v] of es) db.set(k, v); }, del: async (k) => { db.delete(k); }, keys: async () => [...db.keys()] };
+  const ctxIdb = memIdb(db);
   const n = await m.restoreBackup({
     app: 'lite-player-for-echo360', v: 1,
     local: { prefs: JSON.stringify({ rate: 'x', layout: 'pip' }), 'pos:abc': JSON.stringify({ t: 30 }), debug: 'true', 'evil:key': '1', 'pos:bad': '{"t":"no"}' },
@@ -1344,7 +1420,7 @@ test('T1.5 backup: everything made by a backup comes back from it, through a fil
     ['tagmap:m', { n1: ['a'] }],
     ['watched:l', { d: 100, r: [[0, 10], [20, 30]], e: 90 }],
     ['screenpick:m', { index: 2 }],
-    ['deck:m', { files: [{ hash: 'h', name: 'w1.pdf' }], fixes: [] }],
+    ['deck:m', { files: [{ hash: 'ab'.repeat(32), name: 'w1.pdf' }], fixes: [] }],
     ['slides:m', { v: 4, chapters: [] }],   // an analysis cache: not user data, not backed up
   ]);
   Object.assign(m.idbCache, { get: async (k) => db.get(k), keys: async () => [...db.keys()] });
@@ -1356,7 +1432,7 @@ test('T1.5 backup: everything made by a backup comes back from it, through a fil
   const before = { local: new Map(local), db: new Map(db) };
   local.clear();
   const db2 = new Map();
-  const target = { get: async (k) => db2.get(k), put: async (k, v) => { db2.set(k, v); }, putMany: async (es) => { for (const [k, v] of es) db2.set(k, v); }, del: async (k) => { db2.delete(k); }, keys: async () => [...db2.keys()] };
+  const target = memIdb(db2);
   await m.restoreBackup(data, target);
   for (const k of ['tags:s', 'tagmap:m', 'watched:l', 'screenpick:m', 'deck:m']) assert.equal(JSON.stringify(db2.get(k)), JSON.stringify(before.db.get(k)), k);
   assert.equal(db2.has('slides:m'), false);
@@ -1430,6 +1506,39 @@ test('L1: a renewal on its way when the player is disposed does not schedule ano
   await assert.rejects(k.renew(true));
 });
 
+test('review 2 F8: requests to Echo360 give up after a time; a hung write frees the API, a hung renewal retries', async () => {
+  // AbortSignal.timeout fired by hand; a request that never answers until its signal aborts.
+  const timeouts = [];
+  const FakeSignal = {
+    timeout: (ms) => { const ac = new AbortController(); timeouts.push({ ms, fire: () => ac.abort(new DOMException('timed out', 'TimeoutError')) }); return ac.signal; },
+    any: (list) => AbortSignal.any(list),
+  };
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api', '36-session'], { AbortSignal: FakeSignal });
+  const asked = [];
+  m.setFetch((url, init) => { asked.push(url); return new Promise((_, no) => init.signal.addEventListener('abort', () => no(init.signal.reason))); });
+  const fire = async () => { await new Promise((r) => setTimeout(r, 5)); for (const t of timeouts.splice(0)) t.fire(); };
+  const api = new m.Echo360Api({ lessonId: 'L1', mediaId: 'M1', sectionId: 'S1', thumbnails: [] });
+  const write = api.request('POST', '/api/x', {});
+  await fire();
+  await assert.rejects(write, (e) => e.status === 408 && m.isTransient(e));
+  const cues = m.echo360ClassroomAdapter.fetchCues({ transcriptUrl: '/t', captionsUrl: '/c.vtt' });
+  await fire();
+  await fire();
+  await assert.rejects(cues, (e) => m.isTransient(e), 'transcript timed out, captions file too');
+  const d = new m.Disposer();
+  const k = new m.SessionKeeper({ url: '/lesson/x', renewMs: 3600000, disposer: d, retryMs: [1, 1] });
+  asked.length = 0;
+  const renewal = k.renew(true);
+  for (let i = 0; i < 3; i++) await fire();
+  await assert.rejects(renewal, /renewal failed/);
+  assert.equal(asked.length, 3, 'three attempts');
+  d.dispose();
+  // A renewal interval past what a timer holds is clamped (A6).
+  const d2 = new m.Disposer();
+  assert.ok(new m.SessionKeeper({ url: '/x', renewMs: 2 ** 40, disposer: d2 }).renewMs <= 2 ** 31 - 1);
+  d2.dispose();
+});
+
 test('L2: a stopped text reader never starts the recognition engine', async () => {
   const m = loadSources(['00-util', '61-media-io', '64-slides', '66-slide-ocr']);
   const ac = new AbortController();
@@ -1500,12 +1609,76 @@ test('B6: an older discussion load that answers late does not overwrite a newer 
   assert.deepEqual(pane.threads, ['new']);
 });
 
+test('review 2 F4: a crafted backup cannot plant oversized records; records keep only their known fields', async () => {
+  const local = new Map();
+  const db = new Map();
+  const m = loadSources(['00-util', '01-i18n', '39-prefs', '40-player', '53-captions', '54-sidebar', '61-media-io', '62-silence', '11-echo360-api', '10-adapter', '85-export'], {
+    localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
+  });
+  const ranges = (n) => Array.from({ length: n }, (_, i) => [i * 2, i * 2 + 1]);
+  const positions = {};
+  for (let i = 0; i < 6000; i++) positions['pos:r' + i] = JSON.stringify({ t: 1, at: 1 });
+  await m.restoreBackup({ app: 'lite-player-for-echo360', v: 1, local: positions, db: {
+    'watched:big': { d: 1e5, r: ranges(100000) },
+    'watched:ok': { d: 100, r: [[0, 10]], at: 5, extra: 'x'.repeat(1000) },
+    'watched:backwards': { d: 100, r: [[10, 0]] },
+    'tags:big': { tags: Array.from({ length: 10000 }, (_, i) => ({ id: 't' + i, name: 'x', color: '#fff' })) },
+    'tagmap:m': { n1: ['a'], ['__proto__']: ['b'] },
+    'screenpick:m': { index: 1, junk: 'y'.repeat(1000) },
+    'deck:m': { files: [{ hash: 'not-a-hash', name: 'x.pdf' }] },
+  } }, memIdb(db));
+  assert.equal(db.has('watched:big'), false, 'too many stretches: skipped');
+  assert.equal(JSON.stringify(db.get('watched:ok')), '{"d":100,"r":[[0,10]],"at":5}');
+  assert.equal(db.has('watched:backwards'), false);
+  assert.equal(db.has('tags:big'), false);
+  assert.equal(JSON.stringify(Object.keys(db.get('tagmap:m'))), '["n1"]');
+  assert.equal(Object.getPrototypeOf(Object.getPrototypeOf(db.get('tagmap:m'))), null, 'a plain object');
+  assert.equal(JSON.stringify(db.get('screenpick:m')), '{"index":1}');
+  assert.equal(db.has('deck:m'), false);
+  assert.equal([...local.keys()].filter((k) => k.includes(':pos:')).length, 5000, 'positions up to the limit');
+  // A file with more records than any real backup is refused as a whole.
+  const huge = {};
+  for (let i = 0; i < 50001; i++) huge['screenpick:' + i] = { index: 0 };
+  await assert.rejects(m.restoreBackup({ app: 'lite-player-for-echo360', v: 1, local: {}, db: huge }, memIdb(new Map())));
+});
+
+test('review 2 F5/F7: a restored PDF must match its hash; users of a PDF and a course\'s tags are merged; usage data stays as it is', async () => {
+  const local = new Map([['lite-player-for-echo360:prefs', JSON.stringify({ telemetry: false, rate: 1 })]]);
+  const m = loadSources(['00-util', '01-i18n', '39-prefs', '40-player', '53-captions', '54-sidebar', '61-media-io', '62-silence', '11-echo360-api', '10-adapter', '85-export'], {
+    crypto: globalThis.crypto, atob,
+    localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
+  });
+  const pdf = Buffer.from('%PDF-1.4 lecture');
+  const hash = createHash('sha256').update(pdf).digest('hex');
+  const other = createHash('sha256').update('another file').digest('hex');
+  const db = new Map([
+    ['deckref:' + hash, ['A', 'B']],
+    ['tags:s', { tags: [{ id: 'mine', name: 'Mine', color: '#fff' }] }],
+  ]);
+  await m.restoreBackup({ app: 'lite-player-for-echo360', v: 1,
+    local: { prefs: JSON.stringify({ telemetry: true, rate: 1.5 }) },
+    db: {
+      ['deckfile:' + hash]: { $blob: pdf.toString('base64'), type: 'application/pdf' },
+      // Other bytes under a lecture file's hash: not taken.
+      ['deckfile:' + other]: { $blob: Buffer.from('%PDF-1.4 something else').toString('base64'), type: 'application/pdf' },
+      ['deckref:' + hash]: ['B'],
+      'tags:s': { tags: [{ id: 'theirs', name: 'Theirs', color: '#000' }] },
+    } }, memIdb(db));
+  assert.ok(db.get('deckfile:' + hash), 'the matching file is restored');
+  assert.equal(db.has('deckfile:' + other), false, 'a file not matching its hash is skipped');
+  assert.equal(JSON.stringify([...db.get('deckref:' + hash)].sort()), '["A","B"]', 'recording A still counts as a user');
+  assert.equal(JSON.stringify(db.get('tags:s').tags.map((g) => g.id)), '["theirs","mine"]');
+  const prefs = JSON.parse(local.get('lite-player-for-echo360:prefs'));
+  assert.equal(prefs.rate, 1.5, 'settings are restored');
+  assert.equal(prefs.telemetry, false, 'but usage data stays off');
+});
+
 test('B9: a restore that cannot write its entries writes nothing (no settings either)', async () => {
   const local = new Map();
   const m = loadSources(['00-util', '01-i18n', '39-prefs', '40-player', '53-captions', '54-sidebar', '61-media-io', '62-silence', '11-echo360-api', '10-adapter', '85-export'], {
     localStorage: { getItem: () => null, setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
   });
-  const failing = { putMany: async () => { throw new Error('disk full'); } };
+  const failing = { updateMany: async () => { throw new Error('disk full'); } };
   await assert.rejects(m.restoreBackup({ app: 'lite-player-for-echo360', v: 1, local: { prefs: '{"rate":1.5}' }, db: { 'tags:s': { tags: [] } } }, failing), /disk full/);
   assert.equal(local.size, 0);
 });
@@ -1735,7 +1908,7 @@ test('review R1: a tag colour from a backup or from storage can only be a plain 
   const m = loadSources(['00-util', '01-i18n', '39-prefs', '40-player', '53-captions', '54-sidebar', '61-media-io', '62-silence', '11-echo360-api', '10-adapter', '56-tags', '85-export'], {
     localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), key: () => null, length: 0 },
   });
-  const ctxIdb = { get: async (k) => db.get(k), put: async (k, v) => { db.set(k, v); }, putMany: async (es) => { for (const [k, v] of es) db.set(k, v); }, del: async (k) => { db.delete(k); }, keys: async () => [...db.keys()] };
+  const ctxIdb = memIdb(db);
   await m.restoreBackup({ app: 'lite-player-for-echo360', v: 1, local: {}, db: { 'tags:s': { tags: [{ id: 'a', name: 'A', color: evil, extra: 'x' }, { id: 'b', name: 'B', color: '#6ea8ff' }] } } }, ctxIdb);
   const tags = db.get('tags:s').tags;
   assert.deepEqual(tags.map((t) => t.name), ['A', 'B'], 'the tags themselves are kept');

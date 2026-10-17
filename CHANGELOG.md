@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.25.3
+Fixes from a second review of the player:
+- **Holding B or U no longer adds and removes a bookmark (or a "didn't understand" mark) on Echo360 again and again.** A held key now acts once. Keys that step (seek, volume, zoom, speed, chapters) still repeat while held.
+- **Switching to the original player while the video is still loading keeps your place.** Before, it started from the beginning.
+- After the loading screen had been shown, switching to the original player could leave the page unable to scroll. Fixed.
+- **Backups from someone else are checked more carefully.** A backup file is limited in size, and so is each kind of record in it. A PDF in a backup must match its fingerprint, or it is not restored. Restoring no longer removes another recording's link to a shared PDF, and it merges tags with the ones you have. **Restoring never turns usage data back on** if you turned it off.
+- **Very long PDFs no longer slow the player down.** Slide following uses at most 3000 pages, and a PDF over 300 MB is refused. Following needs far less memory than before, with the same results.
+- **A request to Echo360 that never answers now gives up after 30 seconds.** Before, a hung note or post could block every later one in the tab, and a hung session renewal could stop renewal for good.
+- One feature failing while the video plays (captions, slides, notes and others) now turns off only that feature, as intended. Before, it switched the page to the original player.
+- Smaller fixes:
+  - A link with a time past the end of the recording starts at the end.
+  - Dragging the start of an A-B loop that has no end yet could set the start before 0:00.
+  - In the floating window, dragging the transcript's scroll bar turned off auto-follow.
+  - A note being edited could be lost from view on Echo360 pages that replace a browser built-in.
+  - Unusual playlists and captions files can no longer make the background analyses slow or loop.
+
 ## 0.25.2
 Fixes from an independent security review:
 - **Turning usage data off now stops every request at once.** Before, a request that had failed and was waiting to be tried again (30 seconds or 2 minutes later) was still sent after you turned usage data off. Turning it off in one tab now also stops other open tabs before their next request.

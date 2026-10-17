@@ -199,7 +199,7 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
   const fromTranscript = () => {
     if (!lesson.transcriptUrl) return Promise.reject(new Error('no transcript url'));
     // As Echo360Api.request: a redirect only goes to the login page (sign-in expired).
-    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' } })
+    return fetch(lesson.transcriptUrl, { credentials: 'include', redirect: 'manual', headers: { Accept: 'application/json' }, signal: requestSignal() })
       .then((r) => {
         if (r.type === 'opaqueredirect') throw Object.assign(new Error('HTTP 401'), { status: 401, login: true });
         return r.ok ? r.json() : Promise.reject(Object.assign(new Error('HTTP ' + r.status), { status: r.status }));
@@ -214,7 +214,7 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
   };
   const fromVtt = () => {
     if (!lesson.captionsUrl) return [];
-    return fetch(lesson.captionsUrl)
+    return fetch(lesson.captionsUrl, { signal: requestSignal() })
       .then((r) => (r.ok ? r.text() : ''))
       .then(parseVtt);
   };
@@ -228,8 +228,10 @@ echo360ClassroomAdapter.fetchCues = function (lesson) {
     });
 };
 
+// Only the start of each side of the arrow is looked at: a long run of digits would
+// otherwise be tried from each of its characters (quadratic).
 function parseVttTime(s) {
-  const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(s);
+  const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(String(s).trim().slice(0, 32));
   if (!m) return NaN;
   return (+m[1] || 0) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4].padEnd(3, '0')) / 1000;
 }
@@ -248,7 +250,7 @@ function parseVtt(text) {
     const end = parseVttTime(b);
     if (!isFinite(start) || !isFinite(end)) continue;
     let speaker = '';
-    const body = lines.slice(ti + 1).join(' ').replace(/<v\s+([^>]*)>/g, (m, who) => { speaker = who.trim(); return ''; })
+    const body = lines.slice(ti + 1).join(' ').slice(0, CUE_MAX_CHARS).replace(/<v\s+([^>]*)>/g, (m, who) => { speaker = who.trim(); return ''; })
       .replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
     if (body) cues.push({ start, end, text: decodeEntities(body), speaker });
   }

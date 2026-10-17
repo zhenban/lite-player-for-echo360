@@ -149,7 +149,21 @@ const eventLog = [];
 function timeoutSignal(ms) {
   if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
   const ac = new AbortController();
-  setTimeout(() => ac.abort(), ms);
+  setTimeout(() => ac.abort(new DOMException('timed out', 'TimeoutError')), ms);
+  return ac.signal;
+}
+
+// The signal of a request to Echo360: aborted with `signal` (optional) or, with a
+// TimeoutError, when no full answer came within REQUEST_TIMEOUT_MS (a hung request would
+// otherwise keep a write busy or a renewal pending for good).
+function requestSignal(signal) {
+  const t = timeoutSignal(REQUEST_TIMEOUT_MS);
+  if (!signal) return t;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, t]);
+  const ac = new AbortController();
+  const stop = (s) => () => ac.abort(s.reason);
+  if (signal.aborted) stop(signal)();
+  else { signal.addEventListener('abort', stop(signal), { once: true }); t.addEventListener('abort', stop(t), { once: true }); }
   return ac.signal;
 }
 

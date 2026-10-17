@@ -309,6 +309,7 @@ class HlsVideoReader {
       const want = Math.min(s.length, n);
       if (want <= buf.byteLength) return;
       const more = await fetchRange(s.url, s.offset + buf.byteLength, want - buf.byteLength, signal);
+      if (!more.byteLength) throw new Error('empty answer for a segment range'); // asked again, it would loop
       this.bytes += more.byteLength;
       const all = new Uint8Array(buf.byteLength + more.byteLength);
       all.set(new Uint8Array(buf), 0);

@@ -113,11 +113,24 @@ test('T1.2: handing over to the original player passes the position on and tears
   const pg = page();
   pg.start();
   const p = pg.player();
+  p.clock.starting = null;   // the start position has arrived
   p.video.currentTime = 321;
   p.opts.onFallback('user');
   const handed = JSON.parse(pg.original());
   assert.equal(handed.startTimeMillis, 321000);
   assert.equal(p.destroyed, true);
+  await closeWindow(pg.w);
+});
+
+test('review 2 F2: handing over while the stream is still loading passes on where it was going, not the element\'s 0', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  // Loading the resume point 45 minutes in: the element still says 0.
+  p.clock.starting = { at: 2700, play: false };
+  p.video.currentTime = 0;
+  p.opts.onFallback('error');
+  assert.equal(JSON.parse(pg.original()).startTimeMillis, 2700000);
   await closeWindow(pg.w);
 });
 
@@ -400,6 +413,59 @@ test('a silence at 0:00 is not skipped automatically while the player is on its 
     p.clock.starting = { at: 2000, play: true };
     p.video.dispatchEvent(new pg.w.Event('timeupdate'));
     assert.deepEqual(seeks, [], 'the resume point is kept');
+  } finally {
+    p.destroy();
+    await closeWindow(pg.w);
+  }
+});
+
+test('review 2 F9: an error in an optional feature on timeupdate or durationchange keeps the player; that feature stops', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  try {
+    let cc = 0;
+    let marks = 0;
+    p.cc.update = () => { cc++; throw new Error('captions broke'); };
+    p.renderWatched = () => { throw new Error('watched broke'); };
+    const bookmark = p.renderBookmarkButton.bind(p);
+    p.renderBookmarkButton = () => { marks++; bookmark(); };
+    for (let i = 0; i < 3; i++) p.video.dispatchEvent(new pg.w.Event('timeupdate'));
+    p.video.dispatchEvent(new pg.w.Event('durationchange'));
+    assert.equal(p.destroyed, false, 'still the player');
+    assert.equal(pg.original(), null, 'the original player was not started');
+    assert.equal(cc, 1, 'the broken feature is not called again');
+    assert.equal(marks, 3, 'the others go on');
+  } finally {
+    p.destroy();
+    await closeWindow(pg.w);
+  }
+});
+
+test('review 2 F10: the page-set debug switch gives no way to the usage-data secret; a dry run says it is on', async () => {
+  const pg = page();
+  pg.w.localStorage.setItem('lite-player-for-echo360:dryRun', '"public"');
+  pg.start();
+  const p = pg.player();
+  try {
+    const dev = pg.w.__litePlayerForEcho360Dev;
+    assert.ok(dev && dev.boot, 'debug hooks for development are there');
+    for (const k of ['telemetry', 'telemetryEnv', 'TelemetryValues', 'sig2', 'netGuard', 'OWN_REQUEST']) assert.equal(k in dev, false, k);
+    const shown = [p.$('.toast .msg').textContent, ...(p.toastNext ? [p.toastNext[0]] : [])];
+    assert.ok(shown.some((t) => /^Test mode/.test(t)), 'dry run notice: ' + JSON.stringify(shown));
+  } finally {
+    p.destroy();
+    await closeWindow(pg.w);
+  }
+});
+
+test('review 2 B9: a link time past the end of the recording starts at the end, not beyond it', async () => {
+  const pg = page();
+  pg.w.location.hash = '#t=999999';
+  pg.start();
+  const p = pg.player();
+  try {
+    assert.ok(p.lesson.duration > 0 && p.startAt <= p.lesson.duration, p.startAt + ' of ' + p.lesson.duration);
   } finally {
     p.destroy();
     await closeWindow(pg.w);

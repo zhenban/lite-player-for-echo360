@@ -312,6 +312,7 @@ class SlidesPane {
     else if (!deck.files.length) msg = tr('slidesLocal');
     box.append(files);
     if (msg) box.append(el('div.sdmsg', { text: msg }));
+    if (deck.capped && deck.state !== 'error') box.append(el('div.sdmsg', { text: tr('deckCapped', { n: DECK_MAX_PAGES }) }));
   }
 
   render() {

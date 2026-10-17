@@ -213,6 +213,8 @@ const STRINGS = {
     deckWaiting: 'Waiting to find the screen view…',
     deckLangLoading: 'Getting text recognition for {lang} ({mb} MB, once)…',
     deckError: 'Could not read the slide file ({msg}).',
+    deckTooBig: '{name} is too large for a slide file (at most {max} MB).',
+    deckCapped: 'Only the first {n} pages are used to follow the lecture.',
     deckSaveFailed: 'Could not store {name} on this device ({msg}). Is the disk full?',
     prevPage: 'Previous page',
     nextPage: 'Next page',
@@ -352,6 +354,7 @@ const STRINGS = {
     backupMade: 'Backup saved ({n} items)',
     backupRestored: 'Restored {n} items. Reloading…',
     backupInvalid: 'This is not a Lite Player for Echo360 backup file',
+    backupTooBig: 'This file is too large for a backup (at most {max} MB)',
     mdRecorded: 'Recorded {date}',
     mdOpen: 'Open in Echo360',
     mdNothing: 'No notes or bookmarks.',
@@ -417,6 +420,9 @@ const STRINGS = {
     featureNotes: 'notes',
     featureSession: 'session renewal',
     featureZoom: 'zoom',
+    dryRunAll: 'Test mode: notes, posts and other changes are not sent to Echo360.',
+    dryRunPublic: 'Test mode: posts, replies, likes and "didn\'t understand" marks are not sent to Echo360.',
+    featureWatched: 'the watched parts',
     layoutPdfNote: 'With the PDF view open, the layout button switches between side by side and picture in picture.',
     captionsPage: 'Captions',
     silencePage: 'Skip silence',
@@ -489,7 +495,7 @@ const FEATURE_NAMES = {
   player: 'featurePlayer', 'A-B loop': 'featureLoop', discussion: 'featureDiscussion', 'floating window': 'featurePopout',
   'audio tools': 'featureAudio', captions: 'featureCaptions', 'notes and discussion': 'featureNotesDiscussion',
   'silence detection': 'featureSilence', 'slide chapters': 'featureSlideChapters', 'camera for an empty screen': 'featureEmptyCamera', 'usage data': 'featureUsage', 'slide reader': 'featureSlideReader',
-  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom',
+  notes: 'featureNotes', 'session renewal': 'featureSession', zoom: 'featureZoom', 'watched parts': 'featureWatched',
 };
 function featureName(id) {
   const k = FEATURE_NAMES[String(id).replace(/ \(display\)$/, '')];

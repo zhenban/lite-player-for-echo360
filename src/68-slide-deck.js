@@ -49,7 +49,7 @@ function pageTitle(items, pageHeight) {
   for (const it of items) if (it.str.trim() && it.transform[5] > pageHeight * (1 - PAGE_TITLE_TOP)) size = Math.max(size, it.height);
   if (!size) return '';
   return items.filter((it) => it.str.trim() && it.transform[5] > pageHeight * (1 - PAGE_TITLE_TOP) && Math.abs(it.height - size) < 1)
-    .map((it) => it.str.trim()).join(' ').replace(/\s+/g, ' ').slice(0, 120);
+    .map((it) => it.str.trim()).join(' ').slice(0, 1000).replace(/\s+/g, ' ').slice(0, 120);
 }
 
 // A page's key is this prefix (its file) and the page number.
@@ -129,6 +129,7 @@ class SlideDeckController {
     this.docs = [];           // pdf.js loading tasks of the open documents, per file
     /** @type {DeckPage[]} */
     this.pages = [];
+    this.capped = false;      // more pages than DECK_MAX_PAGES: the rest are not read
     this.fixes = [];          // the user's corrections [{ a, b, page }]
     this.ocr = null;          // SlideTextReader
     this.worker = new SlideTextWorker(this.d);
@@ -212,6 +213,13 @@ class SlideDeckController {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
     telemetry.use('pdfAdd');
+    const big = pdfs.filter((f) => f.size > DECK_MAX_FILE_BYTES);
+    if (big.length) {
+      this.state = 'error';
+      this.error = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
+      this.onChange();
+      throw new Error(this.error);
+    }
     const added = [];
     const blobs = new Map();
     for (const f of pdfs) {
@@ -268,6 +276,7 @@ class SlideDeckController {
     this.again = false; // a pending recompute was for the old files
     this.closeDocs(this.files.length > 0);
     this.pages = [];
+    this.capped = false;
     this.decided = null;
     this.shown = null;
     if (!this.files.length) {
@@ -287,6 +296,7 @@ class SlideDeckController {
       const workerUrl = await pdfWorkerUrl();
       if (gone()) return;
       const pages = [];
+      let capped = false;
       for (const f of this.files) {
         const blob = await idbCache.get('deckfile:' + f.hash);
         if (gone()) return;
@@ -299,18 +309,20 @@ class SlideDeckController {
         if (gone()) { task.destroy().catch(() => {}); return; }
         this.docs.push(task);
         for (let n = 1; n <= doc.numPages; n++) {
+          if (pages.length >= DECK_MAX_PAGES) { capped = true; break; }
           const page = await doc.getPage(n);
           const tc = await page.getTextContent();
           const [x0, y0, x1, y1] = page.view;
           pages.push({
             key: pageKeyPrefix(f.hash) + n, file: f.name, num: n, doc, ar: (y1 - y0) / (x1 - x0),
             title: pageTitle(tc.items, y1 - y0),
-            text: tc.items.map((x) => x.str).join(' ').replace(/\s+/g, ' ').trim(),
+            text: tc.items.map((x) => x.str).join(' ').slice(0, DECK_MAX_PAGE_CHARS * 2).replace(/\s+/g, ' ').trim().slice(0, DECK_MAX_PAGE_CHARS),
           });
         }
       }
       if (this.job !== job) return;
       this.pages = pages;
+      this.capped = capped;
       this.state = 'reading';
       // Files in another language need the screen read again in that language.
       if (this.ocr && this.ocr.lang !== ocrLanguage(pages.map((x) => x.text))) this.stopReading();
