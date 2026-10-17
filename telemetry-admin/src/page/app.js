@@ -260,6 +260,12 @@ function build() {
   const featSide = h('div', { class: 'stack w-4' }, u.bChanged.root, u.bSpeeds.root, u.bSlides.root);
   for (const b of [u.bChanged, u.bSpeeds, u.bSlides]) b.root.classList.remove('w-4');
   features.grid.append(u.bFeatures.root, featSide);
+  u.formBars = barList({ compact: true, stacked: true });
+  u.formTable = h('table', { class: 'data-table' });
+  u.bForms = block('w-12', t('slideForms'), h('p', { class: 'blk-intro', text: t('slideFormsCap') }),
+    h('div', { class: 'form-split' }, u.formBars.root,
+      h('div', null, h('h4', { class: 'sub-h form-sub', text: t('bySystem') }), h('div', { class: 'tbl-scroll' }, u.formTable))));
+  features.grid.append(u.bForms.root);
 
   // Compatibility
   const compat = section('compat', t('sec_compat'));
@@ -531,6 +537,12 @@ function render(d, animate) {
   ui.slideStopHead.hidden = !f.slideStops.length;
   ui.slideStopBars.root.hidden = !f.slideStops.length;
   ui.bSlides.meta(basedOn('views', slideTotal), slideTotal > 0 && slideTotal < low, slideTotal ? '' : t('noSlideSource'));
+  const formTotal = f.slideForms.reduce((a, x) => a + x.sessions, 0);
+  const formOrder = ['avcc', 'annexb', 'neither'];
+  ui.formBars.update(f.slideForms.slice().sort((a, b) => formOrder.indexOf(a.form) - formOrder.indexOf(b.form)).map((x) => ({
+    key: x.form, label: t('formWithUsers', { label: t('form_' + x.form), users: t('users', { n: x.users }) }), value: x.sessions })), formTotal, formTotal < low);
+  renderForms(f.slideFormsBySystem);
+  ui.bForms.meta(basedOn('views', formTotal), formTotal > 0 && formTotal < low, formTotal ? '' : t('noSlideForm'));
 
   // ---- Compatibility
   const loads = o.sessions + c.fallbacks;
@@ -566,6 +578,18 @@ function renderErrors(list, now) {
     h('span', { class: 'err-num' }, h('span', { class: 'err-label', text: t('errUsers') }), fmtInt(e.users)),
     h('span', { class: 'err-ver' }, h('span', { class: 'err-label', text: t('errVersions') }), e.versions.map((v) => 'v' + v).join(', ')),
     h('span', { class: 'err-last' }, h('span', { class: 'err-label', text: t('errLast') }), e.lastAt ? fmtAgo(e.lastAt, now) : '–'))));
+}
+
+// Viewings by video form per system and browser version; the forms other than "as sent"
+// are what this is for, so they are bold where they occur.
+function renderForms(list) {
+  const ver = (name, v) => (name == null ? t('unknown') : name + (v ? ' ' + v : ''));
+  const num = (v, mark) => h('td', { class: mark && v ? 'hot' : '', text: fmtInt(v) });
+  ui.formTable.replaceChildren(
+    h('thead', null, h('tr', null, ...['colSystem', 'colAvcc', 'colAnnexb', 'colNeither', 'colUsers'].map((k) => h('th', { scope: 'col', text: t(k) })))),
+    h('tbody', null, ...list.slice(0, 15).map((x) => h('tr', null,
+      h('th', { scope: 'row' }, ver(x.os, x.osV), h('span', { class: 'cell-sub', text: ver(x.browser, x.browserV) })),
+      num(x.avcc), num(x.annexb, true), num(x.neither, true), h('td', { text: fmtInt(x.users) })))));
 }
 
 function renderFrontends(list, d) {
