@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.24.0
+New:
+- **Phones held upright** show the video on top and the side panel (chapters, notes, discussion…) below it, instead of squeezing both side by side.
+- **Slides without precise frame reading.** Where the browser cannot decode video frames (iPadOS before 16.4), or reading them fails, the slide chapters now come from Echo360's per-minute preview pictures, and the Slides tab says so. Before, the analysis stopped with an error.
+- On a narrow bar, the time moves up first, then Mute and Captions move into the ⋯ menu, where they still turn on and off with one tap. Phones no longer show the 10-second back and forward buttons (drag the seek bar instead).
+- Usage data also says where the slide chapters came from (video frames or preview pictures) and why frame reading stopped, if it did. An iPad is now counted as iOS (its Safari presents itself as a Mac).
+
+Fixes:
+- On iPhone, the layout and full-screen buttons were pushed off the right edge of the bar, because Safari reserves space for the hidden volume slider.
+- On phones, the player could be slightly wider than the screen, cutting off its right edge.
+
 ## 0.23.0
 New:
 - **A loading screen instead of a blank page.** When the player's video code (hls.js, about 600 KB, downloaded once and then kept by the browser) takes a moment, the page now shows the lecture's title, how much has been downloaded, a tip about the player, and a "Use the original player now" button. On a slow connection it also says how long it has waited and that the original player opens by itself after 20 seconds. Before, the page stayed blank until the player appeared.
