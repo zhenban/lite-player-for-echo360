@@ -174,22 +174,37 @@ class SlideDeckController {
   // op({ files, fixes }) changes the record in place: applied here now, then to the stored
   // record in one transaction. Another tab may have changed it meanwhile (added a file, made
   // a correction), so this tab's copy is never written back whole; if the stored files
-  // differ afterwards, this tab takes them over.
-  changeRecord(op) {
+  // differ afterwards, this tab takes them over. `stored(old, out, mid)`, when given, changes
+  // the PDF files and their lists of users (deckfile:, deckref:) in the same transaction:
+  // `old` holds the deckref: entries of `hashes`. Rejects when it could not be written.
+  async changeRecord(op, hashes, stored) {
     op(this);
-    if (!this.lesson.mediaId) return Promise.resolve();
-    return idbCache.update(this.key, (rec) => {
-      const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
-      op(st);
-      return { files: st.files, fixes: st.fixes };
-    }).then((rec) => {
-      if (!rec || this.ac.signal.aborted) return;
-      this.fixes = rec.fixes;
-      if (JSON.stringify(rec.files) !== JSON.stringify(this.files)) {
-        this.files = rec.files;
-        this.reload();
+    const mid = this.lesson.mediaId;
+    if (!mid && !stored) return;
+    const keys = (mid ? [this.key] : []).concat((hashes || []).map((h) => 'deckref:' + h));
+    const out = await idbCache.updateMany(keys, (old) => {
+      const next = {};
+      if (mid) {
+        const rec = old[this.key];
+        const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
+        op(st);
+        next[this.key] = { files: st.files, fixes: st.fixes };
       }
-    }).catch((e) => log.warn('slide files:', e));
+      if (stored) stored(old, next, mid);
+      return next;
+    });
+    const rec = out && mid && out[this.key];
+    if (!rec || this.ac.signal.aborted) return;
+    this.fixes = rec.fixes;
+    if (JSON.stringify(rec.files) !== JSON.stringify(this.files)) {
+      this.files = rec.files;
+      this.reload();
+    }
+  }
+
+  // A change of the corrections only: a failure is logged.
+  changeFixes(op) {
+    this.changeRecord(op).catch((e) => log.warn('slide files:', e));
   }
 
   // Adds PDF files (from a drop or a file picker). Returns how many were PDFs.
@@ -198,48 +213,50 @@ class SlideDeckController {
     if (!pdfs.length) return 0;
     telemetry.use('pdfAdd');
     const added = [];
+    const blobs = new Map();
     for (const f of pdfs) {
       const buf = await f.arrayBuffer();
       const hash = await sha256Hex(buf);
       if (this.files.some((x) => x.hash === hash) || added.some((x) => x.hash === hash)) continue;
-      // The file must really be stored (a full disk would otherwise lose it silently on
-      // the next visit); the reference list changes in one transaction (another tab may
-      // add or remove the same file at the same time).
-      try {
-        await idbCache.putStrict('deckfile:' + hash, new Blob([buf], { type: 'application/pdf' }));
-        const mid = this.lesson.mediaId;
-        await idbCache.update('deckref:' + hash, (refs) => (Array.isArray(refs) ? (refs.includes(mid) ? refs : refs.concat(mid)) : [mid]));
-      } catch (e) {
-        this.state = 'error';
-        this.error = tr('deckSaveFailed', { name: f.name, msg: (e && e.message) || e });
-        this.onChange();
-        throw e;
-      }
       added.push({ hash, name: f.name });
+      blobs.set(hash, new Blob([buf], { type: 'application/pdf' }));
     }
-    await this.changeRecord((st) => { for (const a of added) if (!st.files.some((x) => x.hash === a.hash)) st.files.push(a); });
+    // The files, their lists of users and this recording's list in one transaction: another
+    // tab removing the same file from its recording cannot delete it in between. The files
+    // must really be stored (a full disk would otherwise lose them silently on the next visit).
+    try {
+      if (added.length) {
+        await this.changeRecord((st) => { for (const a of added) if (!st.files.some((x) => x.hash === a.hash)) st.files.push(a); },
+          added.map((a) => a.hash), (old, next, mid) => {
+            for (const a of added) {
+              const refs = old['deckref:' + a.hash];
+              next['deckfile:' + a.hash] = blobs.get(a.hash);
+              next['deckref:' + a.hash] = Array.isArray(refs) ? (refs.includes(mid) ? refs : refs.concat(mid)) : [mid];
+            }
+          });
+      }
+    } catch (e) {
+      this.files = this.files.filter((x) => !added.some((a) => a.hash === x.hash));
+      this.state = 'error';
+      this.error = tr('deckSaveFailed', { name: added.map((a) => a.name).join(tr('sepList')), msg: (e && e.message) || e });
+      this.onChange();
+      throw e;
+    }
     await this.reload();
     return pdfs.length;
   }
 
+  // The file itself is deleted when no other recording uses it, in the same transaction as
+  // this recording's list (no other tab can add itself in between).
   async removeFile(hash) {
     const prefix = pageKeyPrefix(hash);
     await this.changeRecord((st) => {
       st.files = st.files.filter((f) => f.hash !== hash);
       st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
-    });
-    // The file itself is deleted when no other recording uses it.
-    // In one transaction: drop this recording from the file's users and, if it was the
-    // last one, the file itself (no other tab can add itself in between).
-    const mid = this.lesson.mediaId;
-    await idbCache.tx('readwrite', (os) => {
-      const req = os.get('deckref:' + hash);
-      req.onsuccess = () => {
-        const refs = (Array.isArray(req.result) ? req.result : []).filter((m) => m !== mid);
-        if (refs.length) os.put(refs, 'deckref:' + hash);
-        else { os.delete('deckref:' + hash); os.delete('deckfile:' + hash); }
-      };
-      return req;
+    }, [hash], (old, next, mid) => {
+      const refs = (Array.isArray(old['deckref:' + hash]) ? old['deckref:' + hash] : []).filter((m) => m !== mid);
+      if (refs.length) next['deckref:' + hash] = refs;
+      else { next['deckref:' + hash] = undefined; next['deckfile:' + hash] = undefined; }
     }).catch((e) => log.warn('slide file removal:', e));
     await this.reload();
   }
@@ -516,12 +533,12 @@ class SlideDeckController {
   correct(t, value) {
     this.corrections++;
     if (value === null) {
-      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
+      this.changeFixes((st) => { st.fixes = st.fixes.filter((x) => !(x.a <= t && t < x.b)); });
     } else {
       const part = this.correctionPart(t) || this.partAt(t);
       if (!part) return;
       const fix = { a: part.a, b: part.b, page: value === 'none' ? 'none' : this.pages[value].key };
-      this.changeRecord((st) => { st.fixes = st.fixes.filter((x) => x.b <= part.a || x.a >= part.b).concat(fix); });
+      this.changeFixes((st) => { st.fixes = st.fixes.filter((x) => x.b <= part.a || x.a >= part.b).concat(fix); });
     }
     this.decide(true);
     this.onChange();

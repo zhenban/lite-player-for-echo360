@@ -802,7 +802,13 @@ test('review R3: a control reached by keyboard keeps its own keys; after a click
 
 test('review R4: two tabs adding PDFs (or corrections) to one recording keep both', async () => withPage(async (w, m) => {
   const db = new Map();
-  m.idbCache.update = async (k, fn) => { const v = fn(db.get(k)); db.set(k, v); return v; };
+  m.idbCache.updateMany = async (keys, fn) => {
+    const old = {};
+    for (const k of keys) old[k] = db.get(k);
+    const next = fn(old);
+    for (const [k, v] of Object.entries(next)) { if (v === undefined) db.delete(k); else db.set(k, v); }
+    return next;
+  };
   const tab = () => ({ lesson: { mediaId: 'm' }, key: 'deck:m', files: [], fixes: [], ac: { signal: { aborted: false } }, reloads: 0, reload() { this.reloads++; } });
   const a = tab();
   const b = tab();   // opened before A added anything
@@ -815,4 +821,57 @@ test('review R4: two tabs adding PDFs (or corrections) to one recording keep bot
   await change(a, (st) => { st.fixes = st.fixes.concat({ a: 0, b: 10, page: 'none' }); });
   await change(b, (st) => { st.fixes = st.fixes.concat({ a: 20, b: 30, page: 'none' }); });
   assert.equal(db.get('deck:m').fixes.length, 2, 'both corrections kept');
+}));
+
+test('review S4: a PDF added to one recording while another tab removes it from another keeps its file', async () => withPage(async (w, m) => {
+  // Storage over a Map: each call is one transaction (applied at once, after a wait); the
+  // first call of the adding tab lets the removing tab run to its end right after it.
+  const db = new Map();
+  let between = null;
+  const after = async () => { const f = between; between = null; if (f) await f(); };
+  const apply = (next) => { for (const [k, v] of Object.entries(next)) { if (v === undefined) db.delete(k); else db.set(k, v); } };
+  Object.assign(m.idbCache, {
+    get: async (k) => { await tick(); return db.get(k); },
+    putStrict: async (k, v) => { await tick(); db.set(k, v); await after(); },
+    update: async (k, fn) => { await tick(); const v = fn(db.get(k)); if (v === undefined) db.delete(k); else db.set(k, v); await after(); return v; },
+    tx: async (mode, fn) => {
+      await tick();
+      const os = { get: (k) => ({ result: db.get(k) }), put: (v, k) => db.set(k, v), delete: (k) => db.delete(k) };
+      const wrap = { get(k) { const req = os.get(k); queueMicrotask(() => req.onsuccess && req.onsuccess()); return req; }, put: os.put, delete: os.delete };
+      fn(wrap);
+      await tick();
+      await after();
+    },
+    updateMany: async (keys, fn) => {
+      await tick();
+      const old = {};
+      for (const k of keys) old[k] = db.get(k);
+      const next = fn(old);
+      apply(next);
+      await after();
+      return next;
+    },
+  });
+  const tab = (mid) => Object.assign(Object.create(m.SlideDeckController.prototype), {
+    lesson: { mediaId: mid }, files: [], fixes: [], ac: { signal: { aborted: false } }, onChange() {}, async reload() {},
+  });
+  const bytes = new TextEncoder().encode('%PDF-1.4 test');
+  const pdf = { name: 'L.pdf', type: 'application/pdf', arrayBuffer: async () => bytes.buffer.slice(0) };
+  const first = tab('first');
+  await first.addFiles([pdf]);
+  const hash = first.files[0].hash;
+  assert.ok(db.get('deckfile:' + hash), 'stored');
+  assert.deepEqual([...db.get('deckref:' + hash)], ['first']);
+  // The first recording removes its last use while a second recording adds the same file.
+  const second = tab('second');
+  between = () => first.removeFile(hash);
+  await second.addFiles([pdf]);
+  assert.equal(between, null, 'the removal ran in between');
+  assert.deepEqual([...db.get('deck:second').files.map((f) => f.hash)], [hash]);
+  assert.deepEqual([...db.get('deckref:' + hash)], ['second']);
+  assert.ok(db.get('deckfile:' + hash), 'the file of the second recording is still there');
+  // Removing it there too deletes the file and its list.
+  await second.removeFile(hash);
+  assert.equal(db.has('deckfile:' + hash), false);
+  assert.equal(db.has('deckref:' + hash), false);
 }));

@@ -273,6 +273,7 @@ const telemetry = {
   sessions: 0,         // viewings started on this page
   errors: new Map(),   // key -> error event, waiting to be sent
   errorTimer: 0,
+  retries: new Set(),  // timers of requests to be tried again
   batches: {},         // fixed step -> { v, ms, units } of the batch being added up
   timerUs: undefined,  // the timer's step (timerStepUs), once measured
 
@@ -285,10 +286,21 @@ const telemetry = {
     return this.on;
   },
 
-  // Turned on or off in the settings: off stops everything at once.
+  // Turned on or off in the settings: off stops everything at once, retries included.
   setEnabled(on) {
     this.on = !!on;
-    if (!on) { this.errors.clear(); clearTimeout(this.errorTimer); this.errorTimer = 0; }
+    if (!on) {
+      this.errors.clear(); clearTimeout(this.errorTimer); this.errorTimer = 0;
+      for (const t of this.retries) clearTimeout(t);
+      this.retries.clear();
+    }
+  },
+
+  // Read from the settings again right before a request: turned off in another tab, this
+  // one stops too (enabled() keeps what it read, for the frequent calls).
+  consented() {
+    this.on = null;
+    return this.enabled();
   },
 
   // { secret, uid, kv }: made on first use. kv signs batches once registered.
@@ -364,6 +376,7 @@ const telemetry = {
 
   async deliver(id, payload, events, last, again, attempt) {
     try {
+      if (!this.consented()) return;
       const r = await platform.post(TELEMETRY_URL + '/v1/events', payload, TELEMETRY_TIMEOUT_MS, last);
       const data = this.answer(r);
       if (r.status === 200) return;
@@ -379,9 +392,11 @@ const telemetry = {
         }
       }
       if ((r.status === 0 || r.status >= 500) && !last && attempt < TELEMETRY_RETRY_MS.length) {
-        setTimeout(() => {
+        const t = setTimeout(() => {
+          this.retries.delete(t);
           if (!document.hidden && navigator.onLine !== false) this.deliver(id, payload, events, false, again, attempt + 1);
         }, TELEMETRY_RETRY_MS[attempt]);
+        this.retries.add(t);
         return;
       }
       // Given up (a summary sent while the page closes is not waited for: not counted).
@@ -432,6 +447,7 @@ const telemetry = {
         chunk = clamp(Math.round(chunk * TELEMETRY_MINT_SLICE_MS / Math.max(ms, 1)), 100, 1000000);
         if (m.nonce != null || performance.now() - saved > TELEMETRY_MINT_SAVE_MS) { save(); saved = performance.now(); }
       }
+      if (!this.consented()) return;
       const r = await platform.post(TELEMETRY_URL + '/v1/register', JSON.stringify({ uid: id.uid, secret: id.secret, day: m.day, nonce: String(m.nonce) }), TELEMETRY_TIMEOUT_MS);
       const data = this.answer(r);
       if (r.status === 200) {

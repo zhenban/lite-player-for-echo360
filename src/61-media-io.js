@@ -153,6 +153,31 @@ const idbCache = {
       tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     }));
   },
+  // The same for several entries: fn({ key: old }) returns { key: new } (undefined deletes;
+  // keys left out stay as they are, and need not have been read). Resolves to that object;
+  // throws when it could not be written.
+  updateMany(keys, fn) {
+    if (storageLock.frozen) return Promise.resolve(undefined);
+    return this.open().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction('cache', 'readwrite');
+      const os = tx.objectStore('cache');
+      const old = {};
+      let left = keys.length;
+      let next;
+      const write = () => {
+        try { next = fn(old); } catch (e) { tx.abort(); reject(e); return; }
+        for (const [k, v] of Object.entries(next)) { if (v === undefined) os.delete(k); else os.put(v, k); }
+      };
+      for (const k of keys) {
+        const req = os.get(k);
+        req.onsuccess = () => { old[k] = req.result; if (--left === 0) write(); };
+      }
+      if (!keys.length) write();
+      tx.oncomplete = () => resolve(next);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+    }));
+  },
 };
 
 // Background downloads must never compete with playback: turn() resolves only when the

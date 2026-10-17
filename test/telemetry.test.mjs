@@ -659,6 +659,29 @@ test('telemetry: CPU pressure is watched only while playing in a visible tab, wi
   await closeWindow(pg.w);
 });
 
+test('telemetry: turned off, a request waiting to be tried again is not sent; turned off in another tab, nothing more goes either (review S3)', async () => {
+  const pg = page();
+  const p = pg.player();
+  await settle();
+  const t = pg.dev().telemetry;
+  let posts = 0;
+  pg.w.fetch = async () => { posts++; return new pg.w.Response('{}', { status: 503 }); };
+  await t.send([{ k: 'fallback', v: '1.0.0', reason: 'user' }]);
+  assert.equal(posts, 1);
+  assert.equal(t.retries.size, 1, 'a retry is planned');
+  p.menus.telemetryItems()[0].set(false);
+  assert.equal(t.retries.size, 0, 'and cancelled when turned off');
+  // Another tab turns it off: this tab's cached "on" is not trusted for a request.
+  p.menus.telemetryItems()[0].set(true);
+  const id = await t.identity();
+  pg.w.localStorage.setItem('lite-player-for-echo360:prefs', JSON.stringify({ telemetry: false }));
+  await t.deliver(id, t.payload(id, [{ k: 'fallback', v: '1.0.0', reason: 'user' }]), [], false, false, 1);
+  await t.send([{ k: 'fallback', v: '1.0.0', reason: 'user' }]);
+  assert.equal(posts, 1);
+  p.destroy();
+  await closeWindow(pg.w);
+});
+
 test('telemetry: a send that is given up is counted, and told with the viewing', async () => {
   const pg = page();
   const p = pg.player();

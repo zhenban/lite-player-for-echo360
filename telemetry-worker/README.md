@@ -43,34 +43,48 @@ scripts or fingerprints.
   (`SHA-256("lp-mint-v1|" + uid + "|" + day + "|" + nonce)` starts with `MINT_BITS` zero
   bits; `day` is days since 1970-01-01 UTC, within one of the Worker's), and keeps
   `kv = HMAC-SHA-256(secret, "lp-ingest-v1")` in `uid_keys`. The player does the work in
-  ~20 ms idle slices during a viewing. Registering again keeps the first day.
+  ~20 ms idle slices during a viewing. Registering again keeps the first day. A registration
+  costs 2 writes of the daily budget and is refused with 503 when the budget is spent.
 - **Signed batches.** `sig = hex HMAC-SHA-256(kv, ts + "." + batch + "." + hex SHA-256(body))`,
   `batch` 24 random hex digits, `ts` the sender's time in ms. Refused with 401: a `ts` more
   than 10 minutes from the Worker's clock (`{ error: "clock", now }`; the player corrects and
   signs again), an unknown uid (`{ register: true }`), a wrong signature. A batch id already
-  stored (table `batches`, kept a day) is not stored again (`{ duplicate: true }`).
+  stored (table `batches`, kept a day) is not stored again (`{ duplicate: true }`). With
+  `ENFORCE_MINT_POW` on, a user registered without a proof of work (while it was off) gets
+  `{ register: true }` and must register again with one.
 - **Quotas.** Per user and UTC day: 40 new viewings (a viewing already stored that day may be
   updated), 50 errors, 50 switches to the original player; one environment row a day anyway.
-  Events over a quota are dropped.
+  Events over a quota are dropped. Within one batch, the environment rows and the updates of
+  one viewing are written once (the last). Each user also has `USER_DAILY_WRITES` (3,000)
+  writes a day, counted as the budget is and updates included (table `uid_budget`); past
+  them nothing more is stored that day (`{ stored: 0, quota: true }`).
+- **Checked with the writes.** The quotas and the budget are read before the writes, and
+  checked again by the last statement of the same D1 transaction (it inserts into
+  `overdraw`, whose check always fails, when a limit was passed): requests arriving together
+  cannot all pass. Such a request is answered 503 `{ error: "busy" }` with nothing written.
+- **Unsigned rows never replace signed ones.** An unsigned update of an environment row or a
+  viewing stored from a signed batch is ignored.
 - **Daily budget.** `DAILY_WRITE_BUDGET` rows written a day in all, counted as D1 counts them
   (each row plus each index it updates: `WEIGHT` in `src/index.js`), in table `budget`. When
   spent: 503 for unsigned batches and users registered less than 3 days ago; older registered
-  users store only their environment row. Viewing and deleting always work.
+  users store only their environment row, once a day, within `ESTABLISHED_RESERVE` beyond the
+  budget. Viewing and deleting always work (they are limited by address only).
 - **Flags** (`src/plausibility.js`). Values the player cannot produce set a bit in the row's
   `flags` (stored anyway): played longer than open, an analysis longer than the page was
   open, first picture after 2 minutes, slide chapters without a slide source, video data per
   hour outside 20-3000 MB, timings with more than two significant digits.
-- **Cron.** Daily at 03:17 UTC: batch ids older than a day and budget rows older than 30 days
-  are deleted.
+- **Cron.** Daily at 03:17 UTC: batch ids and per-user counts older than a day, and budget
+  rows older than 30 days, are deleted.
 
 Variables (`[vars]` in `wrangler.toml`; `"1"` turns a check from noting into refusing):
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `ENFORCE_AUTH` | `"0"` | refuse unsigned batches (players before 0.25.0) with 401 |
-| `ENFORCE_MINT_POW` | `"0"` | refuse registrations without a valid proof of work with 403 `{ error: "pow", bits }` |
+| `ENFORCE_MINT_POW` | `"0"` | refuse registrations without a valid proof of work with 403 `{ error: "pow", bits }`, and batches of users registered without one with 401 `{ register: true }` |
 | `MINT_BITS` | `"21"` | zero bits the proof of work needs; the player's `TELEMETRY_MINT_BITS` should match (a higher value here makes players do the work again) |
 | `DAILY_WRITE_BUDGET` | `"60000"` | rows written a day (D1's free plan allows 100,000) |
+| `ESTABLISHED_RESERVE` | `"10000"` | writes beyond the budget for the daily environment rows of users registered 3+ days ago |
 
 Rows carry `auth` (1: from a signed batch) and `flags`. `uid_keys.pow_ok` says whether the
 registration had a valid proof of work.

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import vm from 'node:vm';
-import worker, { QUOTA, WEIGHT } from '../telemetry-worker/src/index.js';
+import worker, { QUOTA, USER_DAILY_WRITES, WEIGHT } from '../telemetry-worker/src/index.js';
 import { flagsOf, FLAGS } from '../telemetry-worker/src/plausibility.js';
 import { cleanEvent } from '../telemetry-worker/src/schema.js';
 
@@ -242,11 +242,12 @@ test('anti-abuse: the daily budget stops new and unsigned writers, established u
   await registered(env, fresh);
   env.DB.db.prepare('UPDATE uid_keys SET created_day = ? WHERE uid = ?').run(today() - 3, old.uid);
   const envEv = { k: 'env', v: '1.0.0', cores: 4 };
-  // Within budget: 2 fallbacks (4 each) + env (5) + batch id + budget row = 15.
-  let r = await call(env, '/v1/events', signed(old, [fallback(), fallback(), envEv]));
-  assert.equal(r.data.stored, 3);
-  assert.equal(env.DB.db.prepare('SELECT n FROM budget').get().n, 2 * WEIGHT.fallback + WEIGHT.env + 2);
-  // 15 + 4 sessions (28) + 2 > 30: over.
+  // Two registrations (2 each), then within budget: 2 fallbacks (4 each) + batch id +
+  // budget row + the user's count = 15.
+  let r = await call(env, '/v1/events', signed(old, [fallback(), fallback()]));
+  assert.equal(r.data.stored, 2);
+  assert.equal(env.DB.db.prepare('SELECT n FROM budget').get().n, 2 * 2 + 2 * WEIGHT.fallback + 3);
+  // 15 + 4 sessions (28) + env + 3 > 30: over.
   const big = [session(sid(1)), session(sid(2)), session(sid(3)), session(sid(4)), envEv];
   r = await call(env, '/v1/events', signed(fresh, big));
   assert.equal(r.status, 503);
@@ -256,6 +257,8 @@ test('anti-abuse: the daily budget stops new and unsigned writers, established u
   assert.equal(r.status, 200);
   assert.equal(r.data.stored, 1, 'only the environment row');
   assert.equal(count(env, 'sessions'), 0);
+  // Once a day: the environment row is there, so the next is refused.
+  assert.equal((await call(env, '/v1/events', signed(old, [envEv]))).status, 503);
   // Deleting is never refused for the budget, and removes the registration and batch ids.
   r = await call(env, '/v1/me/delete', { uid: old.uid, secret: old.secret });
   assert.equal(r.status, 200);
@@ -266,6 +269,84 @@ test('anti-abuse: the daily budget stops new and unsigned writers, established u
   // "View my data" shows the registration, without the key.
   const mine = await call(env, '/v1/me', { uid: fresh.uid, secret: fresh.secret });
   assert.deepEqual(mine.data.registration.map((x) => Object.keys(x).sort()), [['created_day', 'pow_ok', 'status']]);
+});
+
+test('anti-abuse: repeated rows in a batch are written once; a user\'s daily writes are limited; past the budget an established user writes once (review S1)', async () => {
+  const env = envOf({ MINT_BITS: '4', ENFORCE_AUTH: '1', ENFORCE_MINT_POW: '1', DAILY_WRITE_BUDGET: '10' });
+  const u = user();
+  const other = user();
+  await registered(env, u);
+  await registered(env, other);
+  env.DB.db.prepare('UPDATE uid_keys SET created_day = ? WHERE uid = ?').run(today() - 3, u.uid);
+  const spent = () => env.DB.db.prepare('SELECT n FROM budget').get().n;
+  const before = spent();
+  for (let i = 0; i < 3; i++) await call(env, '/v1/events', signed(u, Array(25).fill({ k: 'env', v: '1.0.0' })));
+  assert.equal(count(env, 'env'), 1);
+  // Past the budget, one environment row once: WEIGHT.env + batch id + budget + the user's count.
+  assert.equal(spent() - before, WEIGHT.env + 3);
+  assert.equal((await call(env, '/v1/events', signed(other, [fallback()]))).status, 503);
+  // One viewing sent 25 times in a batch is one write.
+  const roomy = envOf({ MINT_BITS: '4' });
+  const v = user();
+  await registered(roomy, v);
+  const r = await call(roomy, '/v1/events', signed(v, Array.from({ length: 25 }, (_, i) => session(sid(1), { playSec: i + 1 }))));
+  assert.equal(r.data.stored, 1);
+  assert.equal(roomy.DB.db.prepare('SELECT play_sec FROM sessions').get().play_sec, 25, 'the last one');
+  // Updates of viewings count towards the user's daily writes; past them nothing more is stored.
+  roomy.DB.db.prepare('UPDATE uid_budget SET n = ?').run(USER_DAILY_WRITES - 5);
+  const capped = await call(roomy, '/v1/events', signed(v, [session(sid(1), { playSec: 99 })]));
+  assert.equal(capped.status, 200);
+  assert.equal(capped.data.stored, 0);
+  assert.equal(roomy.DB.db.prepare('SELECT play_sec FROM sessions').get().play_sec, 25);
+  // The daily cron forgets yesterday's counts and older.
+  roomy.DB.db.prepare('INSERT INTO uid_budget (uid, day, n) VALUES (?, ?, 1)').run(v.uid, today() - 2);
+  await worker.scheduled({ scheduledTime: Date.now() }, roomy);
+  assert.equal(count(roomy, 'uid_budget'), 1);
+});
+
+test('anti-abuse: requests arriving together cannot pass a quota or the budget (review S2)', async () => {
+  const env = envOf({ MINT_BITS: '4', DAILY_WRITE_BUDGET: '150' });
+  const u = user();
+  await registered(env, u);
+  const out = await Promise.all(Array.from({ length: 3 }, () => call(env, '/v1/events', signed(u, Array(25).fill(fallback())))));
+  assert.ok(count(env, 'fallbacks') <= QUOTA.fallback, count(env, 'fallbacks') + ' fallbacks');
+  assert.ok(env.DB.db.prepare('SELECT n FROM budget').get().n <= 150);
+  assert.ok(out.some((x) => x.status === 503 && x.data.error === 'busy'), JSON.stringify(out.map((x) => x.status)));
+  // Nothing of a refused batch stays, its batch id included: sent again, the first read decides.
+  assert.equal(count(env, 'batches'), out.filter((x) => x.status === 200).length);
+  assert.equal(count(env, 'overdraw'), 0);
+});
+
+test('anti-abuse: with the proof of work enforced, a user registered without one registers again before storing (review S5)', async () => {
+  const env = envOf({ MINT_BITS: '4' });
+  const u = user();
+  assert.equal((await call(env, '/v1/register', { uid: u.uid, secret: u.secret })).status, 200);
+  env.ENFORCE_AUTH = '1';
+  env.ENFORCE_MINT_POW = '1';
+  const r = await call(env, '/v1/events', signed(u, [fallback()]));
+  assert.equal(r.status, 401);
+  assert.equal(r.data.register, true);
+  assert.equal(count(env, 'fallbacks'), 0);
+  // The player's answer to { register: true }: registering with a proof.
+  await registered(env, u);
+  assert.equal((await call(env, '/v1/events', signed(u, [fallback()]))).status, 200);
+});
+
+test('anti-abuse: an unsigned update does not replace a signed row; registering counts in the budget and stops when it is spent', async () => {
+  const env = envOf({ MINT_BITS: '4' });
+  const u = user();
+  await registered(env, u);
+  assert.equal(env.DB.db.prepare('SELECT n FROM budget').get().n, 2);
+  await call(env, '/v1/events', signed(u, [session(sid(7), { playSec: 10 }), { k: 'env', v: '1.0.0', cores: 4 }]));
+  await call(env, '/v1/events', { uid: u.uid, events: [session(sid(7), { playSec: 9999 }), { k: 'env', v: '1.0.0', cores: 64 }] });
+  assert.deepEqual({ ...env.DB.db.prepare('SELECT play_sec, auth FROM sessions').get() }, { play_sec: 10, auth: 1 });
+  assert.deepEqual({ ...env.DB.db.prepare('SELECT cores, auth FROM env').get() }, { cores: 4, auth: 1 });
+  const full = envOf({ MINT_BITS: '4', DAILY_WRITE_BUDGET: '3' });
+  await registered(full, user());
+  const day = today(), late = user();
+  const r = await call(full, '/v1/register', { uid: late.uid, secret: late.secret, day, nonce: mint(late.uid, day, 4) });
+  assert.equal(r.status, 503);
+  assert.equal(count(full, 'uid_keys'), 1);
 });
 
 test('anti-abuse: the budget weights are one write for the row and one per index of its table', () => {

@@ -47,6 +47,7 @@ crons = ["17 3 * * *"]
 # Against false data (README.md, "Abuse"). "1" turns a check from noting into refusing.
 [vars]
 ENFORCE_AUTH = "0"           # refuse unsigned batches (players before 0.25.0)
-ENFORCE_MINT_POW = "0"       # refuse registrations without a valid proof of work
+ENFORCE_MINT_POW = "0"       # refuse registrations without a valid proof of work, and batches of users registered without one
 MINT_BITS = "21"             # zero bits the proof of work needs (README.md, "Abuse")
 DAILY_WRITE_BUDGET = "60000" # rows written a day (D1 counts index entries too), of D1's 100,000
+ESTABLISHED_RESERVE = "10000" # beyond the budget: users registered 3+ days ago still store their daily environment row

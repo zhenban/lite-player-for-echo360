@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.2
+Fixes from an independent security review:
+- **Turning usage data off now stops every request at once.** Before, a request that had failed and was waiting to be tried again (30 seconds or 2 minutes later) was still sent after you turned usage data off. Turning it off in one tab now also stops other open tabs before their next request.
+- **PDF files are no longer lost between tabs.** If one tab added a PDF to a recording while another tab removed the same PDF from a different recording, the file could be deleted, leaving the first recording with an attachment that would not open. Adding and removing a PDF now each happen in one step.
+- The usage-data server is harder to overload. Repeated rows in one batch count once, each anonymous ID has a daily write limit, and requests arriving together can no longer get past the limits. Once the registration check is enforced, an ID registered without it registers again. Nothing changes in what is sent.
+
 ## 0.25.1
 New:
 - Usage data also says which of the two standard forms of the video the browser could decode when it read the slides from the video frames. This shows how many viewers need the form iPhone Safari needs.
