@@ -36,6 +36,12 @@ export default [
     rules: { ...rules, 'no-redeclare': 'off' },
   },
   {
+    // The extension's own parts (the player itself is src/).
+    files: ['extension/**/*.js'],
+    languageOptions: { ecmaVersion: 2023, sourceType: 'script', globals: { ...globals.browser, ...globals.serviceworker, ...globals.webextensions } },
+    rules,
+  },
+  {
     files: ['telemetry-worker/src/**/*.js'],
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.serviceworker } },
     rules,

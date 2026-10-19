@@ -199,7 +199,9 @@ class NotesPane {
       try {
         await this.api.updateNote(e, item, text);
         item.text = text;
-        this.editing = null;
+        // Edited further while it was saved: still being edited, with that text.
+        if (area.value.trim() === text) this.editing = null;
+        else save.disabled = false;
         this.showError('');
         this.changed();
       } catch (err) { save.disabled = false; this.fail(err); }
@@ -228,7 +230,8 @@ class NotesPane {
     this.addBtn.disabled = true;
     try {
       const note = await this.api.addNote(e, { text, time: this.p.video.currentTime, num: this.count('note') + 1 });
-      this.textarea.value = '';
+      // Only what was sent goes: text typed while it was on its way stays.
+      if (this.textarea.value.trim() === text) this.textarea.value = '';
       this.items.push(note);
       this.sort();
       this.showError('');
@@ -404,9 +407,10 @@ class NotesPane {
     })));
     const all = el('button.pbtn', { text: tr('exportCourse') });
     all.addEventListener('click', guard(() => busy(all, async () => {
-      const n = await ex.course((k, total) => { all.textContent = tr('exportCourseProgress', { k: k + 1, n: total }); });
-      all.textContent = tr('exportCourse');
-      this.p.toast(n ? tr('exportedCourse', { n }) : tr('exportedNothing'));
+      let r;
+      // Back to its name however it ends (it showed the progress).
+      try { r = await ex.course((k, total) => { all.textContent = tr('exportCourseProgress', { k: k + 1, n: total }); }); } finally { all.textContent = tr('exportCourse'); }
+      this.p.toast(r.failed ? tr('exportedCoursePartial', { n: r.files, m: r.failed, file: tr('exportNotReadFile') }) : r.files ? tr('exportedCourse', { n: r.files }) : tr('exportedNothing'));
     })));
     const backup = el('button.pbtn', { text: tr('backupMake') });
     backup.addEventListener('click', guard(() => busy(backup, async () => {

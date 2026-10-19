@@ -327,7 +327,9 @@ class SlideDeckController {
       // Files in another language need the screen read again in that language.
       if (this.ocr && this.ocr.lang !== ocrLanguage(pages.map((x) => x.text))) this.stopReading();
       this.startReading();
-      this.decide(true);
+      // A reader that has finished already (files added or removed after the screen was
+      // read) has no change to come: its state is taken now.
+      if (this.followReader()) this.decide(true);
       this.onChange();
     } catch (e) {
       if (this.ac.signal.aborted || this.job !== job) return;
@@ -375,13 +377,18 @@ class SlideDeckController {
   }
 
   readingChanged() {
-    const r = this.ocr;
-    if (!r) return;
-    if (r.state === 'unavailable') { this.state = 'error'; this.error = r.error; this.onChange(); return; }
-    const finished = r.state === 'done';
-    if (finished && this.state === 'reading') this.state = 'ready';
-    this.decide(finished);
+    if (!this.ocr) return;
+    if (this.followReader()) this.decide(this.ocr.state === 'done');
     this.onChange();
+  }
+
+  // The deck's state from the reader's: an error if it cannot work (false), ready once it
+  // is done.
+  followReader() {
+    const r = this.ocr;
+    if (r && r.state === 'unavailable') { this.state = 'error'; this.error = r.error; return false; }
+    if (r && r.state === 'done' && this.state === 'reading') this.state = 'ready';
+    return true;
   }
 
   // Decides the pages again from everything read so far (at most every FOLLOW_UPDATE_MS

@@ -213,7 +213,9 @@ class DiscussionPane {
       if (this.busy || !body || body.length > MAX_POST_LENGTH) return;
       send.disabled = true;
       this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => {
-        // Sent: the composer goes at once (not after the reload), with its text.
+        // Sent: the composer goes at once (not after the reload), with its text. Text typed
+        // while it was on its way is another reply being written: it stays open with that.
+        if (area.value.trim() !== body) { draft.text = area.value; return; }
         area.value = '';
         this.replyOpen = null;
         this.replyDrafts.delete(q.id);
@@ -238,6 +240,9 @@ class DiscussionPane {
     this.postBtn.disabled = true;
     const time = this.linkTime.checked ? this.p.video.currentTime : null;
     await this.write(e, () => this.api.postComment(e, { body, anonymous: this.anon.checked, time }), () => {
+      // Only what was sent goes: text typed while it was on its way stays (with its choice
+      // of name).
+      if (this.textarea.value.trim() !== body) return;
       this.textarea.value = '';
       this.anon.checked = false;
     });

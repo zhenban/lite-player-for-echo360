@@ -86,6 +86,17 @@ function safeName(s) {
   return String(s || 'lecture').replace(/[\\/:*?"<>|#^[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90) || 'lecture';
 }
 
+// A file name not used yet in the archive, then counted as used: "x.md", "x (2).md", …
+// Compared without case (Windows and macOS see "Lecture.md" and "lecture.md" as one file).
+function uniqueName(name, taken) {
+  const dot = name.lastIndexOf('.');
+  const [stem, ext] = dot > name.lastIndexOf('/') ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  let out = name;
+  for (let n = 2; taken.has(out.toLowerCase()); n++) out = stem + ' (' + n + ')' + ext;
+  taken.add(out.toLowerCase());
+  return out;
+}
+
 // A tag as a Markdown / Obsidian tag: no spaces or punctuation.
 function mdTag(name) {
   const s = String(name).trim().replace(/[\s,.;:!?'"()[\]{}#]+/g, '-').replace(/^-+|-+$/g, '');
@@ -139,6 +150,7 @@ class Exporter {
     const items = p.notes ? p.notes.items.filter((x) => x.type !== 'flag') : [];
     const base = (lessonDate(l.lessonId) ? lessonDate(l.lessonId) + ' ' : '') + safeName(l.title);
     const files = [];
+    const taken = new Set([(base + '.md').toLowerCase()]);
     const pics = new Map();   // page index -> file name
     let picture = null;
     const deck = p.deck;
@@ -148,7 +160,8 @@ class Exporter {
         const i = deck.pageAt(x.time);
         if (i < 0 || pics.has(i)) continue;
         const pg = deck.pages[i];
-        const name = base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png';
+        // Two PDFs with one name: their pictures still get a name each.
+        const name = uniqueName(base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png', taken);
         const c = await deck.render(i, 1600, true);
         const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
         files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
@@ -167,13 +180,17 @@ class Exporter {
     return { notes: items.length, pictures: files.length - 1 };
   }
 
-  // Every recording of the course with notes or bookmarks, one Markdown file each.
+  // Every recording of the course with notes or bookmarks, one Markdown file each. Returns
+  // { files, failed }: recordings exported, and recordings whose notes could not be read
+  // (listed in a file of the archive); throws when none could be read.
   async course(onProgress) {
     const p = this.p;
     const section = p.lesson.sectionId;
     if (!section) throw new Error('no course');
     const list = (await fetchSyllabus(section)).map((x) => x.lesson).filter((x) => x && x.lesson && x.hasVideo);
     const files = [];
+    const taken = new Set();
+    const failed = [];
     const tagStore = new TagStore({ sectionId: section, mediaId: null });
     await tagStore.load();
     for (let k = 0; k < list.length; k++) {
@@ -181,22 +198,28 @@ class Exporter {
       if (onProgress) onProgress(k, list.length);
       const lid = x.lesson.id;
       const mid = x.medias && x.medias[0] && x.medias[0].id;
+      const title = x.lesson.name || (x.medias && x.medias[0] && x.medias[0].title) || lid;
       let items = [];
-      try { items = await new Echo360Api({ lessonId: lid, mediaId: mid }).notes(); } catch (e) { continue; }
+      // Not read (signed out, no connection): not the same as no notes.
+      try { items = await new Echo360Api({ lessonId: lid, mediaId: mid }).notes(); } catch (e) { failed.push({ title, lid }); continue; }
       if (!items.length) continue;
       const map = mid ? (await idbCache.get('tagmap:' + mid)) || {} : {};
       const tagsOf = (id) => tagStore.tags.filter((g) => (map[id] || []).includes(g.id));
       items.sort((a, b) => (a.time == null ? -1 : a.time) - (b.time == null ? -1 : b.time));
-      const title = x.lesson.name || x.medias[0].title || lid;
       const md = lectureMarkdown({ title, date: lessonDate(lid), url: lessonPageUrl(lid), items, tagsOf });
-      files.push({ name: (lessonDate(lid) ? lessonDate(lid) + ' ' : '') + safeName(title) + '.md', data: new TextEncoder().encode(md) });
+      // Same names (two recordings on one day with one title): numbered.
+      files.push({ name: uniqueName((lessonDate(lid) ? lessonDate(lid) + ' ' : '') + safeName(title) + '.md', taken), data: new TextEncoder().encode(md) });
     }
-    if (!files.length) return 0;
-    // Same names (two recordings on one day with one title): number them.
-    const seen = new Map();
-    for (const f of files) { const n = seen.get(f.name) || 0; seen.set(f.name, n + 1); if (n) f.name = f.name.replace(/\.md$/, ' (' + (n + 1) + ').md'); }
+    if (failed.length && !files.length) throw new Error(tr('exportCourseUnread', { n: failed.length }));
+    if (!files.length) return { files: 0, failed: 0 };
+    const exported = files.length;
+    if (failed.length) {
+      const missing = failed.map((f) => '- [' + f.title.replace(/[[\]]/g, '') + '](' + lessonPageUrl(f.lid) + ')' + (lessonDate(f.lid) ? ' ' + lessonDate(f.lid) : '')).join('\n');
+      const name = uniqueName(tr('exportNotReadFile') + '.md', taken);
+      files.unshift({ name, data: new TextEncoder().encode('# ' + tr('exportNotReadFile') + '\n\n' + tr('exportNotReadText') + '\n\n' + missing + '\n') });
+    }
     platform.save(makeZip(files), safeName(p.lesson.courseName || 'course') + ' notes.zip');
-    return files.length;
+    return { files: exported, failed: failed.length };
   }
 }
 

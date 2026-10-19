@@ -97,14 +97,18 @@ export function plainMessage(s) {
   return out || null;
 }
 
+// Echo360's sites (03-common.js SITE_REGIONS): Asia-Pacific, the US, the UK and Europe, Canada.
+const SITES = ['au', 'us', 'uk', 'ca'];
+
 // [field in the event, column, check]
 export const KINDS = {
   env: [
     ['v', 'version', text(VERSION, 11)],
+    ['site', 'site', oneOf(SITES)],
     ['browser', 'browser', oneOf(['Chrome', 'Edge', 'Firefox', 'Safari', 'Opera', 'other'])],
     ['browserV', 'browser_v', int(1, 999)],
     ['os', 'os', oneOf(['Windows', 'macOS', 'Linux', 'ChromeOS', 'Android', 'iOS', 'other'])],
-    ['manager', 'manager', oneOf(['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay', 'other', 'none'])],
+    ['manager', 'manager', oneOf(['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay', 'extension', 'other', 'none'])],
     ['managerV', 'manager_v', text(/^[\w.-]+$/, 20)],
     ['lang', 'lang', text(/^[a-z]{2}$/, 2)],
     ['browserLang', 'browser_lang', text(/^[a-z]{2,3}$/, 3)],
@@ -138,6 +142,8 @@ export const KINDS = {
   session: [
     ['sid', 'sid', text(SID, 16)],
     ['v', 'version', text(VERSION, 11)],
+    ['site', 'site', oneOf(SITES)],
+    ['framed', 'framed', bool],
     ['playSec', 'play_sec', int(0, 86400)],
     ['openSec', 'open_sec', int(0, 7 * 86400)],
     ['longTasksPerMin', 'long_tasks_pm', num(0, 10000)],
@@ -242,6 +248,8 @@ export const KINDS = {
   fallback: [
     ['v', 'version', text(VERSION, 11)],
     ['reason', 'reason', oneOf(FALLBACK_REASONS)],
+    ['site', 'site', oneOf(SITES)],
+    ['framed', 'framed', bool],
     ['frontend', 'frontend', text(/^[\w.,-]+$/, 160)],
     ['injectState', 'inject_state', oneOf(READY_STATES)],
   ],

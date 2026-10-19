@@ -64,6 +64,7 @@ function parseMediaPlaylist(text, base) {
       const r = range ? parseRange(range, url) : { offset: 0, length: null };
       out.segments.push({ start: t, dur, url, offset: r.offset, length: r.length });
       t += dur;
+      if (t > MEDIA_MAX_SEC) throw new Error('playlist too long (' + Math.round(t / 3600) + ' h)');
       range = null;
     }
   }

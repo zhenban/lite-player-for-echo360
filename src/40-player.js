@@ -75,6 +75,7 @@ class LitePlayer {
     this.clock = new Stream(this.video, (f) => this.onClockFatal(f));
     this.follower = new Stream(this.fvideo, (f) => (f.auth ? this.recoverAccess(this.follower, () => this.onFollowerFatal()) : this.onFollowerFatal()));
     this.followerPos = -1;
+    this.hold = null;          // Disposer of a held follower (holdFollower), or null
     for (const st of [this.clock, this.follower]) {
       st.onLevel = () => { if (!this.destroyed) this.quality.levelChanged(); };
       // Refused but still retrying: renew in the background (once at a time).
@@ -297,6 +298,51 @@ class LitePlayer {
     this.renderPlay();
   }
 
+  // Which element shows in which place. While the follower is held (holdFollower), it
+  // keeps the place the reloading clock will take.
+  assignSlots() {
+    const pdfView = this.$('.pdfview');
+    const held = !!this.hold;
+    if (this.pdfMode) {
+      const pdfFirst = !!this.prefs.pdfFirst;
+      const videoSlot = pdfFirst ? 'secondary' : 'primary';
+      this.video.dataset.slot = held ? 'off' : videoSlot;
+      this.fvideo.dataset.slot = held ? videoSlot : 'off';
+      pdfView.dataset.slot = pdfFirst ? 'primary' : 'secondary';
+    } else {
+      const clockIsPrimary = !held && (this.clockPos === this.primaryPos || this.layout === 'single');
+      this.video.dataset.slot = clockIsPrimary ? 'primary' : 'secondary';
+      this.fvideo.dataset.slot = clockIsPrimary ? 'secondary' : 'primary';
+      pdfView.dataset.slot = 'off';
+    }
+  }
+
+  // The clock is reloading with the view the follower shows (single view or the PDF after a
+  // swap): the follower stops on its picture and stays in place instead of a black moment,
+  // until the clock has a picture at its position; then only the clock plays.
+  holdFollower() {
+    if (this.sync) { this.sync.dispose(); this.sync = null; }
+    this.fvideo.pause();
+    const d = this.hold = this.d.child();
+    const arrived = () => {
+      if (this.hold !== d || this.clock.starting || this.video.readyState < 2) return;
+      this.endHold();
+      this.assignSlots();
+    };
+    for (const type of ['canplay', 'seeked', 'playing']) d.listen(this.video, type, arrived);
+    // Never arrives (an error, offline): not held for ever.
+    d.timeout(() => { if (this.hold === d) { this.endHold(); this.assignSlots(); } }, HOLD_FOLLOWER_MAX_MS);
+  }
+
+  // Ends a hold (holdFollower): the follower is released.
+  endHold() {
+    const d = this.hold;
+    if (!d) return;
+    this.hold = null;
+    d.dispose();
+    this.dropFollower();
+  }
+
   ensureFollower() {
     const pos = this.sources.findIndex((s, i) => i !== this.clockPos);
     if (pos < 0) return;
@@ -332,29 +378,23 @@ class LitePlayer {
     const pdf = this.pdfMode;
     for (const l of LAYOUTS) st.classList.toggle('l-' + l, l === layout);
     for (const c of CORNERS) st.classList.toggle('c-' + c, c === this.prefs.corner);
+    this.endHold();
     // One video plays when it is shown alone or next to the PDF.
     if (layout === 'single' || pdf) {
-      this.dropFollower();
       if (this.clockPos !== this.primaryPos && this.sources[this.primaryPos].av) {
+        // The follower already shows that view: its picture stays until the clock has one.
+        const hold = this.followerPos === this.primaryPos && this.fvideo.readyState >= 2;
         // Asked of the stream, not the element: a switch made while the previous one is
         // still loading would otherwise read 0 (and paused) and start over.
         this.loadClock(this.primaryPos, this.clock.position(), this.clock.playing());
+        if (hold) this.holdFollower(); else this.dropFollower();
+      } else {
+        this.dropFollower();
       }
     } else {
       this.ensureFollower();
     }
-    const pdfView = this.$('.pdfview');
-    if (pdf) {
-      const pdfFirst = !!this.prefs.pdfFirst;
-      this.video.dataset.slot = pdfFirst ? 'secondary' : 'primary';
-      this.fvideo.dataset.slot = 'off';
-      pdfView.dataset.slot = pdfFirst ? 'primary' : 'secondary';
-    } else {
-      const clockIsPrimary = this.clockPos === this.primaryPos || layout === 'single';
-      this.video.dataset.slot = clockIsPrimary ? 'primary' : 'secondary';
-      this.fvideo.dataset.slot = clockIsPrimary ? 'secondary' : 'primary';
-      pdfView.dataset.slot = 'off';
-    }
+    this.assignSlots();
     this.renderLayoutButton();
     if (this.reader) {
       this.reader.setActive('main', pdf);
@@ -862,6 +902,9 @@ class LitePlayer {
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
     d.listen($('.fwd'), 'click', () => this.seek(this.clock.position() + 10));
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
+    // In a frame whose page does not allow it, neither the player nor a video can be
+    // fullscreen: said on the button instead of a click that does nothing.
+    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') setUnavailable($('.fs'), tr('fullscreenBlocked'), tr('fullscreenKey'));
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
     const onFullscreen = () => {

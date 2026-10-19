@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Lite Player for Echo360",
+  "version": "{{VERSION}}",
+  "version_name": "{{VERSION_NAME}}",
+  "description": "Unofficial, lightweight player for Echo360 lecture recordings: low CPU use, both views side by side, slide chapters.",
+  "icons": { "16": "icon-16.png", "32": "icon-32.png", "48": "icon-48.png", "128": "icon-128.png" },
+  "minimum_chrome_version": "111",
+  "permissions": ["storage"],
+  "host_permissions": ["{{TELEMETRY_URL}}/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": "{{MATCHES}}", "js": ["bridge.js"], "run_at": "document_start", "world": "ISOLATED", "all_frames": true },
+    { "matches": "{{MATCHES}}", "js": ["player.js"], "run_at": "document_start", "world": "MAIN", "all_frames": true }
+  ],
+  "web_accessible_resources": [{ "resources": ["lib/*"], "matches": "{{SITES}}" }]
+}

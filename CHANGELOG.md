@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0
+New:
+- **A Chrome and Edge extension (1.0 beta).** The same player, with nothing else to install first: for now from the zip attached to this release (Load unpacked), soon from the Chrome Web Store. It ships its libraries (and English text recognition) inside the package. Use either the extension or the userscript, not both: if both are installed, only one player starts.
+- **Echo360's other sites.** The player now also runs on `echo360.org` (US), `echo360.org.uk` (UK and Europe) and `echo360.ca` (Canada). They run the same application as `echo360.net.au`, where it is tested; please report anything that looks wrong.
+- **Inside a learning system's page.** When a course site shows the recording in its own page, the player now runs there too. The floating window isn't offered there (browsers don't allow it), and if the page doesn't allow full screen, the button says why.
+- Usage data also says which of Echo360's sites it was on (two letters, never the address) and whether inside another site's page (never which one).
+
+Fixes:
+- **Switching to a single view after swapping the views no longer flashes black.** The picture you were looking at stays until the reloaded video has its own.
+- **Typing is no longer lost while a note, edit, post or reply is being saved.** If you kept typing while it was saved, the box was cleared (or closed) and the new text was gone. Now it stays.
+- **Exporting a whole course says what it couldn't export.** Before, a recording that could not be read was left out silently. Now the export lists it in a "Not exported" file and says so; if nothing could be read, it says that instead of saying there were no notes.
+- In an export, two recordings with the same date and title, or slide pictures from two PDFs with the same name, no longer overwrite each other.
+- Dropping a PDF that had been read before could leave the Slides tab waiting forever. Fixed.
+- A playlist claiming to be longer than a day is refused, instead of making the background analyses work through it.
+
 ## 0.25.3
 Fixes from a second review of the player:
 - **Holding B or U no longer adds and removes a bookmark (or a "didn't understand" mark) on Echo360 again and again.** A held key now acts once. Keys that step (seek, volume, zoom, speed, chapters) still repeat while held.

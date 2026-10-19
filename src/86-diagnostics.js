@@ -37,7 +37,7 @@ function startupLines() {
 // What "Copy diagnostics" in the notice copies when the original player is used (our
 // player, and its diagnostics, are not there).
 function startupDiagnosticsText() {
-  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Script manager: ' + platform.manager(),
+  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Runs in: ' + platform.manager(),
     'Page: ' + location.hostname, ...startupLines(), '', 'Recent warnings and errors:'];
   if (!eventLog.length) lines.push('  none');
   for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
@@ -51,7 +51,7 @@ function diagnosticsText(p) {
   const add = (k, val) => lines.push(k + ': ' + val);
   add('Lite Player for Echo360', VERSION);
   add('Browser', browserName());
-  add('Script manager', platform.manager());
+  add('Runs in', platform.manager());
   add('Page', location.hostname + ' (lesson page)');
   lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));

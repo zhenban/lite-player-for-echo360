@@ -41,8 +41,12 @@ jobs:
         run: |
           awk -v v="## $(cat VERSION)" '$0 == v {on = 1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md
           test -s notes.md
-          printf '\n---\nInstall: open the attached `lite-player-for-echo360.user.js` with Tampermonkey or Violentmonkey installed.\n' >> notes.md
+          printf '\n---\nInstall: open the attached `lite-player-for-echo360.user.js` with Tampermonkey or Violentmonkey installed. Or the Chrome extension (beta): unzip `lite-player-for-echo360-extension-%s.zip` and load the folder in `chrome://extensions` (Developer mode, Load unpacked). Use one or the other, not both.\n' "$(cat VERSION)" >> notes.md
+      - name: The Chrome extension
+        run: |
+          npm run build-extension
+          cp dist-extension.zip "lite-player-for-echo360-extension-$(cat VERSION).zip"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" dist/lite-player-for-echo360.user.js --title "Lite Player for Echo360 $TAG" --notes-file notes.md --verify-tag
+        run: gh release create "$TAG" dist/lite-player-for-echo360.user.js "lite-player-for-echo360-extension-$(cat VERSION).zip" --title "Lite Player for Echo360 $TAG" --notes-file notes.md --verify-tag

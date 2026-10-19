@@ -124,6 +124,23 @@ test('start-up: run before the page started its player, the bootstrap is caught 
   await t.close();
 });
 
+test('installed twice (the extension and the userscript): the first copy keeps the page, the second does nothing and says so', async () => {
+  const warned = [];
+  const t = page({
+    setup: (w) => {
+      w.console.warn = (...a) => { warned.push(a.map(String).join(' ')); };
+      w.eval(script);   // the first copy
+    },
+  });
+  await settle(60);
+  assert.equal(t.boot().path, 'intercept');
+  assert.equal(t.calls.length, 0, 'the original player never ran');
+  // Two copies made two players (the second without the id).
+  assert.equal([...t.w.document.querySelectorAll('*')].filter((e) => e.shadowRoot).length, 1, 'one player');
+  assert.ok(warned.some((x) => /another copy \(.+\) already runs on this page/.test(x)), warned.join('\n'));
+  await t.close();
+});
+
 test('start-up: run late on a page whose start-up data is not there: the original player with the reason (the check is not lost)', async () => {
   const t = page({ state: 'complete', started: true, inline: false });
   await settle(60);
@@ -432,6 +449,28 @@ test('fullscreen: the prefixed API where there is no other (iPadOS 15)', async (
     p.toggleFullscreen();
     await settle(10);
     same(t.w.document.webkitFullscreenElement, p.host, 'the player is fullscreen');
+  } finally { await t.close(); }
+});
+
+test('in another site\'s frame that does not allow fullscreen: the button says why and nothing is asked of the browser; no floating window', async () => {
+  let asked = 0;
+  const t = page({
+    setup: (w) => {
+      patchProto(w.Element.prototype, 'requestFullscreen', function () { asked++; return Promise.reject(new Error('not allowed')); });
+      Object.defineProperty(w.document, 'fullscreenEnabled', { value: false, configurable: true });
+      w.documentPictureInPicture = { requestWindow: async () => { throw new Error('not in a frame'); } };
+      Object.defineProperty(w, 'top', { value: {}, configurable: true });
+    },
+  });
+  try {
+    await settle(60);
+    const p = t.player();
+    const fs = p.$('.fs');
+    assert.equal(fs.getAttribute('aria-disabled'), 'true');
+    assert.match(fs.dataset.tip, /not allowed by the site showing this recording/);
+    p.toggleFullscreen();
+    assert.equal(asked, 0);
+    assert.equal(p.menuActions.popout, null, 'no floating window in a frame');
   } finally { await t.close(); }
 });
 

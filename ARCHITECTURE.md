@@ -11,6 +11,12 @@ Lite Player for Echo360 is a userscript: the browser extension that runs userscr
 Tampermonkey) loads one file, `dist/lite-player-for-echo360.user.js`, into Echo360's lesson pages and
 course pages before the page's own scripts run.
 
+The same player is also built as a Chrome extension (`npm run build-extension`): the same
+joined `src/` plus `06-platform-extension.js` runs as a content script
+in the page's world; `extension/` holds the rest (manifest template, the bridge in the
+extension's isolated world, the service worker that sends usage data, icons). If both are
+installed, the first copy on a page keeps it and the other does nothing (`00-boot.js`).
+
 That file is made by `node build.mjs` (or `npm run build`) from the files in `src/`:
 
 - the files are **joined in name order** into one function, so a name declared at the top
@@ -37,7 +43,8 @@ runs immediately must come after what it uses.
 | `02-tuning.js` | Every tuning number (thresholds, sizes, timings) with its unit and why it holds |
 | `03-common.js` | Small shared helpers: `el()` (make an element), `confirmButton`, `makeCanvas`, Echo360 URLs, `mediaDuration`, `fetchSyllabus`, `SITE_HOSTS` |
 | `04-types.js` | Descriptions of the data passed around (JSDoc typedefs; no code) |
-| `05-platform.js` | Everything that depends on how the player is run (userscript now, an extension later): settings storage, the IndexedDB database, where libraries come from and loading them, hls.js, saving a file, the manager's name, sending to the telemetry Worker, the private store for the telemetry secret, and the page's own window (`page`: with any `@grant` the manager's `window` is a wrapper the page does not see). Other files use only `platform` for these; the build refuses direct `localStorage`, `indexedDB`, `import()`, `GM_`, `unsafeWindow` or `Hls` elsewhere (`unsafeWindow` also in `00-boot.js`, which runs before `platform` exists) |
+| `05-platform.js` | Everything that depends on how the player is run (userscript; the extension replaces parts in `06-platform-extension.js`): settings storage, the IndexedDB database, where libraries come from and loading them, hls.js, saving a file, the manager's name, sending to the telemetry Worker, the private store for the telemetry secret, and the page's own window (`page`: with any `@grant` the manager's `window` is a wrapper the page does not see). Other files use only `platform` for these; the build refuses direct `localStorage`, `indexedDB`, `import()`, `GM_`, `unsafeWindow` or `Hls` elsewhere (`unsafeWindow` also in `00-boot.js`, which runs before `platform` exists) |
+| `06-platform-extension.js` | Extension build only: `privateKv` in `chrome.storage.local` and `post` through the service worker, both reached through the bridge (`extension/bridge.js`), which it meets at start-up through a node no page script can reach; libraries from the package (`lib/`). `privateReady` resolves once the private values are read |
 | `10-adapter-echo360.js` | Everything that knows Echo360's lesson page: catching its start-up call, reading it into a `Lesson` |
 | `11-echo360-api.js` | Echo360's data API: notes, bookmarks, flags, discussion; refuses writes without a user action |
 | `15-takeover.js` | Taking over a page whose own player started first: while ours plays, the original's watch reports are stopped at the network layer (`netGuard`: `fetch`, `XMLHttpRequest.prototype`, `Navigator.prototype.sendBeacon`); ours carry `OWN_REQUEST` |

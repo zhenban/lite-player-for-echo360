@@ -338,6 +338,7 @@ test('telemetry: the environment and errors use fields the Worker keeps; error m
   const pg = page();
   const t = pg.dev().telemetry;
   const env = await pg.dev().telemetryEnv();
+  assert.equal(env.site, 'au', 'which of Echo360\'s sites, never the address');
   assertAccepted(JSON.parse(JSON.stringify(env)));
   t.error('slide chapters', new TypeError('could not read "Lecture 5 - Jane Doe.pdf" from https://echo360.net.au/media/G_77/x?sig=abc 404'));
   t.error('slide chapters', new TypeError('could not read "Other.pdf" from https://echo360.net.au/media/G_78/x?sig=abd 403'));

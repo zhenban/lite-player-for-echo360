@@ -1,8 +1,8 @@
 // ===================================================================================
-// Platform: everything that depends on how the player is run. Today that is a userscript
-// (Tampermonkey, Violentmonkey) running in the page; a browser extension built from the
-// same sources will provide its own version of this object. The rest of the code uses
-// only `platform` for these things (the build checks it):
+// Platform: everything that depends on how the player is run: a userscript (Tampermonkey,
+// Violentmonkey) running in the page, or the Chrome extension built from the same sources,
+// which replaces some of these (06-platform-extension.js). The rest of the code uses only
+// `platform` for these things (the build checks it):
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
 //     an extension reads a snapshot before it starts the player)
 //   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
@@ -16,7 +16,8 @@
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
 //   - post: send JSON to the telemetry Worker (87-telemetry.js)
-//   - privateKv: values kept out of the page's reach (the telemetry secret)
+//   - privateKv: values kept out of the page's reach (the telemetry secret); read only after
+//     privateReady (an extension reads them at start-up, asynchronously)
 //   - page: the page's own window, for traps on the page's globals (window.Echo)
 // ===================================================================================
 
@@ -142,6 +143,7 @@ const platform = {
       }
     });
   },
+  privateReady: Promise.resolve(),
   // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
   // it; without one, the page's storage like the settings.
   privateKv: {

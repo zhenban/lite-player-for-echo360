@@ -186,11 +186,11 @@ async function telemetryEnv() {
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
     : /iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
-  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
+  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay', 'extension'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
   const conn = /** @type {any} */ (navigator).connection;
   const env = {
-    k: 'env', v: VERSION, browser, browserV: m ? +m[2] : undefined, os,
+    k: 'env', v: VERSION, site: siteRegion(), browser, browserV: m ? +m[2] : undefined, os,
     manager, managerV: manager !== 'none' && /^[\w.-]{1,20}$/.test(mgr[2] || '') ? mgr[2] : undefined,
     lang: uiLang(), browserLang: (/^[a-z]{2,3}/.exec((navigator.language || '').toLowerCase()) || [])[0],
     touch: matchMedia('(pointer: coarse)').matches,
@@ -308,6 +308,7 @@ const telemetry = {
     if (!this.ids) {
       let p; // read inside the function once it has awaited, so set by then
       this.ids = p = (async () => {
+        await platform.privateReady;
         let secret = platform.privateKv.get(TELEMETRY_SECRET_KEY);
         if (!/^[A-Za-z0-9_-]{43}$/.test(secret || '')) {
           secret = newTelemetrySecret();
@@ -569,7 +570,7 @@ const telemetry = {
 
   fallback(reason) {
     try {
-      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend(), injectState: boot.readyState }]);
+      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, site: siteRegion(), framed: inFrame(), frontend: echoFrontend(), injectState: boot.readyState }]);
     } catch (e) { /* not sent */ }
   },
 
@@ -900,6 +901,8 @@ class UsageSession {
     try { for (const [a, b] of x.played ? x.played() : []) watched += Math.max(0, b - a); } catch (e) { watched = 0; }
     const s = {
       k: 'session', v: VERSION, sid: this.sid,
+      // Which of Echo360's sites, and whether in another page's frame (a learning system).
+      site: siteRegion(), framed: inFrame(),
       // Watching
       fromLoad: this.fromLoad,
       readyMs: Math.round(this.readyMs),

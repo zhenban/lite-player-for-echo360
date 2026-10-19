@@ -6,8 +6,9 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build-extension": "node build.mjs --target extension",
     "test": "node --test --test-concurrency=4 --test-timeout=120000 test/*.test.mjs",
-    "lint": "eslint src test build.mjs eslint.config.mjs telemetry-worker/src",
+    "lint": "eslint src test extension build.mjs eslint.config.mjs telemetry-worker/src",
     "check-dist": "node build.mjs && git diff --exit-code -- dist/",
     "ci": "npm run lint && npm run typecheck && npm test && npm run check-dist",
     "typecheck": "tsc -p .",

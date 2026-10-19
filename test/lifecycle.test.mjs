@@ -9,7 +9,7 @@ import { newWindow, closeWindow, same } from './dom-guard.mjs';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
-const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,platform,'
+const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ocrLanguage,Exporter,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,platform,'
   + 'setPdfLib: (lib) => { pdfjsPromise = Promise.resolve(lib); }';
 
 // The sources in a page of their own; nothing reaches the network.
@@ -136,6 +136,145 @@ test('audit 4: a reply that fails keeps the draft and the error after the list r
   assert.equal(pane.querySelector('.composer.reply textarea').value, 'important unsent draft');
   assert.equal(r.errorEl.hidden, false);
   d.dispose();
+}));
+
+test('codex P3: text typed while a note, an edit, a post or a reply is on its way is kept; only what was sent is cleared', async () => withPage(async (w, m) => {
+  const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+  const type = (area, text) => { area.value = text; area.dispatchEvent(new w.Event('input')); };
+  const d = new m.Disposer();
+  // Notes: a new note, then an edit.
+  const npane = w.document.createElement('div');
+  const p = { video: { currentTime: 3 }, duration: () => 100, updateMarkers() {}, renderBookmarkButton() {}, tags: { tags: [], byId: () => null, of: () => [] }, lesson: {}, sidebar: { has: () => false } };
+  let req = deferred();
+  const sent = [];
+  const napi = {
+    addNote: (e, n) => { sent.push(n.text); return req.promise.then(() => ({ id: 'n' + sent.length, type: 'note', time: n.time, text: n.text, createdAt: '' })); },
+    updateNote: (e, item, text) => { sent.push(text); return req.promise; },
+  };
+  const notes = new m.NotesPane(p, npane, napi, false, d);
+  notes.items = [];
+  notes.visible = true;
+  notes.render();
+  type(notes.textarea, 'first');
+  const adding = notes.addNoteNow({});
+  type(notes.textarea, 'first, and more typed while it was sent');
+  req.resolve();
+  await adding;
+  assert.equal(notes.textarea.value, 'first, and more typed while it was sent');
+  // Unchanged while sending: cleared as before.
+  req = deferred();
+  type(notes.textarea, 'second');
+  const adding2 = notes.addNoteNow({});
+  req.resolve();
+  await adding2;
+  assert.equal(notes.textarea.value, '');
+  notes.render();
+  const card = npane.querySelector('.card[data-id="n1"]');
+  notes.startEdit(notes.items.find((x) => x.id === 'n1'), card);
+  req = deferred();
+  const area = card.querySelector('textarea');
+  type(area, 'edited');
+  card.querySelector('.pbtn.primary').click();
+  await new Promise((r) => setTimeout(r, 0));
+  type(area, 'edited, then edited more');
+  req.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(notes.items.find((x) => x.id === 'n1').text, 'edited', 'what was saved');
+  assert.equal(npane.querySelector('.card[data-id="n1"] textarea').value, 'edited, then edited more', 'still being edited');
+  assert.deepEqual(sent, ['first', 'second', 'edited']);
+
+  // Discussion: a post, then a reply.
+  const q = { id: 'q', body: 'question', author: 'author', replies: [] };
+  let dreq = deferred();
+  const posted = [];
+  const dapi = {
+    discussions: async () => ({ threads: [q], hiddenCount: 0 }),
+    postComment: (e, c) => { posted.push(c.body); return dreq.promise; },
+    reply: (e, id, c) => { posted.push(c.body); return dreq.promise; },
+  };
+  const dpane = w.document.createElement('div');
+  const disc = new m.DiscussionPane({ video: { currentTime: 1 }, duration: () => 100, updateMarkers() {}, opts: {} }, dpane, dapi, d);
+  disc.visible = true;
+  disc.threads = [q];
+  disc.render();
+  type(disc.textarea, 'a post');
+  const posting = disc.post({});
+  type(disc.textarea, 'a post, and a second thought');
+  dreq.resolve();
+  await posting;
+  assert.equal(disc.textarea.value, 'a post, and a second thought');
+  dreq = deferred();
+  disc.replyOpen = 'q';
+  disc.render();
+  type(dpane.querySelector('.composer.reply textarea'), 'a reply');
+  dpane.querySelector('.composer.reply .pbtn.primary').click();
+  type(dpane.querySelector('.composer.reply textarea'), 'a reply, longer');
+  dreq.resolve();
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  const left = dpane.querySelector('.composer.reply textarea');
+  assert.ok(left, 'the composer stays open');
+  assert.equal(left.value, 'a reply, longer');
+  assert.deepEqual(posted, ['a post', 'a reply']);
+  d.dispose();
+}));
+
+// The names in a zip made by makeZip (its local file headers).
+function zipNames(bytes) {
+  const out = [];
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let o = 0; o + 30 <= bytes.length && v.getUint32(o, true) === 0x04034b50;) {
+    const size = v.getUint32(o + 18, true);
+    const nameLen = v.getUint16(o + 26, true);
+    const extra = v.getUint16(o + 28, true);
+    out.push(new TextDecoder().decode(bytes.subarray(o + 30, o + 30 + nameLen)));
+    o += 30 + nameLen + extra + size;
+  }
+  return out;
+}
+
+test('codex P8, P9: a course export inZip recordings it could not read (never "no notes"), and every file in the zip has its own name', async () => withPage(async (w, m) => {
+  const day = (k) => 'G_' + k + '_2026-09-15T16:05:00.000_x';
+  const lessons = [['a', 'Lecture'], ['b', 'Lecture'], ['c', 'Lecture (2)'], ['d', 'lecture'], ['e', 'Broken']];
+  let failing = new Set(['e']);
+  w.fetch = async (url) => {
+    const u = String(url);
+    const json = (data, status = 200) => ({ ok: status < 400, status, type: 'basic', json: async () => data });
+    if (/\/syllabus$/.test(u)) return json({ data: lessons.map(([k, name]) => ({ lesson: { lesson: { id: day(k), name }, hasVideo: true, medias: [{ id: 'm' + k, title: name }] } })) });
+    const k = /G_(\w)_/.exec(decodeURIComponent(u))[1];
+    if (failing.has(k)) return json({ status: 'ko', message: 'unavailable' }, 503);
+    return json({ status: 'ok', data: [{ note: { id: 'n' + k, bookmark: false, text: 'note ' + k, createdAt: '' }, videoContentRef: { content: { timestamp: 1000 } } }] });
+  };
+  const saved = [];
+  m.platform.save = (blob, name) => { saved.push({ blob, name }); };
+  w.Blob = Blob;   // happy-dom's keeps a byte array from the page's realm as its text
+  const ex = new m.Exporter({ lesson: { sectionId: 's', courseName: 'Course' } });
+  const r = await ex.course();
+  assert.equal(saved.length, 1);
+  const inZip = zipNames(new Uint8Array(await saved[0].blob.arrayBuffer()));
+  assert.equal(new Set(inZip.map((x) => x.toLowerCase())).size, inZip.length, 'unique inZip: ' + inZip.join(' | '));
+  assert.equal(inZip.filter((x) => /Lecture/i.test(x)).length, 4, inZip.join(' | '));
+  assert.deepEqual([r.files, r.failed], [4, 1], 'the unread recording is counted as such');
+  assert.ok(inZip.some((x) => /not exported/i.test(x)), 'a file lists what is missing: ' + inZip.join(' | '));
+  // Nothing could be read: an error, not "no notes in this course".
+  failing = new Set(lessons.map(([k]) => k));
+  saved.length = 0;
+  await assert.rejects(ex.course(), /could not read the notes of 5 recordings/i);
+  assert.equal(saved.length, 0);
+}));
+
+test('codex P9: slide pictures from two PDFs of the same name get a name each', async () => withPage(async (w, m) => {
+  w.Blob = Blob;
+  const saved = [];
+  m.platform.save = (blob, name) => { saved.push({ blob, name }); };
+  const pages = [{ file: 'slides.pdf', num: 1 }, { file: 'slides.pdf', num: 1 }];
+  const deck = { pages, pageAt: (t) => (t < 10 ? 0 : 1), render: async (i) => ({ toBlob: (cb) => cb(new Blob([String(i)])) }) };
+  const items = [{ id: 'a', type: 'note', time: 1, text: 'x' }, { id: 'b', type: 'note', time: 20, text: 'y' }];
+  const ex = new m.Exporter({ lesson: { lessonId: 'L', title: 'Lecture' }, notes: { items }, deck, tags: { of: () => [] } });
+  const r = await ex.lecture(true);
+  assert.equal(r.pictures, 2);
+  const inZip = zipNames(new Uint8Array(await saved[0].blob.arrayBuffer()));
+  assert.equal(new Set(inZip).size, inZip.length, inZip.join(' | '));
 }));
 
 test('audit 4b: a note being edited survives a redraw of the list', async () => withPage(async (w, m) => {
@@ -435,6 +574,29 @@ test('review 2 F6: a PDF declaring very many pages is read up to the cap; an ove
   await assert.rejects(deck.addFiles([big]), /Big\.pdf/);
   assert.equal(deck.state, 'error');
   assert.equal(stored, 0);
+  d.dispose();
+}));
+
+test('slide files: added or dropped again after the screen was read, the deck is ready again (not reading for ever)', async () => withPage(async (w, m) => {
+  w.Worker = class { terminate() {} };
+  const doc = { numPages: 1, getPage: async () => ({ view: [0, 0, 100, 75], getTextContent: async () => ({ items: [{ str: 'Hash tables', transform: [1, 0, 0, 1, 0, 70], height: 5 }] }) }) };
+  m.setPdfLib({ PDFWorker: class { destroy() {} }, getDocument: () => ({ promise: Promise.resolve(doc), destroy: async () => {} }) });
+  m.idbCache.get = async () => ({ arrayBuffer: async () => new ArrayBuffer(8) });
+  m.platform.libBlobUrl = async () => 'blob:pdf-worker';
+  const d = new m.Disposer();
+  const deck = new m.SlideDeckController({ lesson: { mediaId: 'test', sources: [] }, video: {}, disposer: d });
+  deck.decide = () => {};
+  deck.files = [{ hash: 'abc', name: 'test.pdf' }];
+  // The screen was read already (earlier in this visit): its reader is done and no change
+  // of it follows.
+  deck.ocr = { state: 'done', lang: m.ocrLanguage(['Hash tables']), source: { index: 1 } };
+  await deck.reload();
+  assert.equal(deck.state, 'ready');
+  // A reader that could not work: the error again, not reading.
+  deck.ocr = { state: 'unavailable', error: 'no reader', lang: deck.ocr.lang, source: { index: 1 } };
+  await deck.reload();
+  assert.equal(deck.state, 'error');
+  assert.equal(deck.error, 'no reader');
   d.dispose();
 }));
 

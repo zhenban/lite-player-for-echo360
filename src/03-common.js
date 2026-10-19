@@ -3,12 +3,26 @@
 // places): building elements, canvases, the site's hosts, Echo360 URLs, durations.
 // ===================================================================================
 
-// Pages this script runs on. Must list the same hosts as the @match lines in meta.txt
-// (the build checks it): a page outside them never loads the script anyway.
-const SITE_HOSTS = ['echo360.net.au'];
+// Pages this script runs on: Echo360's sites for Asia-Pacific, the US, the UK and Europe,
+// and Canada (one application; only the first is tested with real recordings). Must list
+// the same hosts as the @match lines in meta.txt (the build checks it): a page outside
+// them never loads the script anyway.
+const SITE_HOSTS = ['echo360.net.au', 'echo360.org', 'echo360.org.uk', 'echo360.ca'];
+const SITE_REGIONS = ['au', 'us', 'uk', 'ca'];   // in the order of SITE_HOSTS
 
 function isEcho360Host() {
   return SITE_HOSTS.includes(location.hostname);
+}
+
+// Which of Echo360's sites this is ('au', 'us', 'uk', 'ca'), for the usage data: whether
+// the player works on each (never the address).
+function siteRegion() {
+  return SITE_REGIONS[SITE_HOSTS.indexOf(location.hostname)];
+}
+
+// Shown inside another page (a learning system embedding Echo360 in a frame).
+function inFrame() {
+  try { return window.top !== window.self; } catch (e) { return true; }
 }
 
 // An element: el('button.btn.primary', { title: 'x', onclick }, 'text', child, ...).
@@ -191,10 +205,14 @@ function exitFullscreen(doc) {
   return f ? Promise.resolve().then(() => f.call(d)).catch(() => {}) : Promise.resolve();
 }
 // false: elements cannot be made fullscreen here (iPhone: only a video, in the system's
-// own player).
+// own player; a frame whose page does not allow fullscreen).
+function fullscreenAllowed(d) {
+  const on = d.fullscreenEnabled !== undefined ? d.fullscreenEnabled : d.webkitFullscreenEnabled;
+  return on !== false;
+}
 function requestFullscreen(node) {
   const f = node.requestFullscreen || node.webkitRequestFullscreen;
-  if (!f) return false;
+  if (!f || !fullscreenAllowed(node.ownerDocument)) return false;
   Promise.resolve().then(() => f.call(node)).catch(() => {});
   return true;
 }

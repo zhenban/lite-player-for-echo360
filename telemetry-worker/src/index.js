@@ -49,7 +49,7 @@ const BATCH_KEEP_DAYS = 1;   // replayed batches are recognised this long
 const DEFAULTS = { MINT_BITS: 21, DAILY_WRITE_BUDGET: 60000, ESTABLISHED_RESERVE: 10000 };
 // Pages that may call this from a page script (the player uses GM_xmlhttpRequest, which
 // needs no CORS; a development build without it uses fetch from the lecture page).
-const ORIGINS = ['https://echo360.net.au'];
+const ORIGINS = ['https://echo360.net.au', 'https://echo360.org', 'https://echo360.org.uk', 'https://echo360.ca'];
 
 export default {
   async fetch(request, env) {

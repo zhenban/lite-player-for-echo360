@@ -18,7 +18,8 @@ class PopoutController {
     this.d.add(() => { if (this.window) { try { this.window.close(); } catch (e) { /* closed */ } } });
   }
 
-  static supported() { return typeof window.documentPictureInPicture === 'object' && !!window.documentPictureInPicture; }
+  // Browsers open it only from a page of its own, not from a frame in another page.
+  static supported() { return typeof window.documentPictureInPicture === 'object' && !!window.documentPictureInPicture && !inFrame(); }
 
   async toggle() {
     if (this.window) { this.window.close(); return; }

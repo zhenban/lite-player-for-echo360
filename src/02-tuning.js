@@ -31,6 +31,11 @@ const CHAPTER_REFINE_PACE_MS = [1000, 300];   // between refinements (a whole se
 // that claims more is refused before anything is allocated for it (a safety bound, not
 // a measurement: ten times a minute of 60 fps video in one fragment).
 const MP4_MAX_SAMPLES = 36000;
+// Longest recording a media playlist may describe. Its length sizes what the analyses keep
+// per recording (the silence envelope: one byte per 0.1 s), so a broken playlist claiming
+// years is refused rather than believed. A safety bound, not a measurement: lectures run
+// up to about 4 h, a whole-day capture 12 h; this is twice that.
+const MEDIA_MAX_SEC = 24 * 3600;
 // Frames are compared as brightness pictures this size: one pixel is a 2 x 2 block at
 // 360p, 8 x 8 at 720p, so a changed line of slide text changes several pixels.
 const THUMB_W = 160;
@@ -199,6 +204,10 @@ const STREAM_MEDIA_RECOVERIES = 2;     // decoder errors recovered before giving
 const SYNC_TOLERANCE = 0.08;           // seconds of drift between the views that are ignored
 const SYNC_SEEK_AT = 1.0;              // seconds of drift corrected by seeking instead of nudging
 const SYNC_MAX_NUDGE = 0.1;            // max relative rate change while catching up
+// ms the follower's picture stays in place while the clock reloads with its view (single
+// view after a swap), at most: a load that takes longer shows the loading state (a product
+// choice; the reload took 0.3 s with the demo lecture, dev/demo).
+const HOLD_FOLLOWER_MAX_MS = 10000;
 const STALL_CHECK_MS = 2000;           // how often the stall watchdog looks
 const STALL_SEC = 12;                  // playing, not seeking, time unmoved this long: restart loading
 const POSITION_SAVE_EVERY = 5;         // watchdog ticks between saves of the resume position (10 s)

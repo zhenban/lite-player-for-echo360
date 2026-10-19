@@ -3,174 +3,139 @@
 # Lite Player for Echo360
 
 [![CI](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/zhenban/lite-player-for-echo360)](https://github.com/zhenban/lite-player-for-echo360/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/zhenban/lite-player-for-echo360)](https://github.com/zhenban/lite-player-for-echo360/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-**A userscript that plays Echo360 lecture recordings in a light, fast player: far less CPU, both views side by side, slide chapters, a PDF that follows the lecture, captions, notes and more.**
+**Watch Echo360 lecture recordings without the fan noise.** Echo360's own player keeps a whole CPU core busy for as long as the lecture plays: loud fans, a draining battery and a sluggish computer while you take notes. Lite Player replaces it with one that lets the browser play the same video streams itself, with hardware decoding, at about the cost of a plain video file. It also adds the tools you reach for when you study from a recording: both views side by side, slide chapters, a slide PDF that turns its own pages, and a searchable transcript.
 
-![The player: screen and camera side by side, slide chapters in the side panel](docs/screenshot.jpg)
+![Lite Player: screen and camera side by side, switching layouts, slide chapters in the side panel](docs/demo-player.gif)
 
-> **Unofficial.** This project is not affiliated with, endorsed by or supported by Echo360 or UNSW. "Echo360" is used only to say which site the script works with.
-
-The stock player keeps one CPU core busy for the whole lecture (loud fans, drained battery). Lite Player for Echo360 plays the same streams with the browser's own video player, at close to the cost of playing a plain video file. Tested on `echo360.net.au` (Australia); if a page is not recognised, the original player is used automatically.
+Your notes, bookmarks, discussion and viewing progress stay Echo360's own, and the original player is always one click away.
 
 ## Install
 
-1. Install a userscript manager: [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
-   In Chrome or Edge, open the manager's details at `chrome://extensions` and turn on **Allow user scripts** (on older versions, turn on Developer mode).
-2. Install the script: **[lite-player-for-echo360.user.js](https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js)** from the latest release (your manager offers to install it). Each release lists what changed.
-3. Open any Echo360 lecture recording. The browser console (F12) shows `[Lite Player for Echo360] v… active`.
+Two ways to install the same player, with the same features and settings. Use one or the other, not both.
 
-## Supported browsers
+### Chrome or Edge extension (1.0 beta)
 
-- **Supported:** Chrome, Edge and Firefox on computers; Firefox on Android (with Violentmonkey or Tampermonkey).
-- **Best effort:** Safari on iPadOS and iOS (iPhone) 15.4 or later (with a userscript manager such as Stay or Userscripts). 15.4 is the oldest version Echo360's own player runs on; the script itself needs Safari 15. Some managers start the script after the page has started its own player: the script then takes the page over (it stops the original player, carries on where it was, and keeps it from reporting the viewing twice).
-  - On an iPhone, full screen shows the main view in the system's own player (Safari lets only a video go full screen there). Before iOS 17.1 the videos are played by Safari itself, so volume levelling and voice enhancement are off.
-- Older browsers keep the original player, with a note saying why.
+The extension is new, so it is marked beta. It is on its way to the Chrome Web Store; until then, install it from the zip:
 
-If the player's code is slow to download (the first visit on a slow connection), a loading screen shows how far it has got, with a button to use the original player at once. After 20 seconds the original player opens by itself.
+1. Download `lite-player-for-echo360-extension-….zip` from the [latest release](https://github.com/zhenban/lite-player-for-echo360/releases/latest) and unzip it.
+2. Open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode** and click **Load unpacked**. Choose the unzipped folder.
+3. Open any Echo360 lecture recording.
 
-**Settings (⋮) > Storage and diagnostics > Copy diagnostics** (or the button on the note) shows how the script started on the page: *intercept* (before the page's player started), *takeover* or the original player and why.
+An extension loaded from a zip does not update by itself: load the new zip when a release comes out.
 
-## Features
+### Userscript (1.0.0, every supported browser)
 
-- **Low CPU use**: native `<video>` with [hls.js](https://github.com/video-dev/hls.js), using hardware decoding.
-- **Two views at once**: show the screen and the camera side by side (drag the divider) or as picture in picture (drag, resize, snap to corners). You can also show a single view. Swap them with one click or `S`. The two views stay in sync. While the screen shows nothing for a long stretch, the camera is shown alone (with Undo; can be turned off).
-- **Sharp slides**: always the highest quality the network allows, chosen separately for the screen and the camera.
-- **Captions and transcript**: caption overlay in four sizes. A transcript panel follows along with the lecture, lets you click a sentence to jump there, and searches the full text, with matches marked on the progress bar.
-- **Notes, bookmarks, "didn't understand" flags and discussion**: these use the same data as the original player, so everything stays in sync with Echo360. Items with a time are marked on the progress bar.
-- **Audio tools** (off by default): even out the volume (for lecturers without a microphone), clearer voice, mono.
-- **Silence and empty-screen detection**: long pauses (breaks, group work) and stretches with a black or blank screen and nobody speaking are marked on the progress bar, with a Skip button and optional auto-skip. When a recording ends with a long empty part, you are told the lecture is over.
-- **Slide chapters**: slide changes in the screen view are found automatically. A Slides tab lists every slide with a picture and what was said; the progress bar shows chapter boundaries and a preview when you hover. `Shift+←` / `Shift+→` move to the previous / next slide.
-- **Read along with the slides**: drop the lecturer's slide PDF on the player and the Slides tab turns into a PDF reader that follows the lecture, turning to the page being talked about (it reads the text on screen and finds it in the PDF). Page through it yourself at any time; one click brings you back. The PDF stays on your device.
-- **Private tags**: tag notes and bookmarks ("Exam", "Assignment", your own), filter by tag, see tag colours on the progress bar. Tags stay on your device.
-- **Zoom and pan**: zoom into the screen, camera or slide PDF with the wheel or a pinch, drag to move, double-click to go back.
-- **A-B loop**: replay a stretch (a derivation, a sentence) as often as you like.
-- **Watch progress**: what you have watched is shown on the progress bar, and the course page shows a small progress bar for each recording: the parts you watched on this device and where Echo360 says you stopped last time.
-- **Floating window**: pop the whole player out into a small window that stays on top while you code or write.
-- **English or Chinese**: the interface follows the browser's language (Chinese for any `zh` setting, in simplified characters); change it in ⋮ → Language.
-- **Export and backup**: notes, bookmarks and tags as Markdown (with links back to the moment and, with a slide PDF, the slide pictures), for one recording or the whole course. Back up and restore everything that only lives in your browser.
-- **No interruptions**: Echo360's video access is renewed in the background, so long sessions do not stop for a reload.
-- **Resume**: playback continues where you stopped, across devices (uses Echo360's own record).
-- **Honest watch reporting**: viewing progress is reported to Echo360 exactly like the original player, based on what you actually played.
-- **Always a way back**: the "Original player" button switches to Echo360's player at the current position. If anything goes wrong, the script falls back to the original player and turns on a CPU fix for it.
+1. **Get a userscript manager:** [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/). In Chrome or Edge, open `chrome://extensions`, click **Details** on the manager and turn on **Allow user scripts** (on older versions, **Developer mode**).
+2. **Install Lite Player:** open **[lite-player-for-echo360.user.js](https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js)** and click **Install** when the manager asks.
+3. **Open any Echo360 lecture recording.** The new player appears in place of the old one.
 
-### Keyboard shortcuts
+The manager keeps it up to date; each [release](https://github.com/zhenban/lite-player-for-echo360/releases/latest) lists what changed.
 
-| Key | Action |
-|---|---|
-| `Space` / `K` | Play / pause |
-| `←` / `→` | Back / forward 5 s |
-| `J` / `L` | Back / forward 10 s |
-| `↑` / `↓` | Volume |
-| `M` | Mute |
-| `F` | Fullscreen |
-| `S` | Swap views |
-| `C` | Captions |
-| `T` | Transcript |
-| `B` | Bookmark |
-| `U` | "Didn't understand" flag |
-| `G` | Tag the note or bookmark here |
-| `I` / `O` / `X` | Loop start / loop end / end loop |
-| `+` / `-` / `0` | Zoom in / out / whole picture |
-| `W` | Floating window |
-| `E` | Export and backup |
-| `?` | All shortcuts |
-| `Shift+←` / `Shift+→` | Previous / next slide |
-| `P` | Copy the current picture |
-| `A` | Copy what was just said (transcript, last 60 s) |
-| `[` / `]` | Slower / faster |
-| `Esc` | Close menus |
+### Where it works
+
+- **Sites:** tested on `echo360.net.au`. Echo360's sites for the US (`echo360.org`), the UK and Europe (`echo360.org.uk`) and Canada (`echo360.ca`) run the same application, so it runs there too, but it has not been tried there yet: if something looks wrong, please [open an issue](https://github.com/zhenban/lite-player-for-echo360/issues). It also works when a learning system shows the recording inside its own page, except for the floating window, and full screen if that page does not allow it.
+- **Browsers:** Chrome, Edge and Firefox on computers; Firefox on Android (with Tampermonkey or Violentmonkey).
+- **Best effort:** Safari on iPad and iPhone, iOS 15.4 or later, with a userscript manager such as Stay or Userscripts. On an iPhone, full screen shows the main view in the system player, and the audio tools need iOS 17.1.
+- **Otherwise:** a page it doesn't recognise, or a browser too old for it, keeps the original player (with a note saying why). On a slow first visit, a loading screen offers the original player at once and opens it by itself after 20 seconds.
+
+## What you get
+
+### Slides, PDF and transcript
+
+- **Slide chapters.** Slide changes are found automatically. The Slides tab lists every slide with its picture and what was said; the timeline shows chapter marks with a preview on hover; `Shift+←` / `Shift+→` jump between slides.
+- **The slide PDF follows along.** Drop the lecturer's PDF on the player and it turns to the page being talked about, by reading the text on screen. Page ahead whenever you like; one click brings it back. The file never leaves your computer.
+
+  ![Dropping a slide PDF on the player; it follows the lecture page by page](docs/demo-pdf.gif)
+
+- **Captions and transcript.** Captions in four sizes. The transcript scrolls with the lecture; click a sentence to jump there, or search the whole lecture and see every match on the timeline.
+
+  ![The transcript following the lecture, a search, and a click to jump](docs/demo-transcript.gif)
+
+### Watching
+
+- **Two views at once.** Screen and camera side by side (drag the divider), picture in picture (drag, resize, snap to a corner) or one at a time; swap them with `S`. They stay in sync. When the screen stays empty for a while, the camera takes over (with Undo; you can turn this off).
+- **Sharp slides.** The best quality your connection allows, chosen separately for each view.
+- **Skip the dead air.** Breaks, group work and blank screens are marked on the timeline, with a Skip button or auto-skip. A long empty ending is called out, so you know the lecture is over.
+- **Clearer sound** (off by default): even out a lecturer who wanders from the microphone, sharpen the voice, or switch to mono.
+- **Zoom and pan** the screen, the camera or the PDF (wheel or pinch; double-click to reset). **A-B loop** a derivation until it clicks. Pop the whole player into an always-on-top **floating window** while you work.
+
+### Notes and Echo360
+
+- **Notes, bookmarks, "didn't understand" flags and the discussion**, saved to Echo360 as usual and marked on the timeline. `B` adds a bookmark in one key press.
+- **Private tags** such as *Exam* or *Assignment*, with filters and coloured marks on the timeline. Tags stay on your device.
+- **Export** notes, bookmarks and tags to Markdown, with links back to each moment and, with a slide PDF, the slide pictures. One recording or a whole course. Everything that lives only in your browser can be backed up and restored.
+- **See what you've watched:** on the timeline, and as a small bar beside each recording on the course page (what you watched here, and where Echo360 says you stopped). Pick up where you left off, on any device.
+- **No interruptions:** video access is renewed in the background, so long sessions need no reload.
+- **Honest viewing records:** your viewing is reported to Echo360 exactly as the original player would, from what you actually played.
+- **Always a way back:** *Original player* switches to Echo360's player at the same moment. If anything goes wrong, the original player takes over by itself, with a fix that makes it lighter on the CPU.
+- English or Chinese, following your browser (or chosen in the menu).
+
+### Good to know
+
+- Live lectures, and recordings that ask you to accept a copyright notice first, open in the original player. So do polls, Echo360's own slide decks, attachments and audio description (one click takes you there).
+- If your sign-in expires mid-lecture, you are asked to reload, and playback continues from the same spot.
+- Slide chapters come from changes on the screen; a whiteboard filmed by a camera may get only a few. If the wrong view is used for slides, pick the right one in the Slides tab.
+- The PDF read-along reads English, Chinese, Japanese, Korean, Russian, Greek, Arabic, Hebrew, Thai and Hindi (other languages as English). Languages other than English download 0.6–2.7 MB of recognition data once.
+- Without a transcript, silence is found from the audio, so very quiet speech far from the microphone can be marked as silence. Nothing is skipped unless you choose to, or turn on auto-skip.
+
+## Keyboard shortcuts
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| `Space` / `K` | Play / pause | `S` | Swap views |
+| `←` / `→` | Back / forward 5 s | `C` / `T` | Captions / transcript |
+| `J` / `L` | Back / forward 10 s | `B` | Bookmark |
+| `Shift+←` / `Shift+→` | Previous / next slide | `U` | "Didn't understand" |
+| `↑` / `↓` · `M` | Volume · mute | `G` | Tag the note or bookmark here |
+| `[` / `]` | Slower / faster | `I` / `O` / `X` | Loop start / end / clear |
+| `F` | Full screen | `+` / `-` / `0` | Zoom in / out / whole picture |
+| `W` | Floating window | `P` | Copy the current picture |
+| `E` | Export and backup | `A` | Copy the last 60 s of transcript |
+| `?` | All shortcuts | `Esc` | Close menus |
 
 ## Privacy
 
-- The script only runs on Echo360 lecture pages. Apart from Echo360 itself, it sends data to one place only: the anonymous usage data described below, which you can turn off.
-- Settings, resume positions and analysis caches are stored only in your browser (localStorage and IndexedDB).
-- hls.js is loaded from jsDelivr at a pinned version when a player is about to start, and run only if its SHA-256 hash matches (otherwise the original player is used); pdf.js and Tesseract.js (text recognition) are loaded at pinned versions only when a recording has a slide PDF. Text recognition runs in your browser.
-- Tags, watch progress, slide files and backups stay on your device. Exports and backups never contain the video or its address.
-- Nothing is ever posted for you. Writes to Echo360 (notes, posts, flags) only happen when you click. Anything your instructors or classmates can see is labelled before you send it.
-- There is no download feature.
+- **Stays with you:** settings, tags, watch progress, analysis results, slide PDFs and backups stay in your browser; notes, bookmarks and discussion stay on Echo360, where they already were. Exports and backups never contain the video or its address, and there is no download feature.
+- **Nothing is posted for you:** Echo360 is only written to when you click, and anything your instructors or classmates could see is labelled before you send it.
+- **Checked libraries:** hls.js, pdf.js and Tesseract.js run only if they match a pinned SHA-256 hash (the extension ships them; the userscript loads them from jsDelivr). Slide text is read in your browser.
 
 ### Anonymous usage data
 
-On by default; **Settings (⋮) > Usage data** turns it off, and sending stops at once. It helps find problems that only show on some computers and decide what to improve.
+Apart from Echo360, the player sends data to one place: anonymous usage data, so that problems on other people's computers can be found and fixed. Greasy Fork's label for this is `@antifeature tracking`.
 
-- **What is sent:**
-  - the computer and browser, at most once a day: script, browser, system and script-manager versions, interface language, desktop or touch, screen size and scaling, CPU cores, processor type (x86 or ARM, 32 or 64 bit), system version and, on Android, the device model where the browser tells, memory and graphics card, the graphics vendor and family WebGPU reports, whether WebGPU, WebCodecs, the browser's built-in AI and CPU pressure readings are available, whether video is decoded in hardware (720p and 1080p), whether the computer was charging, the step of the browser's timer, network type and estimated speed;
-  - one summary per viewing:
-    - start-up: how the script started (caught the page's player before it started, took over a player that had already started, or left the page to the original player), the page's loading state when the script ran, how long until the player was shown, and how many of the original player's watch reports were stopped after a takeover;
-    - watching: whether it began with the page load, how long until the controls worked and the first picture, how long seeking took (median, 90th percentile), rebuffering (times, share of time), the share of time at each video resolution and how often it changed, the estimated bandwidth, how far apart the two views drifted (median, largest);
-    - responsiveness and load: how long clicks and key presses took to be answered (median, 90th percentile, how many over 200 ms), long main-thread tasks, dropped frames, memory, the share of the time played (in a visible tab) at each level of CPU pressure, separately while background analyses were running and while none were, and whether the time played was all on mains power, all on battery or mixed;
-    - background analyses: how much they downloaded per hour of recording, the video data per hour played, how many results came from the cache, how soon chapters and the PDF follower were ready, how long each step took (per keyframe, per minute of audio, per million pixels of text recognition and of PDF drawing: median, 90th percentile, count);
-    - how fast this computer is: the time per million pixels or audio samples of two fixed pieces of the analyses, which do the same work whatever the recording (10th, 50th and 90th percentile, how many batches, and whether the video was playing, the speed, the CPU pressure and the power source as each batch finished). These come from work the analyses do anyway: nothing extra is run to measure them;
-    - stability: features turned off after an error, uncaught errors of the script, failed requests by kind (refused, server error, timed out, no answer), video stream errors by name, renewals of the video access that worked or failed, the version of Echo360's page code (the names of its script files);
-    - habits: time open and played, the share of the recording watched, the share of time at each speed and the layout used most, seconds of silence and empty screen skipped, how often each feature was used, keys against clicks, the *names* of settings you changed from their defaults, interface language and theme, how long you watched before switching to the original player;
-    - how the analyses did: how the screen view was found, whether the slide chapters came from the video's frames or only from Echo360's preview pictures (and why, when the frames could not be read, and which of the two standard forms of the video the browser could decode), chapters per hour, how much of the time the PDF follower recognised no page, corrections by hand, automatic layout changes undone;
-    - the usage data itself: sends that failed, errors left out because too many were queued;
-  - switches to the original player and why, with the page's loading state when the script ran;
-  - errors: the feature, the error type and the message with web addresses, e-mail addresses, quoted text, ids and numbers removed.
+- **Turn it off:** **Settings (⋮) > Usage data**. Sending stops at once. The same page has *View my data*, *Delete all my data* and *Reset my ID*.
+- **What is sent:** your computer and browser (at most once a day), one rounded summary per viewing (start-up times, smoothness, responsiveness, which features were used, how well the slide and silence analyses did, errors with personal details removed), switches to the original player with the reason, and which of Echo360's sites it was on and whether inside another site's page. Only summaries, never series of values.
+- **Never sent:** your name, account, student number or e-mail; which courses or recordings you watch, their titles or addresses; anything you write; captions or slide content; your IP address.
+- **Where it goes:** a Cloudflare Worker and D1 database run for this project (code in [`telemetry-worker/`](telemetry-worker/)). You are known to it only by the hash of a random secret kept by your userscript manager or the extension, out of the page's reach. Only the maintainer reads it, on a private dashboard that shows totals. Every field is listed in [PRIVACY.md](PRIVACY.md).
 
-  Times and speeds are rounded to two significant digits, and only summaries (medians, percentiles, counts) are sent, never series of values.
-- **What is never sent:** your name, account, student number or e-mail; which courses or recordings you watch, their titles or addresses; anything you write (notes, tags, discussion); captions or slide content; your IP address.
-- **Where:** a Cloudflare Worker and D1 database run for this project (code in [`telemetry-worker/`](telemetry-worker/)). The Worker keeps only the listed fields and drops everything else. It keeps the country, region and network provider Cloudflare derives from the request, never the IP address; the address only serves as the key of a one-minute rate-limit counter. Requests are not logged. The data is kept with no automatic deletion. Values the player cannot produce (for example more time played than the page was open) are marked on the row, so the totals can leave them out.
-- **Who reads it:** only the maintainer, on a private read-only dashboard (code in [`telemetry-admin/`](telemetry-admin/)) behind Cloudflare Access with a Google sign-in. It shows totals only, never one user's data or id.
-- **Who you are to it:** on first use the script makes a random secret, kept by your script manager and never shown or exported. Your data is stored under the SHA-256 hash of that secret. Viewing or deleting needs the secret itself, so someone who learns the hash can neither read nor delete your data. Once, during your first viewing, the script registers this ID: it spends a few seconds of idle time on a small proof of work (this makes inventing many IDs costly), then sends the secret once so that the server can keep a key derived from it (never the secret). From then on each batch of data is signed with that key, so no one else can send data under your ID. The registration (its day, and whether the proof of work was valid) appears in *View my data* and is deleted with your data.
-- **Your data:** **Settings > Usage data** has *View my data* (a table, and a JSON download), *Delete all my data* (asks first, then deletes at once on the server) and *Reset my ID* (a new secret; it offers to delete the old data first, since the old ID can no longer be used afterwards).
-- Greasy Fork's label for this is `@antifeature tracking`.
-
-The only numbers made public are these totals, updated daily:
+The only public numbers are the daily active users:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-dark.svg">
   <img alt="Daily active users of Lite Player for Echo360 over the last 90 days" src="https://raw.githubusercontent.com/zhenban/lite-player-for-echo360/stats/usage-light.svg">
 </picture>
 
-## Known limitations
-
-- Live lectures and recordings that require a copyright acknowledgement use the original player.
-- Polls, slide decks, attachments and audio description are only in the original player (a button takes you there).
-- If your school sign-in expires during playback, you will be asked to reload; playback continues from the same position. (Echo360's video access itself is renewed in the background.)
-- Slide chapters (without a PDF) learn per recording how large a change makes a new slide; recordings where the screen rarely changes as a whole (a whiteboard filmed by a camera) may get few chapters. If the slides are looked for in the wrong view, choose the right one in the Slides tab.
-- Reading along with the slide PDF reads the screen in the language of the PDF (English, Chinese, Japanese, Korean, Russian, Greek, Arabic, Hebrew, Thai, Hindi; others as English). A language other than English downloads its text-recognition data (0.6-2.7 MB) once.
-- When a recording has no transcript, silence is detected from the audio, and quiet talk far from the microphone may be marked as silence. Skipping is always your choice unless you turn on auto-skip.
-
-## Development
+## For developers
 
 ```sh
-npm install        # development tools (ESLint, TypeScript for checking, happy-dom)
-npm run build      # src/*.js -> dist/lite-player-for-echo360.user.js (readable, not minified)
-npm test           # unit and whole-page tests
-npm run ci         # lint, type check, tests, dist/ in sync (what GitHub Actions runs)
+npm install                # development tools
+npm run build              # src/*.js -> dist/lite-player-for-echo360.user.js (readable, not minified)
+npm run build-extension    # the Chrome extension -> dist-extension/ and dist-extension.zip
+npm test                   # unit and whole-page tests
+npm run ci                 # lint, type check, tests, dist/ in sync (what GitHub Actions runs)
 ```
 
-Besides the userscript, the repository holds two Cloudflare Workers for the anonymous usage data, each with its own `package.json`, tests and README:
+Edit `src/` only; `dist/` is generated. [ARCHITECTURE.md](ARCHITECTURE.md) explains how the code is organised, and [SECURITY.md](SECURITY.md) how to report a security problem. The usage-data server and its private dashboard are in [`telemetry-worker/`](telemetry-worker/) and [`telemetry-admin/`](telemetry-admin/).
 
-- [`telemetry-worker/`](telemetry-worker/): receives the usage data and stores the listed fields in D1. Its field checks are tested from the root (`test/telemetry.test.mjs`).
-- [`telemetry-admin/`](telemetry-admin/): the private read-only dashboard over that data (`cd telemetry-admin && npm install && npm run ci`).
-
-GitHub Actions runs each check as its own job (lint, type check, tests, `@require` hashes, `dist/` in sync, dashboard), so one failure does not hide the others.
-
-Only edit `src/` (`dist/` is generated). How the code is organised: [ARCHITECTURE.md](ARCHITECTURE.md).
-
-Source files in `src/` are plain scripts concatenated in name order. Code and comments are in English, user-facing strings live in `src/01-i18n.js`, and every tuning value (with its unit and why it holds) in `src/02-tuning.js`.
+Libraries used at run time, at pinned versions (not in the repository): [hls.js](https://github.com/video-dev/hls.js) 1.7.3, [pdf.js](https://github.com/mozilla/pdf.js) 6.4.299, [Tesseract.js](https://github.com/naptha/tesseract.js) and tesseract.js-core 7.0.0 (Apache-2.0), and Tesseract language data 1.0.0 (MIT).
 
 ## License
 
-Copyright (C) 2026 zhenban. Lite Player for Echo360 is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but without any warranty.
+Copyright (C) 2026 zhenban. Free software under the [GNU GPL v3 or later](LICENSE). Releases up to v0.14.0 were under the MIT License and stay so.
 
-Versions up to and including **v0.14.0** were released under the MIT License; those releases stay under MIT. Later versions are under the GPL.
+Lite Player is an independent project. Echo360 is a trademark of its owner; the name only says which site this player works on.
 
-Libraries loaded at run time (from jsDelivr, pinned versions; not included in this repository):
-
-| Library | Used for | License |
-|---|---|---|
-| [hls.js](https://github.com/video-dev/hls.js) 1.7.3 | playing the HLS streams | Apache-2.0 |
-| [pdf.js](https://github.com/mozilla/pdf.js) (pdfjs-dist 6.4.299) | reading slide PDFs | Apache-2.0 |
-| [Tesseract.js](https://github.com/naptha/tesseract.js) 7.0.0 and tesseract.js-core 7.0.0 | text recognition | Apache-2.0 |
-| [tesseract.js-data](https://github.com/naptha/tessdata) 1.0.0 (language data) | text recognition | MIT |
-
-Apache-2.0 and MIT code may be combined with GPLv3 code, so these libraries are compatible with this license.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for how to report a security problem privately.
+The demo lecture in the pictures is made for this project. Its camera view, made with AI video tools, is an unofficial Touhou Project fan work (二次创作): *Touhou Project* is by Team Shanghai Alice / ZUN (上海爱丽丝幻乐团 / ZUN).

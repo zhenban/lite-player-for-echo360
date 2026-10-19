@@ -21,6 +21,7 @@ const boot = {
   handler: null,                    // (arg, callOriginal) => void, set by 90-main.js
   called: false,                    // the page called its bootstrap after the trap was set
   original: () => null,             // the page's own bootstrap function, once known
+  other: '',                        // another copy already runs on this page: its version
 };
 
 // The page's own window. With any @grant other than none, managers give the script a
@@ -30,6 +31,19 @@ function pageWindow() {
   return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window;
 }
 
+// Installed twice (the userscript and the extension, or two script managers): the copy that
+// runs first keeps the page, the other does nothing (90-main.js) and says so in the console.
+// boot.other: the version of the copy already running ('' if this is the first).
+const BOOT_MARK = '__litePlayerForEcho360Running';
+boot.other = (() => {
+  try {
+    const page = pageWindow();
+    if (page[BOOT_MARK]) return String(page[BOOT_MARK]);
+    Object.defineProperty(page, BOOT_MARK, { value: VERSION, enumerable: false });
+  } catch (e) { /* not marked: runs as if alone */ }
+  return '';
+})();
+
 // Echo360 lesson pages bootstrap their React player with an inline call
 //   Echo["echoPlayerV2FullApp"]("<json>")
 // once the document is complete. The Echo object is wrapped in a Proxy, so the function is
@@ -38,7 +52,7 @@ function pageWindow() {
 // made through a reference to the object kept from before it was assigned to window.Echo
 // would pass by; the page's inline bootstrap uses the global.
 (function trapEcho360() {
-  if (!/^\/lesson\//.test(location.pathname)) return;
+  if (boot.other || !/^\/lesson\//.test(location.pathname)) return;
   const NAME = 'echoPlayerV2FullApp';
   let original = null;
   boot.original = () => original;

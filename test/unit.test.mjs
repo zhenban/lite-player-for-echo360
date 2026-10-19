@@ -376,6 +376,14 @@ function silenceMod() {
   return loadSources(['00-util', '61-media-io', '62-silence']);
 }
 
+test('codex P5: a playlist far longer than any recording is refused before anything is sized by it', () => {
+  const m = loadSources(['00-util', '01-i18n', '10-adapter', '11-echo360-api', '61-media-io']);
+  assert.throws(() => m.parseMediaPlaylist('#EXTM3U\n#EXTINF:100000000,\na.mp4\n', 'https://h/p.m3u8'), /too long/);
+  assert.throws(() => m.parseMediaPlaylist('#EXTM3U\n' + '#EXTINF:50000,\na.mp4\n'.repeat(3), 'https://h/p.m3u8'), /too long/);
+  // A long lecture (10 h of 10 s segments) is fine.
+  assert.equal(m.parseMediaPlaylist('#EXTM3U\n' + '#EXTINF:10,\na.mp4\n'.repeat(3600), 'https://h/p.m3u8').segments.length, 3600);
+});
+
 test('audio rendition of the lowest-bandwidth variant; media playlist byte ranges', () => {
   const { pickAudioRendition, parseMediaPlaylist } = silenceMod();
   const master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="q0",NAME="Default",URI="s0q0.m3u8"\n'
@@ -547,6 +555,8 @@ test('T1.1 parse: a real (sanitised) lesson page gives views, duration, resume p
     assert.equal(l.thumbnails.length, 2);
     assert.equal(l.isAnonymousUser, false);
     assert.equal(l.analytics.gatewayUrl, 'https://api.echo360.net.au');
+    // Echo360's other sites: their own API host.
+    assert.equal(adapterMod('echo360.org.uk').echo360ClassroomAdapter.parse(arg).analytics.gatewayUrl, 'https://api.echo360.org.uk');
     assert.equal(l.analytics.sessionId, cfg.sessionId);
     assert.equal(l.analytics.context.lesson_id, cfg.context.lessonId);
     assert.deepEqual(JSON.parse(JSON.stringify(l.extras)), { polls: false, slides: false, audioDescription: false });

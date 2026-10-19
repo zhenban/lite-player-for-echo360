@@ -8,6 +8,12 @@
 // @license      GPL-3.0-or-later
 // @match        https://echo360.net.au/lesson/*
 // @match        https://echo360.net.au/section/*/home
+// @match        https://echo360.org/lesson/*
+// @match        https://echo360.org/section/*/home
+// @match        https://echo360.org.uk/lesson/*
+// @match        https://echo360.org.uk/section/*/home
+// @match        https://echo360.ca/lesson/*
+// @match        https://echo360.ca/section/*/home
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue

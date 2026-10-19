@@ -1,13 +1,19 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      0.25.3
+// @version      1.0.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
 // @license      GPL-3.0-or-later
 // @match        https://echo360.net.au/lesson/*
 // @match        https://echo360.net.au/section/*/home
+// @match        https://echo360.org/lesson/*
+// @match        https://echo360.org/section/*/home
+// @match        https://echo360.org.uk/lesson/*
+// @match        https://echo360.org.uk/section/*/home
+// @match        https://echo360.ca/lesson/*
+// @match        https://echo360.ca/section/*/home
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -23,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.25.3';
+  const VERSION = '1.0.0';
   const DEV_HOOKS = false;
 
 // ---- 00-boot.js ----
@@ -50,6 +56,7 @@ const boot = {
   handler: null,                    // (arg, callOriginal) => void, set by 90-main.js
   called: false,                    // the page called its bootstrap after the trap was set
   original: () => null,             // the page's own bootstrap function, once known
+  other: '',                        // another copy already runs on this page: its version
 };
 
 // The page's own window. With any @grant other than none, managers give the script a
@@ -59,6 +66,19 @@ function pageWindow() {
   return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window;
 }
 
+// Installed twice (the userscript and the extension, or two script managers): the copy that
+// runs first keeps the page, the other does nothing (90-main.js) and says so in the console.
+// boot.other: the version of the copy already running ('' if this is the first).
+const BOOT_MARK = '__litePlayerForEcho360Running';
+boot.other = (() => {
+  try {
+    const page = pageWindow();
+    if (page[BOOT_MARK]) return String(page[BOOT_MARK]);
+    Object.defineProperty(page, BOOT_MARK, { value: VERSION, enumerable: false });
+  } catch (e) { /* not marked: runs as if alone */ }
+  return '';
+})();
+
 // Echo360 lesson pages bootstrap their React player with an inline call
 //   Echo["echoPlayerV2FullApp"]("<json>")
 // once the document is complete. The Echo object is wrapped in a Proxy, so the function is
@@ -67,7 +87,7 @@ function pageWindow() {
 // made through a reference to the object kept from before it was assigned to window.Echo
 // would pass by; the page's inline bootstrap uses the global.
 (function trapEcho360() {
-  if (!/^\/lesson\//.test(location.pathname)) return;
+  if (boot.other || !/^\/lesson\//.test(location.pathname)) return;
   const NAME = 'echoPlayerV2FullApp';
   let original = null;
   boot.original = () => original;
@@ -749,6 +769,11 @@ const STRINGS = {
     exportedLecture: 'Exported {n} notes and bookmarks ({p} slide pictures)',
     exportedCourse: 'Exported {n} recordings with notes',
     exportedNothing: 'No notes or bookmarks in this course yet',
+    fullscreenBlocked: 'Fullscreen is not allowed by the site showing this recording. Open the recording in its own tab to use it.',
+    exportedCoursePartial: 'Exported {n} recordings with notes. The notes of {m} could not be read: they are listed in "{file}" in the zip. Export again to include them.',
+    exportCourseUnread: 'Could not read the notes of {n} recordings (signed out, or no connection?). Nothing was exported.',
+    exportNotReadFile: 'Not exported',
+    exportNotReadText: 'The notes of these recordings could not be read when the course was exported (signed out, or the connection failed). Export the course again to include them.',
     exportFailed: 'Export failed ({msg})',
     backupInfo: 'Tags, slide files and corrections, what you watched and your settings only exist in this browser. A backup file brings them to another browser (or back after clearing browser data).',
     backupPdfs: 'Include the PDF files (bigger file)',
@@ -1258,6 +1283,11 @@ STRINGS.zh = {
   exportedLecture: '已导出 {n} 条笔记和书签（{p} 张幻灯片图片）',
   exportedCourse: '已导出 {n} 个有笔记的录像',
   exportedNothing: '这门课程还没有笔记或书签',
+  fullscreenBlocked: '嵌入这个录像的网站不允许全屏。在单独的标签页里打开录像就可以全屏。',
+  exportedCoursePartial: '已导出 {n} 个有笔记的录像。有 {m} 个录像的笔记没能读取，列在 zip 里的“{file}”中。再导出一次可以补上。',
+  exportCourseUnread: '没能读取 {n} 个录像的笔记（登录过期，或者没有网络？），没有导出任何内容。',
+  exportNotReadFile: '未导出',
+  exportNotReadText: '导出课程时，这些录像的笔记没能读取（登录过期，或者网络出错）。再导出一次课程可以补上。',
   exportFailed: '导出失败（{msg}）',
   backupInfo: '标签、幻灯片文件和更正、观看记录和设置只存在这个浏览器里。备份文件可以把它们带到另一个浏览器（或在清除浏览器数据后恢复）。',
   backupPdfs: '包含 PDF 文件（文件更大）',
@@ -1408,6 +1438,11 @@ const CHAPTER_REFINE_PACE_MS = [1000, 300];   // between refinements (a whole se
 // that claims more is refused before anything is allocated for it (a safety bound, not
 // a measurement: ten times a minute of 60 fps video in one fragment).
 const MP4_MAX_SAMPLES = 36000;
+// Longest recording a media playlist may describe. Its length sizes what the analyses keep
+// per recording (the silence envelope: one byte per 0.1 s), so a broken playlist claiming
+// years is refused rather than believed. A safety bound, not a measurement: lectures run
+// up to about 4 h, a whole-day capture 12 h; this is twice that.
+const MEDIA_MAX_SEC = 24 * 3600;
 // Frames are compared as brightness pictures this size: one pixel is a 2 x 2 block at
 // 360p, 8 x 8 at 720p, so a changed line of slide text changes several pixels.
 const THUMB_W = 160;
@@ -1576,6 +1611,10 @@ const STREAM_MEDIA_RECOVERIES = 2;     // decoder errors recovered before giving
 const SYNC_TOLERANCE = 0.08;           // seconds of drift between the views that are ignored
 const SYNC_SEEK_AT = 1.0;              // seconds of drift corrected by seeking instead of nudging
 const SYNC_MAX_NUDGE = 0.1;            // max relative rate change while catching up
+// ms the follower's picture stays in place while the clock reloads with its view (single
+// view after a swap), at most: a load that takes longer shows the loading state (a product
+// choice; the reload took 0.3 s with the demo lecture, dev/demo).
+const HOLD_FOLLOWER_MAX_MS = 10000;
 const STALL_CHECK_MS = 2000;           // how often the stall watchdog looks
 const STALL_SEC = 12;                  // playing, not seeking, time unmoved this long: restart loading
 const POSITION_SAVE_EVERY = 5;         // watchdog ticks between saves of the resume position (10 s)
@@ -1682,12 +1721,26 @@ const TELEMETRY_WAIT_BATCHES = 10;     // batches the server refused until regis
 // places): building elements, canvases, the site's hosts, Echo360 URLs, durations.
 // ===================================================================================
 
-// Pages this script runs on. Must list the same hosts as the @match lines in meta.txt
-// (the build checks it): a page outside them never loads the script anyway.
-const SITE_HOSTS = ['echo360.net.au'];
+// Pages this script runs on: Echo360's sites for Asia-Pacific, the US, the UK and Europe,
+// and Canada (one application; only the first is tested with real recordings). Must list
+// the same hosts as the @match lines in meta.txt (the build checks it): a page outside
+// them never loads the script anyway.
+const SITE_HOSTS = ['echo360.net.au', 'echo360.org', 'echo360.org.uk', 'echo360.ca'];
+const SITE_REGIONS = ['au', 'us', 'uk', 'ca'];   // in the order of SITE_HOSTS
 
 function isEcho360Host() {
   return SITE_HOSTS.includes(location.hostname);
+}
+
+// Which of Echo360's sites this is ('au', 'us', 'uk', 'ca'), for the usage data: whether
+// the player works on each (never the address).
+function siteRegion() {
+  return SITE_REGIONS[SITE_HOSTS.indexOf(location.hostname)];
+}
+
+// Shown inside another page (a learning system embedding Echo360 in a frame).
+function inFrame() {
+  try { return window.top !== window.self; } catch (e) { return true; }
 }
 
 // An element: el('button.btn.primary', { title: 'x', onclick }, 'text', child, ...).
@@ -1870,10 +1923,14 @@ function exitFullscreen(doc) {
   return f ? Promise.resolve().then(() => f.call(d)).catch(() => {}) : Promise.resolve();
 }
 // false: elements cannot be made fullscreen here (iPhone: only a video, in the system's
-// own player).
+// own player; a frame whose page does not allow fullscreen).
+function fullscreenAllowed(d) {
+  const on = d.fullscreenEnabled !== undefined ? d.fullscreenEnabled : d.webkitFullscreenEnabled;
+  return on !== false;
+}
 function requestFullscreen(node) {
   const f = node.requestFullscreen || node.webkitRequestFullscreen;
-  if (!f) return false;
+  if (!f || !fullscreenAllowed(node.ownerDocument)) return false;
   Promise.resolve().then(() => f.call(node)).catch(() => {});
   return true;
 }
@@ -2094,10 +2151,10 @@ const LIB_SHA256 = {
 
 // ---- 05-platform.js ----
 // ===================================================================================
-// Platform: everything that depends on how the player is run. Today that is a userscript
-// (Tampermonkey, Violentmonkey) running in the page; a browser extension built from the
-// same sources will provide its own version of this object. The rest of the code uses
-// only `platform` for these things (the build checks it):
+// Platform: everything that depends on how the player is run: a userscript (Tampermonkey,
+// Violentmonkey) running in the page, or the Chrome extension built from the same sources,
+// which replaces some of these (06-platform-extension.js). The rest of the code uses only
+// `platform` for these things (the build checks it):
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
 //     an extension reads a snapshot before it starts the player)
 //   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
@@ -2111,7 +2168,8 @@ const LIB_SHA256 = {
 //   - save: offer a file to the user
 //   - manager: what runs the player, for diagnostics
 //   - post: send JSON to the telemetry Worker (87-telemetry.js)
-//   - privateKv: values kept out of the page's reach (the telemetry secret)
+//   - privateKv: values kept out of the page's reach (the telemetry secret); read only after
+//     privateReady (an extension reads them at start-up, asynchronously)
 //   - page: the page's own window, for traps on the page's globals (window.Echo)
 // ===================================================================================
 
@@ -2237,6 +2295,7 @@ const platform = {
       }
     });
   },
+  privateReady: Promise.resolve(),
   // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
   // it; without one, the page's storage like the settings.
   privateKv: {
@@ -4790,6 +4849,7 @@ class LitePlayer {
     this.clock = new Stream(this.video, (f) => this.onClockFatal(f));
     this.follower = new Stream(this.fvideo, (f) => (f.auth ? this.recoverAccess(this.follower, () => this.onFollowerFatal()) : this.onFollowerFatal()));
     this.followerPos = -1;
+    this.hold = null;          // Disposer of a held follower (holdFollower), or null
     for (const st of [this.clock, this.follower]) {
       st.onLevel = () => { if (!this.destroyed) this.quality.levelChanged(); };
       // Refused but still retrying: renew in the background (once at a time).
@@ -5012,6 +5072,51 @@ class LitePlayer {
     this.renderPlay();
   }
 
+  // Which element shows in which place. While the follower is held (holdFollower), it
+  // keeps the place the reloading clock will take.
+  assignSlots() {
+    const pdfView = this.$('.pdfview');
+    const held = !!this.hold;
+    if (this.pdfMode) {
+      const pdfFirst = !!this.prefs.pdfFirst;
+      const videoSlot = pdfFirst ? 'secondary' : 'primary';
+      this.video.dataset.slot = held ? 'off' : videoSlot;
+      this.fvideo.dataset.slot = held ? videoSlot : 'off';
+      pdfView.dataset.slot = pdfFirst ? 'primary' : 'secondary';
+    } else {
+      const clockIsPrimary = !held && (this.clockPos === this.primaryPos || this.layout === 'single');
+      this.video.dataset.slot = clockIsPrimary ? 'primary' : 'secondary';
+      this.fvideo.dataset.slot = clockIsPrimary ? 'secondary' : 'primary';
+      pdfView.dataset.slot = 'off';
+    }
+  }
+
+  // The clock is reloading with the view the follower shows (single view or the PDF after a
+  // swap): the follower stops on its picture and stays in place instead of a black moment,
+  // until the clock has a picture at its position; then only the clock plays.
+  holdFollower() {
+    if (this.sync) { this.sync.dispose(); this.sync = null; }
+    this.fvideo.pause();
+    const d = this.hold = this.d.child();
+    const arrived = () => {
+      if (this.hold !== d || this.clock.starting || this.video.readyState < 2) return;
+      this.endHold();
+      this.assignSlots();
+    };
+    for (const type of ['canplay', 'seeked', 'playing']) d.listen(this.video, type, arrived);
+    // Never arrives (an error, offline): not held for ever.
+    d.timeout(() => { if (this.hold === d) { this.endHold(); this.assignSlots(); } }, HOLD_FOLLOWER_MAX_MS);
+  }
+
+  // Ends a hold (holdFollower): the follower is released.
+  endHold() {
+    const d = this.hold;
+    if (!d) return;
+    this.hold = null;
+    d.dispose();
+    this.dropFollower();
+  }
+
   ensureFollower() {
     const pos = this.sources.findIndex((s, i) => i !== this.clockPos);
     if (pos < 0) return;
@@ -5047,29 +5152,23 @@ class LitePlayer {
     const pdf = this.pdfMode;
     for (const l of LAYOUTS) st.classList.toggle('l-' + l, l === layout);
     for (const c of CORNERS) st.classList.toggle('c-' + c, c === this.prefs.corner);
+    this.endHold();
     // One video plays when it is shown alone or next to the PDF.
     if (layout === 'single' || pdf) {
-      this.dropFollower();
       if (this.clockPos !== this.primaryPos && this.sources[this.primaryPos].av) {
+        // The follower already shows that view: its picture stays until the clock has one.
+        const hold = this.followerPos === this.primaryPos && this.fvideo.readyState >= 2;
         // Asked of the stream, not the element: a switch made while the previous one is
         // still loading would otherwise read 0 (and paused) and start over.
         this.loadClock(this.primaryPos, this.clock.position(), this.clock.playing());
+        if (hold) this.holdFollower(); else this.dropFollower();
+      } else {
+        this.dropFollower();
       }
     } else {
       this.ensureFollower();
     }
-    const pdfView = this.$('.pdfview');
-    if (pdf) {
-      const pdfFirst = !!this.prefs.pdfFirst;
-      this.video.dataset.slot = pdfFirst ? 'secondary' : 'primary';
-      this.fvideo.dataset.slot = 'off';
-      pdfView.dataset.slot = pdfFirst ? 'primary' : 'secondary';
-    } else {
-      const clockIsPrimary = this.clockPos === this.primaryPos || layout === 'single';
-      this.video.dataset.slot = clockIsPrimary ? 'primary' : 'secondary';
-      this.fvideo.dataset.slot = clockIsPrimary ? 'secondary' : 'primary';
-      pdfView.dataset.slot = 'off';
-    }
+    this.assignSlots();
     this.renderLayoutButton();
     if (this.reader) {
       this.reader.setActive('main', pdf);
@@ -5577,6 +5676,9 @@ class LitePlayer {
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
     d.listen($('.fwd'), 'click', () => this.seek(this.clock.position() + 10));
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
+    // In a frame whose page does not allow it, neither the player nor a video can be
+    // fullscreen: said on the button instead of a click that does nothing.
+    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') setUnavailable($('.fs'), tr('fullscreenBlocked'), tr('fullscreenKey'));
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
     const onFullscreen = () => {
@@ -7134,7 +7236,8 @@ class PopoutController {
     this.d.add(() => { if (this.window) { try { this.window.close(); } catch (e) { /* closed */ } } });
   }
 
-  static supported() { return typeof window.documentPictureInPicture === 'object' && !!window.documentPictureInPicture; }
+  // Browsers open it only from a page of its own, not from a frame in another page.
+  static supported() { return typeof window.documentPictureInPicture === 'object' && !!window.documentPictureInPicture && !inFrame(); }
 
   async toggle() {
     if (this.window) { this.window.close(); return; }
@@ -8601,7 +8704,9 @@ class NotesPane {
       try {
         await this.api.updateNote(e, item, text);
         item.text = text;
-        this.editing = null;
+        // Edited further while it was saved: still being edited, with that text.
+        if (area.value.trim() === text) this.editing = null;
+        else save.disabled = false;
         this.showError('');
         this.changed();
       } catch (err) { save.disabled = false; this.fail(err); }
@@ -8630,7 +8735,8 @@ class NotesPane {
     this.addBtn.disabled = true;
     try {
       const note = await this.api.addNote(e, { text, time: this.p.video.currentTime, num: this.count('note') + 1 });
-      this.textarea.value = '';
+      // Only what was sent goes: text typed while it was on its way stays.
+      if (this.textarea.value.trim() === text) this.textarea.value = '';
       this.items.push(note);
       this.sort();
       this.showError('');
@@ -8806,9 +8912,10 @@ class NotesPane {
     })));
     const all = el('button.pbtn', { text: tr('exportCourse') });
     all.addEventListener('click', guard(() => busy(all, async () => {
-      const n = await ex.course((k, total) => { all.textContent = tr('exportCourseProgress', { k: k + 1, n: total }); });
-      all.textContent = tr('exportCourse');
-      this.p.toast(n ? tr('exportedCourse', { n }) : tr('exportedNothing'));
+      let r;
+      // Back to its name however it ends (it showed the progress).
+      try { r = await ex.course((k, total) => { all.textContent = tr('exportCourseProgress', { k: k + 1, n: total }); }); } finally { all.textContent = tr('exportCourse'); }
+      this.p.toast(r.failed ? tr('exportedCoursePartial', { n: r.files, m: r.failed, file: tr('exportNotReadFile') }) : r.files ? tr('exportedCourse', { n: r.files }) : tr('exportedNothing'));
     })));
     const backup = el('button.pbtn', { text: tr('backupMake') });
     backup.addEventListener('click', guard(() => busy(backup, async () => {
@@ -9314,7 +9421,9 @@ class DiscussionPane {
       if (this.busy || !body || body.length > MAX_POST_LENGTH) return;
       send.disabled = true;
       this.write(e, () => this.api.reply(e, q.id, { body, anonymous: anon.checked }), () => {
-        // Sent: the composer goes at once (not after the reload), with its text.
+        // Sent: the composer goes at once (not after the reload), with its text. Text typed
+        // while it was on its way is another reply being written: it stays open with that.
+        if (area.value.trim() !== body) { draft.text = area.value; return; }
         area.value = '';
         this.replyOpen = null;
         this.replyDrafts.delete(q.id);
@@ -9339,6 +9448,9 @@ class DiscussionPane {
     this.postBtn.disabled = true;
     const time = this.linkTime.checked ? this.p.video.currentTime : null;
     await this.write(e, () => this.api.postComment(e, { body, anonymous: this.anon.checked, time }), () => {
+      // Only what was sent goes: text typed while it was on its way stays (with its choice
+      // of name).
+      if (this.textarea.value.trim() !== body) return;
       this.textarea.value = '';
       this.anon.checked = false;
     });
@@ -9719,6 +9831,7 @@ function parseMediaPlaylist(text, base) {
       const r = range ? parseRange(range, url) : { offset: 0, length: null };
       out.segments.push({ start: t, dur, url, offset: r.offset, length: r.length });
       t += dur;
+      if (t > MEDIA_MAX_SEC) throw new Error('playlist too long (' + Math.round(t / 3600) + ' h)');
       range = null;
     }
   }
@@ -13148,7 +13261,9 @@ class SlideDeckController {
       // Files in another language need the screen read again in that language.
       if (this.ocr && this.ocr.lang !== ocrLanguage(pages.map((x) => x.text))) this.stopReading();
       this.startReading();
-      this.decide(true);
+      // A reader that has finished already (files added or removed after the screen was
+      // read) has no change to come: its state is taken now.
+      if (this.followReader()) this.decide(true);
       this.onChange();
     } catch (e) {
       if (this.ac.signal.aborted || this.job !== job) return;
@@ -13196,13 +13311,18 @@ class SlideDeckController {
   }
 
   readingChanged() {
-    const r = this.ocr;
-    if (!r) return;
-    if (r.state === 'unavailable') { this.state = 'error'; this.error = r.error; this.onChange(); return; }
-    const finished = r.state === 'done';
-    if (finished && this.state === 'reading') this.state = 'ready';
-    this.decide(finished);
+    if (!this.ocr) return;
+    if (this.followReader()) this.decide(this.ocr.state === 'done');
     this.onChange();
+  }
+
+  // The deck's state from the reader's: an error if it cannot work (false), ready once it
+  // is done.
+  followReader() {
+    const r = this.ocr;
+    if (r && r.state === 'unavailable') { this.state = 'error'; this.error = r.error; return false; }
+    if (r && r.state === 'done' && this.state === 'reading') this.state = 'ready';
+    return true;
   }
 
   // Decides the pages again from everything read so far (at most every FOLLOW_UPDATE_MS
@@ -13967,6 +14087,17 @@ function safeName(s) {
   return String(s || 'lecture').replace(/[\\/:*?"<>|#^[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90) || 'lecture';
 }
 
+// A file name not used yet in the archive, then counted as used: "x.md", "x (2).md", …
+// Compared without case (Windows and macOS see "Lecture.md" and "lecture.md" as one file).
+function uniqueName(name, taken) {
+  const dot = name.lastIndexOf('.');
+  const [stem, ext] = dot > name.lastIndexOf('/') ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  let out = name;
+  for (let n = 2; taken.has(out.toLowerCase()); n++) out = stem + ' (' + n + ')' + ext;
+  taken.add(out.toLowerCase());
+  return out;
+}
+
 // A tag as a Markdown / Obsidian tag: no spaces or punctuation.
 function mdTag(name) {
   const s = String(name).trim().replace(/[\s,.;:!?'"()[\]{}#]+/g, '-').replace(/^-+|-+$/g, '');
@@ -14020,6 +14151,7 @@ class Exporter {
     const items = p.notes ? p.notes.items.filter((x) => x.type !== 'flag') : [];
     const base = (lessonDate(l.lessonId) ? lessonDate(l.lessonId) + ' ' : '') + safeName(l.title);
     const files = [];
+    const taken = new Set([(base + '.md').toLowerCase()]);
     const pics = new Map();   // page index -> file name
     let picture = null;
     const deck = p.deck;
@@ -14029,7 +14161,8 @@ class Exporter {
         const i = deck.pageAt(x.time);
         if (i < 0 || pics.has(i)) continue;
         const pg = deck.pages[i];
-        const name = base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png';
+        // Two PDFs with one name: their pictures still get a name each.
+        const name = uniqueName(base + '/' + safeName(pg.file.replace(/\.pdf$/i, '')) + ' p' + pg.num + '.png', taken);
         const c = await deck.render(i, 1600, true);
         const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
         files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
@@ -14048,13 +14181,17 @@ class Exporter {
     return { notes: items.length, pictures: files.length - 1 };
   }
 
-  // Every recording of the course with notes or bookmarks, one Markdown file each.
+  // Every recording of the course with notes or bookmarks, one Markdown file each. Returns
+  // { files, failed }: recordings exported, and recordings whose notes could not be read
+  // (listed in a file of the archive); throws when none could be read.
   async course(onProgress) {
     const p = this.p;
     const section = p.lesson.sectionId;
     if (!section) throw new Error('no course');
     const list = (await fetchSyllabus(section)).map((x) => x.lesson).filter((x) => x && x.lesson && x.hasVideo);
     const files = [];
+    const taken = new Set();
+    const failed = [];
     const tagStore = new TagStore({ sectionId: section, mediaId: null });
     await tagStore.load();
     for (let k = 0; k < list.length; k++) {
@@ -14062,22 +14199,28 @@ class Exporter {
       if (onProgress) onProgress(k, list.length);
       const lid = x.lesson.id;
       const mid = x.medias && x.medias[0] && x.medias[0].id;
+      const title = x.lesson.name || (x.medias && x.medias[0] && x.medias[0].title) || lid;
       let items = [];
-      try { items = await new Echo360Api({ lessonId: lid, mediaId: mid }).notes(); } catch (e) { continue; }
+      // Not read (signed out, no connection): not the same as no notes.
+      try { items = await new Echo360Api({ lessonId: lid, mediaId: mid }).notes(); } catch (e) { failed.push({ title, lid }); continue; }
       if (!items.length) continue;
       const map = mid ? (await idbCache.get('tagmap:' + mid)) || {} : {};
       const tagsOf = (id) => tagStore.tags.filter((g) => (map[id] || []).includes(g.id));
       items.sort((a, b) => (a.time == null ? -1 : a.time) - (b.time == null ? -1 : b.time));
-      const title = x.lesson.name || x.medias[0].title || lid;
       const md = lectureMarkdown({ title, date: lessonDate(lid), url: lessonPageUrl(lid), items, tagsOf });
-      files.push({ name: (lessonDate(lid) ? lessonDate(lid) + ' ' : '') + safeName(title) + '.md', data: new TextEncoder().encode(md) });
+      // Same names (two recordings on one day with one title): numbered.
+      files.push({ name: uniqueName((lessonDate(lid) ? lessonDate(lid) + ' ' : '') + safeName(title) + '.md', taken), data: new TextEncoder().encode(md) });
     }
-    if (!files.length) return 0;
-    // Same names (two recordings on one day with one title): number them.
-    const seen = new Map();
-    for (const f of files) { const n = seen.get(f.name) || 0; seen.set(f.name, n + 1); if (n) f.name = f.name.replace(/\.md$/, ' (' + (n + 1) + ').md'); }
+    if (failed.length && !files.length) throw new Error(tr('exportCourseUnread', { n: failed.length }));
+    if (!files.length) return { files: 0, failed: 0 };
+    const exported = files.length;
+    if (failed.length) {
+      const missing = failed.map((f) => '- [' + f.title.replace(/[[\]]/g, '') + '](' + lessonPageUrl(f.lid) + ')' + (lessonDate(f.lid) ? ' ' + lessonDate(f.lid) : '')).join('\n');
+      const name = uniqueName(tr('exportNotReadFile') + '.md', taken);
+      files.unshift({ name, data: new TextEncoder().encode('# ' + tr('exportNotReadFile') + '\n\n' + tr('exportNotReadText') + '\n\n' + missing + '\n') });
+    }
     platform.save(makeZip(files), safeName(p.lesson.courseName || 'course') + ' notes.zip');
-    return files.length;
+    return { files: exported, failed: failed.length };
   }
 }
 
@@ -14249,7 +14392,7 @@ function startupLines() {
 // What "Copy diagnostics" in the notice copies when the original player is used (our
 // player, and its diagnostics, are not there).
 function startupDiagnosticsText() {
-  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Script manager: ' + platform.manager(),
+  const lines = ['Lite Player for Echo360: ' + VERSION, 'Browser: ' + browserName(), 'Runs in: ' + platform.manager(),
     'Page: ' + location.hostname, ...startupLines(), '', 'Recent warnings and errors:'];
   if (!eventLog.length) lines.push('  none');
   for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
@@ -14263,7 +14406,7 @@ function diagnosticsText(p) {
   const add = (k, val) => lines.push(k + ': ' + val);
   add('Lite Player for Echo360', VERSION);
   add('Browser', browserName());
-  add('Script manager', platform.manager());
+  add('Runs in', platform.manager());
   add('Page', location.hostname + ' (lesson page)');
   lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));
@@ -14482,11 +14625,11 @@ async function telemetryEnv() {
   const os = /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Android/.test(ua) ? 'Android'
     : /iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
   const mgr = /^(\S+)\s*(\S*)/.exec(platform.manager()) || [];
-  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay'];
+  const known = ['Tampermonkey', 'Violentmonkey', 'Greasemonkey', 'ScriptCat', 'Userscripts', 'Stay', 'extension'];
   const manager = known.includes(mgr[1]) ? mgr[1] : mgr[1] === 'unknown' ? 'none' : 'other';
   const conn = /** @type {any} */ (navigator).connection;
   const env = {
-    k: 'env', v: VERSION, browser, browserV: m ? +m[2] : undefined, os,
+    k: 'env', v: VERSION, site: siteRegion(), browser, browserV: m ? +m[2] : undefined, os,
     manager, managerV: manager !== 'none' && /^[\w.-]{1,20}$/.test(mgr[2] || '') ? mgr[2] : undefined,
     lang: uiLang(), browserLang: (/^[a-z]{2,3}/.exec((navigator.language || '').toLowerCase()) || [])[0],
     touch: matchMedia('(pointer: coarse)').matches,
@@ -14604,6 +14747,7 @@ const telemetry = {
     if (!this.ids) {
       let p; // read inside the function once it has awaited, so set by then
       this.ids = p = (async () => {
+        await platform.privateReady;
         let secret = platform.privateKv.get(TELEMETRY_SECRET_KEY);
         if (!/^[A-Za-z0-9_-]{43}$/.test(secret || '')) {
           secret = newTelemetrySecret();
@@ -14865,7 +15009,7 @@ const telemetry = {
 
   fallback(reason) {
     try {
-      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, frontend: echoFrontend(), injectState: boot.readyState }]);
+      if (this.enabled()) this.send([{ k: 'fallback', v: VERSION, reason, site: siteRegion(), framed: inFrame(), frontend: echoFrontend(), injectState: boot.readyState }]);
     } catch (e) { /* not sent */ }
   },
 
@@ -15196,6 +15340,8 @@ class UsageSession {
     try { for (const [a, b] of x.played ? x.played() : []) watched += Math.max(0, b - a); } catch (e) { watched = 0; }
     const s = {
       k: 'session', v: VERSION, sid: this.sid,
+      // Which of Echo360's sites, and whether in another page's frame (a learning system).
+      site: siteRegion(), framed: inFrame(),
       // Watching
       fromLoad: this.fromLoad,
       readyMs: Math.round(this.readyMs),
@@ -15473,6 +15619,7 @@ function unsupportedReason() {
     const stack = String((r && r.stack) || '');
     if (/lite[ -]player[ -]for[ -]echo360/i.test(stack)) { log.warn('unhandled rejection', r); logEvent('warn', 'unhandled rejection: ' + ((r && r.message) || r)); }
   });
+  if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }
   if (courseList.matches()) { try { courseList.start(); } catch (e) { /* the page works without it */ } return; }
   const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
   if (!adapter) return;

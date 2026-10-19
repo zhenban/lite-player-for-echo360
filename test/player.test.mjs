@@ -484,3 +484,37 @@ test('with @grant (a wrapped window), the player still catches the page\'s own s
     await closeWindow(pg.w);
   }
 });
+
+test('single view after a swap keeps the shown picture until the reloaded clock has one, not a black moment', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  const ready = (v, n) => Object.defineProperty(v, 'readyState', { value: n, configurable: true });
+  try {
+    assert.ok(p.dual, 'the fixture has two views');
+    p.setLayout('side');
+    p.swapViews();   // the follower now shows the main view; the clock plays the other
+    assert.notEqual(p.clockPos, p.primaryPos);
+    const shown = p.primaryPos;
+    ready(p.fvideo, 4);
+    p.setLayout('single');
+    // The clock reloads with the shown view; meanwhile the follower stays in its place.
+    assert.equal(p.clockPos, shown);
+    assert.equal(p.fvideo.dataset.slot, 'primary', 'the follower\'s picture is still shown');
+    assert.equal(p.video.dataset.slot, 'secondary', 'the reloading clock is out of sight');
+    assert.ok(p.follower.uri, 'the follower is kept until then');
+    // The clock has its picture at the position: it takes over and the follower goes.
+    p.clock.starting = null;
+    ready(p.video, 2);
+    p.video.dispatchEvent(new pg.w.Event('canplay'));
+    assert.equal(p.video.dataset.slot, 'primary');
+    assert.equal(p.follower.uri, null, 'one stream, as in single view');
+    // Back to two views: the follower comes back with the other view.
+    p.setLayout('side');
+    assert.ok(p.follower.uri);
+    assert.equal(p.fvideo.dataset.slot, 'secondary');
+  } finally {
+    p.destroy();
+    await closeWindow(pg.w);
+  }
+});
