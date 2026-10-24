@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Lite Player for Echo360",
+  "name": "__MSG_name__",
   "version": "{{VERSION}}",
-  "version_name": "{{VERSION_NAME}}",
-  "description": "Unofficial, lightweight player for Echo360 lecture recordings: low CPU use, both views side by side, slide chapters.",
+  "description": "__MSG_description__",
+  "default_locale": "en",
   "icons": { "16": "icon-16.png", "32": "icon-32.png", "48": "icon-48.png", "128": "icon-128.png" },
   "minimum_chrome_version": "111",
   "permissions": ["storage"],

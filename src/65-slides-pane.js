@@ -284,7 +284,7 @@ class SlidesPane {
     box.textContent = '';
     if (!deck) return;
     const input = el('input', { type: 'file', accept: '.pdf,application/pdf', multiple: true, hidden: true });
-    // Failures are shown in this tab (deck.error).
+    // Failures are shown in this tab (deck.notice, deck.error).
     input.addEventListener('change', guard(() => { if (input.files.length) deck.addFiles(input.files).catch(() => {}); }));
     const files = el('div.sfiles');
     // With several files, a name is a button that shows that file (renderPageInfo marks
@@ -312,6 +312,7 @@ class SlidesPane {
     else if (!deck.files.length) msg = tr('slidesLocal');
     box.append(files);
     if (msg) box.append(el('div.sdmsg', { text: msg }));
+    if (deck.notice) box.append(el('div.sdmsg', { text: deck.notice }));
     if (deck.capped && deck.state !== 'error') box.append(el('div.sdmsg', { text: tr('deckCapped', { n: DECK_MAX_PAGES }) }));
   }
 

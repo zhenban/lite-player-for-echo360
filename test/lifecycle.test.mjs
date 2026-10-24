@@ -9,7 +9,7 @@ import { newWindow, closeWindow, same } from './dom-guard.mjs';
 
 const src = new URL('../src/', import.meta.url);
 const code = readdirSync(src).filter((f) => f.endsWith('.js') && f !== '90-main.js').sort().map((f) => readFileSync(new URL(f, src), 'utf8')).join('\n');
-const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ocrLanguage,Exporter,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,platform,'
+const names = 'Disposer,SlideReader,Popovers,BAR_OVERFLOW,SPEED_STOPS,VolumeControl,KeyboardShortcuts,VOLUME_STEP,VOLUME_WHEEL_PX,VOLUME_OSD_MS,SettingsMenu,Tooltips,SpeedControl,MenuBar,setUnavailable,nextSpeed,snapSpeed,TranscriptPanel,Stream,TagStore,idbCache,SlideReader,DiscussionPane,NotesPane,LayoutControls,courseList,CaptionsView,FrameTask,SlideAnalyzer,HlsVideoReader,SeekBar,SlideDeckController,ocrLanguage,Exporter,ABLoop,Zoomer,playerTemplate,PLAYER_CSS,LOADING_CSS,platform,'
   + 'setPdfLib: (lib) => { pdfjsPromise = Promise.resolve(lib); }';
 
 // The sources in a page of their own; nothing reaches the network.
@@ -572,7 +572,7 @@ test('review 2 F6: a PDF declaring very many pages is read up to the cap; an ove
   m.idbCache.updateMany = async () => { stored++; return {}; };
   const big = { name: 'Big.pdf', type: 'application/pdf', size: 400 * 1024 * 1024, arrayBuffer: async () => assert.fail('read') };
   await assert.rejects(deck.addFiles([big]), /Big\.pdf/);
-  assert.equal(deck.state, 'error');
+  assert.match(deck.notice, /Big\.pdf/);
   assert.equal(stored, 0);
   d.dispose();
 }));
@@ -1153,3 +1153,91 @@ test('review S4: a PDF added to one recording while another tab removes it from 
   assert.equal(db.has('deckfile:' + hash), false);
   assert.equal(db.has('deckref:' + hash), false);
 }));
+
+test('B5: a frame asked for in the floating window, closed before it came, does not stop later frames', async () => withPage(async (w, m) => {
+  const other = newWindow();
+  try {
+    const elem = w.document.createElement('div');
+    other.document.body.append(elem);   // the player moved into the floating window
+    other.requestAnimationFrame = () => 7;   // the window closes before its frame comes
+    let runs = 0;
+    const task = new m.FrameTask(() => { runs++; }, () => elem);
+    task.request();
+    w.document.body.append(elem);   // put back in the page
+    let asked = 0;
+    w.requestAnimationFrame = (fn) => { asked++; setTimeout(fn, 0); return 1; };
+    task.request();
+    await tick();
+    assert.equal(asked, 1, 'asked the page for a frame');
+    assert.equal(runs, 1);
+  } finally { await closeWindow(other); }
+}));
+
+test('C5: a PDF refused or a removal not saved leaves the slides that work as they are, and says why', async () => withPage(async (w, m) => {
+  w.Worker = class { terminate() {} };
+  const doc = { numPages: 1, getPage: async () => ({ view: [0, 0, 100, 75], getTextContent: async () => ({ items: [{ str: 'Hash tables', transform: [1, 0, 0, 1, 0, 70], height: 5 }] }) }) };
+  m.setPdfLib({ PDFWorker: class { destroy() {} }, getDocument: () => ({ promise: Promise.resolve(doc), destroy: async () => {} }) });
+  m.idbCache.get = async () => ({ arrayBuffer: async () => new ArrayBuffer(8) });
+  m.platform.libBlobUrl = async () => 'blob:pdf-worker';
+  const d = new m.Disposer();
+  const deck = new m.SlideDeckController({ lesson: { mediaId: 'test', sources: [] }, video: {}, disposer: d });
+  deck.decide = () => {};
+  deck.files = [{ hash: 'abc', name: 'test.pdf' }];
+  deck.ocr = { state: 'done', lang: m.ocrLanguage(['Hash tables']), source: { index: 1 } };
+  await deck.reload();
+  assert.equal(deck.state, 'ready');
+  // Too large: refused, and the slides already there go on.
+  const big = { name: 'Big.pdf', type: 'application/pdf', size: 400 * 1024 * 1024, arrayBuffer: async () => assert.fail('read') };
+  await assert.rejects(deck.addFiles([big]), /Big\.pdf/);
+  assert.equal(deck.state, 'ready');
+  assert.match(deck.notice, /Big\.pdf/);
+  // A removal that could not be saved: the file stays (it would be back on the next visit).
+  m.idbCache.updateMany = async () => { throw new Error('disk full'); };
+  await deck.removeFile('abc');
+  assert.deepEqual(deck.files.map((f) => f.name), ['test.pdf']);
+  assert.equal(deck.state, 'ready');
+  assert.match(deck.notice, /test\.pdf.*disk full/);
+  d.dispose();
+}));
+
+test('B11: dragging over a stage with no width (not laid out yet) leaves the sizes and the position as they were', async () => withPage(async (w, m) => {
+  const stage = w.document.createElement('div');
+  stage.innerHTML = '<div class="divider"></div><div class="pipframe"><div class="grip"></div></div>';
+  stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 });
+  const divider = stage.querySelector('.divider');
+  divider.setPointerCapture = () => {};
+  const prefs = { ratio: 0.5, pipw: 0.26, corner: 'br' };
+  const d = new m.Disposer();
+  new m.LayoutControls({ $: (s) => stage.querySelector(s), stage, prefs, ui: {}, onPipClick() {}, savePrefs() {}, redrawPdf() {}, armIdle() {} }, d);
+  divider.dispatchEvent(pointer(w, 'pointerdown', { pointerId: 1, pointerType: 'mouse', clientX: 10 }));
+  divider.dispatchEvent(pointer(w, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 30 }));
+  divider.dispatchEvent(pointer(w, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 30 }));
+  assert.equal(prefs.ratio, 0.5);
+  // The seek bar: no jump to NaN.
+  const root = w.document.createElement('div');
+  root.innerHTML = m.playerTemplate();
+  const seek = root.querySelector('.seek');
+  seek.setPointerCapture = () => {};
+  seek.getBoundingClientRect = () => ({ left: 0, width: 0 });
+  const jumps = [];
+  new m.SeekBar({ $: (s) => root.querySelector(s), video: { currentTime: 30, buffered: { length: 0 } }, clock: { position: () => 30 }, duration: () => 100, ui: { dragging: false }, isIdle: () => false, markers: { nearest: () => null }, skipAt: () => null, previewAt: () => '', seek: (t) => jumps.push(t), armIdle() {} }, d);
+  seek.dispatchEvent(pointer(w, 'pointerdown', { pointerId: 2, clientX: 20 }));
+  seek.dispatchEvent(pointer(w, 'pointerup', { pointerId: 2, clientX: 20 }));
+  assert.ok(jumps.every(Number.isFinite), String(jumps));
+  d.dispose();
+}));
+
+test('B11: a course list row whose lesson id has a backslash still gets its watched bar', async () => {
+  const w = newWindow({ url: 'https://echo360.net.au/section/s1/home', settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true } });
+  try {
+    w.fetch = () => Promise.reject(new Error('network forbidden in tests'));
+    const m = w.eval('(function () { const VERSION = "test";\n' + code + '\nreturn {' + names + '}; })()');
+    const lid = 'a\\b';
+    w.document.body.innerHTML = '<div class="class-row"><header class="header-details"></header></div>';
+    w.document.querySelector('.class-row').setAttribute('data-test-lessonid', lid);
+    m.idbCache.get = async (key) => (key === 'watched:' + lid ? { d: 100, r: [[0, 50]] } : null);
+    m.courseList.start();
+    for (let i = 0; i < 20 && !w.document.querySelector('.lp360-watch'); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(w.document.querySelector('.class-row .lp360-watch'), 'labelled');
+  } finally { await closeWindow(w); }
+});

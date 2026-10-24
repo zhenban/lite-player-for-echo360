@@ -17,9 +17,20 @@ const ACK = 'lite-player-for-echo360:ack';
 test('manifest: the userscript\'s pages, the usage-data server, storage, nothing else', () => {
   const m = x.manifest;
   assert.equal(m.manifest_version, 3);
-  assert.match(m.version, /^\d+\.\d+\.\d+\.\d+$/);
-  assert.match(m.version_name, /^\d+\.\d+ beta \d+$/);
-  assert.ok(m.description.length <= 132, 'the store allows 132 characters');
+  // The player's version, plain: the store already has 1.0.0.1 ("1.0 beta 1"), lower than 1.0.1.
+  assert.equal(m.version, readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim());
+  assert.equal(m.version_name, undefined);
+  // Name and summary from _locales (the store listing in each language), English by default.
+  assert.equal(m.name, '__MSG_name__');
+  assert.equal(m.description, '__MSG_description__');
+  assert.equal(m.default_locale, 'en');
+  const langs = Object.keys(x.files).filter((f) => f.startsWith('_locales/')).map((f) => f.split('/')[1]).sort();
+  assert.deepEqual(langs, ['en', 'zh_CN']);
+  for (const lang of langs) {
+    const msgs = JSON.parse(x.files['_locales/' + lang + '/messages.json']);
+    assert.ok(msgs.name.message.length <= 45, lang + ': the store allows 45 characters in a name');
+    assert.ok(msgs.description.message.length <= 132, lang + ': the store allows 132 characters in a summary');
+  }
   const matches = [...src('meta.txt').matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((r) => r[1]);
   assert.deepEqual(m.permissions, ['storage']);
   assert.deepEqual(m.host_permissions, [/const TELEMETRY_URL = '([^']+)'/.exec(src('87-telemetry.js'))[1] + '/*']);

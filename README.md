@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/zhenban/lite-player-for-echo360)](https://github.com/zhenban/lite-player-for-echo360/releases/latest)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/bbcmnjnijjfpnngkkgoahjljibfackbh?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 **Watch Echo360 lecture recordings without the fan noise.** Echo360's own player keeps a whole CPU core busy for as long as the lecture plays: loud fans, a draining battery and a sluggish computer while you take notes. Lite Player replaces it with one that lets the browser play the same video streams itself, with hardware decoding, at about the cost of a plain video file. It also adds the tools you reach for when you study from a recording: both views side by side, slide chapters, a slide PDF that turns its own pages, and a searchable transcript.
@@ -16,17 +17,20 @@ Your notes, bookmarks, discussion and viewing progress stay Echo360's own, and t
 
 Two ways to install the same player, with the same features and settings. Use one or the other, not both.
 
-### Chrome or Edge extension (1.0 beta)
+### Chrome or Edge extension (easiest)
 
-The extension is new, so it is marked beta. It is on its way to the Chrome Web Store; until then, install it from the zip:
+1. Open **[Lite Player for Echo360 in the Chrome Web Store](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)** and click **Add to Chrome**. In Edge, click **Allow extensions from other stores** first when Edge asks.
+2. Open any Echo360 lecture recording.
 
-1. Download `lite-player-for-echo360-extension-….zip` from the [latest release](https://github.com/zhenban/lite-player-for-echo360/releases/latest) and unzip it.
-2. Open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode** and click **Load unpacked**. Choose the unzipped folder.
-3. Open any Echo360 lecture recording.
+The extension updates itself.
 
-An extension loaded from a zip does not update by itself: load the new zip when a release comes out.
+<details>
+<summary>Without the store (manual install)</summary>
 
-### Userscript (1.0.0, every supported browser)
+Download `lite-player-for-echo360-extension-….zip` from the [latest release](https://github.com/zhenban/lite-player-for-echo360/releases/latest) and unzip it. Open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode**, click **Load unpacked** and choose the unzipped folder. A copy installed this way does not update itself: load the new zip when a release comes out. If you move to the store version, remove this copy first.
+</details>
+
+### Userscript (every supported browser)
 
 1. **Get a userscript manager:** [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/). In Chrome or Edge, open `chrome://extensions`, click **Details** on the manager and turn on **Allow user scripts** (on older versions, **Developer mode**).
 2. **Install Lite Player:** open **[lite-player-for-echo360.user.js](https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js)** and click **Install** when the manager asks.

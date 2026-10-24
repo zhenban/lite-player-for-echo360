@@ -518,3 +518,27 @@ test('single view after a swap keeps the shown picture until the reloaded clock 
     await closeWindow(pg.w);
   }
 });
+
+test('B7: in the floating window, full screen says it is not available there instead of doing nothing', async () => {
+  const pg = page();
+  pg.start();
+  const p = pg.player();
+  const other = newWindow();
+  try {
+    Object.defineProperty(other.document, 'fullscreenEnabled', { value: false, configurable: true });   // as Chrome's floating window
+    const said = [];
+    p.toast = (msg) => { said.push(msg); };
+    let asked = 0;
+    p.host.requestFullscreen = () => { asked++; return Promise.resolve(); };
+    p.video.webkitEnterFullscreen = () => { asked++; };
+    other.document.body.append(p.host);   // the player moved into the floating window
+    p.toggleFullscreen();
+    assert.equal(asked, 0);
+    assert.equal(said.length, 1, 'says why');
+    assert.match(said[0], /floating window/);
+  } finally {
+    p.destroy();
+    await closeWindow(other);
+    await closeWindow(pg.w);
+  }
+});

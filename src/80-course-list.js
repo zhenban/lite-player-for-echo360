@@ -132,7 +132,8 @@ const courseList = {
         known.set(lid, null);
         queue.push(() => lookup(lid).then((info) => {
           known.set(lid, info);
-          for (const r of document.querySelectorAll('.class-row[data-test-lessonid="' + lid.replace(/"/g, '') + '"]')) label(r, info);
+          // Compared, not put in a selector (an id with a backslash would break it).
+          for (const r of document.querySelectorAll('.class-row[data-test-lessonid]')) if (r.getAttribute('data-test-lessonid') === lid) label(r, info);
         }));
       }
       pump();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      1.0.0
+// @version      1.0.1
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -29,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const DEV_HOOKS = false;
 
 // ---- 00-boot.js ----
@@ -409,13 +409,17 @@ class FrameTask {
 
   request() {
     const node = this.nodeOf();
-    if (this.id || hiddenFor(node)) return;
-    this.win = windowOf(node);
-    this.id = this.win.requestAnimationFrame(this.run);
+    if (hiddenFor(node)) return;
+    const win = windowOf(node);
+    // A frame asked for in another window (the floating window, since closed or left) may
+    // never come: ask this one instead.
+    if (this.id) { if (win === this.win) return; this.cancel(); }
+    this.win = win;
+    this.id = win.requestAnimationFrame(this.run);
   }
 
   cancel() {
-    if (this.id && this.win) this.win.cancelAnimationFrame(this.id);
+    if (this.id && this.win) { try { this.win.cancelAnimationFrame(this.id); } catch (e) { /* a closed window */ } }
     this.id = 0;
   }
 }
@@ -638,6 +642,7 @@ const STRINGS = {
     deckError: 'Could not read the slide file ({msg}).',
     deckTooBig: '{name} is too large for a slide file (at most {max} MB).',
     deckCapped: 'Only the first {n} pages are used to follow the lecture.',
+    deckRemoveFailed: 'Could not remove {name} from this device ({msg}). It is still here.',
     deckSaveFailed: 'Could not store {name} on this device ({msg}). Is the disk full?',
     prevPage: 'Previous page',
     nextPage: 'Next page',
@@ -769,6 +774,7 @@ const STRINGS = {
     exportedLecture: 'Exported {n} notes and bookmarks ({p} slide pictures)',
     exportedCourse: 'Exported {n} recordings with notes',
     exportedNothing: 'No notes or bookmarks in this course yet',
+    fullscreenPopout: 'Full screen is not available in the floating window. Make the window bigger, or go back to the page for full screen.',
     fullscreenBlocked: 'Fullscreen is not allowed by the site showing this recording. Open the recording in its own tab to use it.',
     exportedCoursePartial: 'Exported {n} recordings with notes. The notes of {m} could not be read: they are listed in "{file}" in the zip. Export again to include them.',
     exportCourseUnread: 'Could not read the notes of {n} recordings (signed out, or no connection?). Nothing was exported.',
@@ -887,7 +893,7 @@ const STRINGS = {
     loadingTip2: 'S swaps the two views. The layout button switches between side by side, picture in picture and one view.',
     loadingTip3: 'Add the lecturer\'s slide PDF in the Slides tab: it turns to the page being talked about. The file stays on this device.',
     loadingTip4: 'Chapters come from the slide changes. Shift with the arrow keys jumps between them.',
-    loadingTip5: 'Long silences (breaks, group work) can be skipped automatically: Settings, Silence.',
+    loadingTip5: 'Long silences (breaks, group work) can be skipped automatically: Settings, Skip silence.',
     loadingTip6: 'Press ? for all the keyboard shortcuts.',
     fallbackNotice:'Lite Player for Echo360 could not take over this page, so the original player is being used (with the CPU fix enabled).',
   },
@@ -963,8 +969,8 @@ STRINGS.zh = {
   volumeLevel: '音量 {pct}%',
   muted: '已静音',
   swapViews: '交换画面',
-  emptyScreenCamera: '屏幕没有画面，已只显示摄像机',
-  emptyScreenBack: '屏幕恢复画面，已恢复原来的布局',
+  emptyScreenCamera: '屏幕没有画面，暂时只显示摄像机画面。',
+  emptyScreenBack: '屏幕又有画面了，已恢复你的布局。',
   emptyScreenAuto: '屏幕没有画面时只显示摄像机',
   telemetryMenu: '使用数据',
   telemetrySend: '发送匿名使用数据',
@@ -994,7 +1000,7 @@ STRINGS.zh = {
   telemetryResetDelete: '先删除我的数据，再重置',
   telemetryResetOnly: '只重置',
   telemetryResetDone: '已使用新的 ID。',
-  emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机。在一节录像里自己选过布局后，这节录像不再自动切换。',
+  emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机画面。在一个录像里自己选过布局后，这个录像不再自动切换。',
   swapViewsKey: '交换画面（S）',
   layout: '布局',
   layoutNow: '布局：{layout}',
@@ -1018,7 +1024,7 @@ STRINGS.zh = {
   copyFrameKey: '复制画面（P）',
   copyCaptions: '复制文字',
   copyCaptionsKey: '复制文字（A）',
-  copyCaptionsSpan: '复制文字的长度',
+  copyCaptionsSpan: '“复制文字”的时长',
   copyCaptionsSpanDesc: '“复制文字”复制刚才讲的内容（整句），附带课名和时间。',
   copySpanValue: '最近 {time}',
   copiedFrame: '已复制画面（{w} × {h}）',
@@ -1123,15 +1129,15 @@ STRINGS.zh = {
   qualityAuto: '自动',
   qualityAutoBest: '自动（网络允许的最高画质）',
   qualityScreen: '屏幕',
-  qualityCamera: '摄像头',
+  qualityCamera: '摄像机',
   qualityNow: '正在播放 {q}',
   slides: '幻灯片',
   slideN: '幻灯片 {n}',
   slidesFinding: '正在查找幻灯片切换：{pct}%',
   slidesRough: '时间是根据预览图估计的。正在查找准确的切换位置：{pct}%',
   slidesFromPreview: '共 {n} 张幻灯片，根据 Echo360 的预览图（约每分钟一张）推测，时间是大概的。',
-  slidesPreviewFinding: '正在根据 Echo360 的预览图推测幻灯片切换……',
-  slidesFound: '从屏幕画面中自动找到 {n} 页幻灯片。',
+  slidesPreviewFinding: '正在根据 Echo360 的预览图推测幻灯片切换…',
+  slidesFound: '从屏幕画面中自动找到 {n} 张幻灯片。',
   slidesNone: '没有在这个录像里自动找到幻灯片切换。',
   slidesSaveData: '浏览器开着省流量模式，不查找幻灯片章节。',
   screenView: '屏幕画面：',
@@ -1152,6 +1158,7 @@ STRINGS.zh = {
   deckError: '无法读取幻灯片文件（{msg}）。',
   deckTooBig: '{name} 太大，不能作为幻灯片文件（最多 {max} MB）。',
   deckCapped: '只用前 {n} 页跟随讲课。',
+  deckRemoveFailed: '无法从本设备移除 {name}（{msg}），它仍然保留着。',
   deckSaveFailed: '无法把 {name} 存到本设备（{msg}）。磁盘满了吗？',
   prevPage: '上一页',
   nextPage: '下一页',
@@ -1171,8 +1178,8 @@ STRINGS.zh = {
   shownAt: '出现在',
   notFoundInRecording: '录像里没有找到。',
   wrongPage: '页码不对？',
-  useThisPage: '当前这段显示第 {n} 页',
-  markNotSlide: '当前这段不是幻灯片',
+  useThisPage: '现在这一段改为显示第 {n} 页',
+  markNotSlide: '现在这一段不是幻灯片',
   undoCorrection: '撤销我在这里的更正',
   showChapters: '显示 {n} 个章节',
   hideChapters: '隐藏章节',
@@ -1181,7 +1188,7 @@ STRINGS.zh = {
   silence: '无声段',
   silenceAuto: '自动跳过无声段',
   silenceAutoDesc: '跳过较长的停顿（课间休息、小组讨论）。关闭时会出现一个按钮，由你决定是否跳过。',
-  silenceMin: '标记的最短无声段',
+  silenceMin: '无声段最短时长',
   silenceSensitivity: '灵敏度',
   low: '低',
   normal: '中',
@@ -1217,7 +1224,7 @@ STRINGS.zh = {
   authExpiredTitle: '播放权限已过期',
   authExpiredText: 'Echo360 的视频访问权限已过期，无法续期。刷新页面后会从当前位置继续。',
   authLoginExpiredText: '你的 Echo360 登录已过期。刷新页面重新登录，播放会从当前位置继续。',
-  sessionRenewing: '正在刷新会话…',
+  sessionRenewing: '正在续期播放权限…',
   featureFailed: '{name}出错了，暂时关闭。播放不受影响。',
   tagExam: '考试',
   tagAssignment: '作业',
@@ -1248,7 +1255,7 @@ STRINGS.zh = {
   keyBookmark: '给此刻加书签，或删除这里的书签',
   keyTag: '给这里的笔记或书签加标签（没有的话先加书签）',
   keyFlag: '没听懂（老师可见；会先确认）',
-  keySlide: '上一页 / 下一页幻灯片',
+  keySlide: '上一张 / 下一张幻灯片',
   keyCopyFrame: '复制画面',
   keyCopyCaptions: '复制文字',
   keyZoom: '放大 / 缩小（主画面；也可以在任一画面上滚动滚轮，拖动可移动）',
@@ -1283,6 +1290,7 @@ STRINGS.zh = {
   exportedLecture: '已导出 {n} 条笔记和书签（{p} 张幻灯片图片）',
   exportedCourse: '已导出 {n} 个有笔记的录像',
   exportedNothing: '这门课程还没有笔记或书签',
+  fullscreenPopout: '悬浮窗里不能全屏。可以把悬浮窗拉大，或回到页面再全屏。',
   fullscreenBlocked: '嵌入这个录像的网站不允许全屏。在单独的标签页里打开录像就可以全屏。',
   exportedCoursePartial: '已导出 {n} 个有笔记的录像。有 {m} 个录像的笔记没能读取，列在 zip 里的“{file}”中。再导出一次可以补上。',
   exportCourseUnread: '没能读取 {n} 个录像的笔记（登录过期，或者没有网络？），没有导出任何内容。',
@@ -1296,7 +1304,7 @@ STRINGS.zh = {
   backupMade: '已保存备份（{n} 项）',
   backupRestored: '已恢复 {n} 项，正在刷新…',
   backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
-  backupTooBig: '这个文件太大，不像备份文件（最多 {max} MB）',
+  backupTooBig: '这个文件太大，不能作为备份文件（最多 {max} MB）',
   mdRecorded: '录制于 {date}',
   mdOpen: '在 Echo360 中打开',
   mdNothing: '没有笔记或书签。',
@@ -1342,9 +1350,9 @@ STRINGS.zh = {
   kbdSpace: '空格',
   appVersion: 'Echo360 轻量播放器 {version}',
   noPictureYet: '还没有画面',
-  readerNoWebCodecs: '这个浏览器不能读取视频来跟读幻灯片（需要 WebCodecs）。PDF 仍可手动翻页。',
-  readerSaveData: '浏览器开着省流量模式，幻灯片跟读已关闭。PDF 仍可手动翻页。',
-  readerFailed: '幻灯片跟读停止了（{msg}）。PDF 仍可手动翻页。',
+  readerNoWebCodecs: '这个浏览器不能读取视频，所以 PDF 不能自动翻页（需要 WebCodecs）。仍可手动翻页。',
+  readerSaveData: '浏览器开着省流量模式，PDF 自动翻页已关闭。仍可手动翻页。',
+  readerFailed: 'PDF 自动翻页停止了（{msg}）。仍可手动翻页。',
   featurePlayer: '播放器',
   featureLoop: 'A-B 循环',
   featureDiscussion: '讨论',
@@ -1356,9 +1364,9 @@ STRINGS.zh = {
   featureSlideChapters: '幻灯片章节',
   featureEmptyCamera: '屏幕无画面时显示摄像机',
   featureUsage: '使用数据',
-  featureSlideReader: '幻灯片跟读',
+  featureSlideReader: 'PDF 自动翻页',
   featureNotes: '笔记',
-  featureSession: '会话续期',
+  featureSession: '播放权限续期',
   featureZoom: '缩放',
   dryRunAll: '测试模式：笔记、帖子等改动不会发送到 Echo360。',
   dryRunPublic: '测试模式：帖子、回复、点赞和“没听懂”不会发送到 Echo360。',
@@ -1389,19 +1397,19 @@ STRINGS.zh = {
   captionsLoadFailed: '转录没能加载，可以在“转录”标签页重试。',
   retry: '重试',
   close: '关闭',
-  errorNotice: 'Echo360 轻量播放器遇到意外错误，已切换到原播放器（CPU 修复已开启）。',
+  errorNotice: 'Echo360 轻量播放器遇到意外错误，已切换到原播放器（并开启了降低 CPU 占用的补丁）。',
   loadingPlayer: '正在加载播放器…',
   loadingProgress: '正在加载播放器：{done} KB / {total} KB',
   loadingSlow: '网络较慢，已等 {s} 秒。{limit} 秒内加载不完会自动打开原播放器。',
   loadingUseOriginal: '现在就用原播放器',
   loadingTipLabel: '小提示',
-  loadingTip1: '空格播放和暂停，J 和 L 前后跳 10 秒，[ 和 ] 调倍速。',
-  loadingTip2: 'S 交换两路画面。布局按钮可以在并排、画中画和单路之间切换。',
-  loadingTip3: '在“幻灯片”标签页添加老师的 PDF，会自动翻到正在讲的那页。文件只存在这台设备上。',
-  loadingTip4: '章节按幻灯片翻页自动生成，Shift 加方向键在章节之间跳。',
-  loadingTip5: '长时间的无声段（课间休息、小组讨论）可以自动跳过：设置 → 无声段。',
+  loadingTip1: '空格播放和暂停，J 和 L 前后跳 10 秒，[ 和 ] 调整播放速度。',
+  loadingTip2: 'S 交换两个画面。布局按钮在并排、画中画和单画面之间切换。',
+  loadingTip3: '在“幻灯片”标签页添加老师的幻灯片 PDF，会自动翻到正在讲的那一页。文件只存在本设备上。',
+  loadingTip4: '章节按幻灯片切换自动生成，Shift + 方向键在章节之间跳转。',
+  loadingTip5: '长时间的无声段（课间休息、小组讨论）可以自动跳过：设置 → 跳过无声段。',
   loadingTip6: '按 ? 查看全部快捷键。',
-  fallbackNotice: 'Echo360 轻量播放器无法接管这个页面，正在使用原播放器（CPU 修复已开启）。',
+  fallbackNotice: 'Echo360 轻量播放器无法接管这个页面，正在使用原播放器（并开启了降低 CPU 占用的补丁）。',
 };
 
 // ---- 02-tuning.js ----
@@ -5434,7 +5442,7 @@ class LitePlayer {
     this.keys = new KeyboardShortcuts({ $, isDestroyed, wake: () => this.wake(), actions: this.keyActions() }, this.d.child());
     this.popout = new PopoutController({
       $, host: this.host, video: this.video, title: this.lesson.title, onKey: this.keys.onKey, isDestroyed, toast,
-      relayout: () => { this.quality.apply(); this.redrawPdf(); this.render(true); this.menus.fitBar(); this.pops.place(); },
+      relayout: () => { this.updateFullscreenButton(); this.quality.apply(); this.redrawPdf(); this.render(true); this.menus.fitBar(); this.pops.place(); },
     }, this.d.feature('floating window'));
   }
 
@@ -5644,8 +5652,23 @@ class LitePlayer {
   // Where no element can be fullscreen (iPhone), the main video goes into the system's own
   // player: one view, its own controls; back inline it plays on in ours.
   toggleFullscreen() {
+    const why = this.fullscreenWhyNot();
+    if (why) { this.toast(why); return; }
     if (fullscreenElement()) exitFullscreen();
     else if (!requestFullscreen(this.host) && typeof this.video.webkitEnterFullscreen === 'function') this.video.webkitEnterFullscreen();
+  }
+
+  // Why full screen cannot be used here, or '': the floating window never allows it; in a
+  // frame whose page does not allow it, neither the player nor a video can be fullscreen.
+  fullscreenWhyNot() {
+    if (this.host.ownerDocument !== document) return tr('fullscreenPopout');
+    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') return tr('fullscreenBlocked');
+    return '';
+  }
+
+  // Said on the button instead of a click that does nothing.
+  updateFullscreenButton() {
+    setUnavailable(this.$('.fs'), this.fullscreenWhyNot(), tr('fullscreenKey'));
   }
 
   // ---- idle (auto-hide) handling ----
@@ -5676,9 +5699,7 @@ class LitePlayer {
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
     d.listen($('.fwd'), 'click', () => this.seek(this.clock.position() + 10));
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
-    // In a frame whose page does not allow it, neither the player nor a video can be
-    // fullscreen: said on the button instead of a click that does nothing.
-    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') setUnavailable($('.fs'), tr('fullscreenBlocked'), tr('fullscreenKey'));
+    this.updateFullscreenButton();
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
     const onFullscreen = () => {
@@ -5902,7 +5923,7 @@ class LitePlayer {
       this.deck.addFiles(e.dataTransfer.files).then((n) => {
         if (!n) { this.toast(tr('dropNotPdf')); return; }
         if (this.sidebar.has('slides')) this.sidebar.open('slides');
-      }).catch((err) => this.toast(this.deck.state === 'error' && this.deck.error ? this.deck.error : tr('deckError', { msg: String((err && err.message) || err) })));
+      }).catch((err) => this.toast(this.deck.notice || tr('deckError', { msg: String((err && err.message) || err) })));
     });
   }
 
@@ -6273,8 +6294,10 @@ class SeekBar {
     const frac = (cx) => clamp((cx - rect.left) / rect.width, 0, 1);
     let nearMarker = null;
     let downX = 0;
+    // null: the bar has no width (not laid out), so no position can be read from it.
     const hover = (e) => {
       if (!rect) rect = seekEl.getBoundingClientRect();
+      if (!(rect.width > 0)) return null;
       const f = frac(e.clientX);
       const dur = x.duration();
       seekEl.style.setProperty('--h', f.toFixed(4));
@@ -6298,6 +6321,7 @@ class SeekBar {
       start: (e) => {
         if (e.button !== 0) return null;
         rect = seekEl.getBoundingClientRect();
+        if (!(rect.width > 0)) return null;
         seekEl.setPointerCapture(e.pointerId);
         downX = e.clientX;
         x.ui.dragging = true;
@@ -6608,6 +6632,8 @@ class LayoutControls {
         if (e.button !== 0) return null;
         e.stopPropagation();
         stageRect = x.stage.getBoundingClientRect();
+        // Not laid out (no width): nothing to measure the drag against.
+        if (!(stageRect.width > 0)) return null;
         divider.setPointerCapture(e.pointerId);
         divider.classList.add('dragging');
         x.ui.dragging = true;
@@ -7061,6 +7087,9 @@ class MenuBar {
         if (r.status !== 200 || !r.data || !r.data.deleted) { set(tr('telemetryDeleteTitle'), [el('p', { text: failed(r) })], [close]); return; }
         const n = Object.values(r.data.deleted).reduce((a, b) => a + (+b || 0), 0);
         if (then) then(n); else set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleted', { n }) })], [close]);
+      }).catch((e) => {
+        log.warn('usage data delete:', e);
+        set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryFailed', { msg: String((e && e.message) || e) }) })], [close]);
       });
     };
     const reset = (n) => {
@@ -7087,7 +7116,11 @@ class MenuBar {
         const rows = Array.isArray(r.data[k]) ? r.data[k] : [];
         if (!rows.length) continue;
         const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-        const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
+        const cell = (c, v) => {
+          if (v == null) return '';
+          const t = c === 'at' ? new Date(v) : null;
+          return t && !Number.isNaN(t.getTime()) ? t.toISOString().slice(0, 19).replace('T', ' ') : String(v);
+        };
         nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }));
         if (cols.length <= TELEMETRY_WIDE_COLS) {
           nodes.push(el('div.tdscroll', null, el('table', null,
@@ -7109,6 +7142,9 @@ class MenuBar {
       if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
       const json = JSON.stringify(r.data, null, 2);
       set(tr('telemetryDataTitle'), nodes, [btn(tr('telemetryDownload'), () => platform.save(new Blob([json], { type: 'application/json' }), 'lite-player-usage-data.json')), close]);
+    }).catch((e) => {
+      log.warn('usage data view:', e);
+      set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryFailed', { msg: String((e && e.message) || e) }) })], [close]);
     });
   }
 
@@ -7304,6 +7340,7 @@ class PopoutController {
       pip.addEventListener('resize', resize);
       // Moving can pause the elements in some browsers: carry on as before.
       if (playing && x.video.paused) x.video.play().catch(() => {});
+      x.relayout();
     } catch (e) {
       putBack();
       try { pip.close(); } catch (err) { /* already closed */ }
@@ -7541,6 +7578,7 @@ class SpeedControl {
     const track = this.track;
     const at = (e) => {
       const r = track.getBoundingClientRect();
+      if (!(r.width > 0)) return x.rate();   // not laid out: no speed can be read from it
       return snapSpeed(SPEED_MIN + clamp((e.clientX - r.left) / r.width, 0, 1) * (SPEED_MAX - SPEED_MIN));
     };
     onDrag(d, track, {
@@ -11972,7 +12010,7 @@ class SlidesPane {
     box.textContent = '';
     if (!deck) return;
     const input = el('input', { type: 'file', accept: '.pdf,application/pdf', multiple: true, hidden: true });
-    // Failures are shown in this tab (deck.error).
+    // Failures are shown in this tab (deck.notice, deck.error).
     input.addEventListener('change', guard(() => { if (input.files.length) deck.addFiles(input.files).catch(() => {}); }));
     const files = el('div.sfiles');
     // With several files, a name is a button that shows that file (renderPageInfo marks
@@ -12000,6 +12038,7 @@ class SlidesPane {
     else if (!deck.files.length) msg = tr('slidesLocal');
     box.append(files);
     if (msg) box.append(el('div.sdmsg', { text: msg }));
+    if (deck.notice) box.append(el('div.sdmsg', { text: deck.notice }));
     if (deck.capped && deck.state !== 'error') box.append(el('div.sdmsg', { text: tr('deckCapped', { n: DECK_MAX_PAGES }) }));
   }
 
@@ -13074,6 +13113,7 @@ class SlideDeckController {
     this.state = 'empty';     // empty | loading | reading | ready | error
     this.corrections = 0;     // pages corrected by hand in this visit (usage data)
     this.error = '';
+    this.notice = '';         // why the last file added or removed was not (the deck goes on)
     this.job = null;
     this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
     this.pdfWorker = null;     // pdf.js worker (makePdfWorker), owned here
@@ -13147,12 +13187,12 @@ class SlideDeckController {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
     telemetry.use('pdfAdd');
+    this.notice = '';
     const big = pdfs.filter((f) => f.size > DECK_MAX_FILE_BYTES);
     if (big.length) {
-      this.state = 'error';
-      this.error = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
+      this.notice = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
       this.onChange();
-      throw new Error(this.error);
+      throw new Error(this.notice);
     }
     const added = [];
     const blobs = new Map();
@@ -13179,10 +13219,9 @@ class SlideDeckController {
       }
     } catch (e) {
       this.files = this.files.filter((x) => !added.some((a) => a.hash === x.hash));
-      this.state = 'error';
-      this.error = tr('deckSaveFailed', { name: added.map((a) => a.name).join(tr('sepList')), msg: (e && e.message) || e });
+      this.notice = tr('deckSaveFailed', { name: added.map((a) => a.name).join(tr('sepList')), msg: (e && e.message) || e });
       this.onChange();
-      throw e;
+      throw new Error(this.notice);
     }
     await this.reload();
     return pdfs.length;
@@ -13190,16 +13229,30 @@ class SlideDeckController {
 
   // The file itself is deleted when no other recording uses it, in the same transaction as
   // this recording's list (no other tab can add itself in between).
+  // When that cannot be saved, the file stays (it would be back on the next visit).
   async removeFile(hash) {
     const prefix = pageKeyPrefix(hash);
-    await this.changeRecord((st) => {
-      st.files = st.files.filter((f) => f.hash !== hash);
-      st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
-    }, [hash], (old, next, mid) => {
-      const refs = (Array.isArray(old['deckref:' + hash]) ? old['deckref:' + hash] : []).filter((m) => m !== mid);
-      if (refs.length) next['deckref:' + hash] = refs;
-      else { next['deckref:' + hash] = undefined; next['deckfile:' + hash] = undefined; }
-    }).catch((e) => log.warn('slide file removal:', e));
+    const before = { files: this.files, fixes: this.fixes };
+    const file = this.files.find((f) => f.hash === hash);
+    this.notice = '';
+    try {
+      await this.changeRecord((st) => {
+        st.files = st.files.filter((f) => f.hash !== hash);
+        st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
+      }, [hash], (old, next, mid) => {
+        const refs = (Array.isArray(old['deckref:' + hash]) ? old['deckref:' + hash] : []).filter((m) => m !== mid);
+        if (refs.length) next['deckref:' + hash] = refs;
+        else { next['deckref:' + hash] = undefined; next['deckfile:' + hash] = undefined; }
+      });
+    } catch (e) {
+      log.warn('slide file removal:', e);
+      if (this.ac.signal.aborted) return;
+      this.files = before.files;
+      this.fixes = before.fixes;
+      this.notice = tr('deckRemoveFailed', { name: file ? file.name : '', msg: (e && e.message) || e });
+      this.onChange();
+      return;
+    }
     await this.reload();
   }
 
@@ -13858,7 +13911,8 @@ const courseList = {
         known.set(lid, null);
         queue.push(() => lookup(lid).then((info) => {
           known.set(lid, info);
-          for (const r of document.querySelectorAll('.class-row[data-test-lessonid="' + lid.replace(/"/g, '') + '"]')) label(r, info);
+          // Compared, not put in a selector (an id with a backslash would break it).
+          for (const r of document.querySelectorAll('.class-row[data-test-lessonid]')) if (r.getAttribute('data-test-lessonid') === lid) label(r, info);
         }));
       }
       pump();

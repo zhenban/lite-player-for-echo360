@@ -274,6 +274,9 @@ class MenuBar {
         if (r.status !== 200 || !r.data || !r.data.deleted) { set(tr('telemetryDeleteTitle'), [el('p', { text: failed(r) })], [close]); return; }
         const n = Object.values(r.data.deleted).reduce((a, b) => a + (+b || 0), 0);
         if (then) then(n); else set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryDeleted', { n }) })], [close]);
+      }).catch((e) => {
+        log.warn('usage data delete:', e);
+        set(tr('telemetryDeleteTitle'), [el('p', { text: tr('telemetryFailed', { msg: String((e && e.message) || e) }) })], [close]);
       });
     };
     const reset = (n) => {
@@ -300,7 +303,11 @@ class MenuBar {
         const rows = Array.isArray(r.data[k]) ? r.data[k] : [];
         if (!rows.length) continue;
         const cols = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-        const cell = (c, v) => (v == null ? '' : c === 'at' ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : String(v));
+        const cell = (c, v) => {
+          if (v == null) return '';
+          const t = c === 'at' ? new Date(v) : null;
+          return t && !Number.isNaN(t.getTime()) ? t.toISOString().slice(0, 19).replace('T', ' ') : String(v);
+        };
         nodes.push(el('h3', { text: tr(label) + ' · ' + (rows.length === 1 ? tr('telemetryRow') : tr('telemetryRows', { n: rows.length })) }));
         if (cols.length <= TELEMETRY_WIDE_COLS) {
           nodes.push(el('div.tdscroll', null, el('table', null,
@@ -322,6 +329,9 @@ class MenuBar {
       if (!nodes.length) nodes.push(el('p', { text: tr('telemetryNone') }));
       const json = JSON.stringify(r.data, null, 2);
       set(tr('telemetryDataTitle'), nodes, [btn(tr('telemetryDownload'), () => platform.save(new Blob([json], { type: 'application/json' }), 'lite-player-usage-data.json')), close]);
+    }).catch((e) => {
+      log.warn('usage data view:', e);
+      set(tr('telemetryDataTitle'), [el('p', { text: tr('telemetryFailed', { msg: String((e && e.message) || e) }) })], [close]);
     });
   }
 

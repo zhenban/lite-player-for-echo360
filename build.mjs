@@ -111,15 +111,16 @@ export function extensionFiles({ dev = false } = {}) {
   const matches = [...meta.matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((m) => m[1]);
   const sites = [...new Set(matches.map((m) => new URL(m.replace(/\*/g, 'x')).origin + '/*'))];
   const telemetry = /const TELEMETRY_URL = '([^']+)'/.exec(readFileSync(join(srcDir, '87-telemetry.js'), 'utf8'))[1];
-  // Manifest versions are numbers only: VERSION.<beta>, shown as "<major>.<minor> beta <n>".
-  const beta = +readFileSync(join(extDir, 'BETA'), 'utf8').trim();
-  if (!(beta >= 1 && Number.isInteger(beta))) { console.error('extension/BETA must be a whole number from 1'); return null; }
-  const [major, minor] = r.version.split('.');
-  const fill = (text) => text.replace(/\{\{VERSION\}\}/g, r.version + '.' + beta).replace(/\{\{VERSION_NAME\}\}/g, major + '.' + minor + ' beta ' + beta)
+  const fill = (text) => text.replace(/\{\{VERSION\}\}/g, r.version)
     .replace(/\{\{TELEMETRY_URL\}\}/g, telemetry).replace(/"\{\{MATCHES\}\}"/g, JSON.stringify(matches)).replace(/"\{\{SITES\}\}"/g, JSON.stringify(sites));
   const manifest = JSON.parse(fill(readFileSync(join(extDir, 'manifest.json'), 'utf8')));
   const files = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'player.js': r.out };
   for (const f of ['bridge.js', 'background.js']) files[f] = fill(readFileSync(join(extDir, f), 'utf8'));
+  // The name and store summary in each language of the store listing (Chrome picks one).
+  for (const lang of readdirSync(join(extDir, '_locales'))) {
+    const f = '_locales/' + lang + '/messages.json';
+    files[f] = JSON.stringify(JSON.parse(readFileSync(join(extDir, f), 'utf8')), null, 2) + '\n';
+  }
   const icons = readdirSync(extDir).filter((f) => /^icon-\d+\.png$/.test(f));
   // The shipped libraries: those 06-platform-extension.js serves from the package.
   const shipped = new RegExp(/const EXT_SHIPPED = \/(.+)\/;/.exec(readFileSync(join(srcDir, EXTENSION_ONLY), 'utf8'))[1]);
@@ -138,7 +139,7 @@ export async function buildExtension({ dev = false } = {}) {
   const out = join(root, 'dist-extension');
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
-  for (const [name, text] of Object.entries(x.files)) writeFileSync(join(out, name), text);
+  for (const [name, text] of Object.entries(x.files)) { mkdirSync(dirname(join(out, name)), { recursive: true }); writeFileSync(join(out, name), text); }
   for (const f of x.icons) copyFileSync(join(extDir, f), join(out, f));
   const cache = join(root, '.lib-cache');
   for (const [path, hash] of Object.entries(x.libs)) {
@@ -157,7 +158,7 @@ export async function buildExtension({ dev = false } = {}) {
   const zip = join(root, 'dist-extension.zip');
   rmSync(zip, { force: true });
   execFileSync('zip', ['-q', '-r', '-X', zip, '.'], { cwd: out });
-  return { version: x.manifest.version, name: x.manifest.version_name, dir: out, zip };
+  return { version: x.manifest.version, dir: out, zip };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] && process.argv.includes('--target')) {
@@ -166,7 +167,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] && pro
   const dev = process.argv.includes('--dev');
   const r = await buildExtension({ dev });
   if (!r) process.exit(1);
-  console.log(`built dist-extension/ and dist-extension.zip, ${r.version} (${r.name})` + (dev ? ', WITH TEST HOOKS: not for release' : ''));
+  console.log(`built dist-extension/ and dist-extension.zip, ${r.version}` + (dev ? ', WITH TEST HOOKS: not for release' : ''));
 } else if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const r = assemble();
   if (!r) process.exit(1);

@@ -1,0 +1,10 @@
+{
+  "name": {
+    "message": "Lite Player for Echo360",
+    "description": "The extension's name (the store listing and chrome://extensions)."
+  },
+  "description": {
+    "message": "Unofficial, lightweight player for Echo360 lecture recordings: low CPU use, both views side by side, slide chapters.",
+    "description": "The store summary; at most 132 characters."
+  }
+}

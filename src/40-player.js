@@ -660,7 +660,7 @@ class LitePlayer {
     this.keys = new KeyboardShortcuts({ $, isDestroyed, wake: () => this.wake(), actions: this.keyActions() }, this.d.child());
     this.popout = new PopoutController({
       $, host: this.host, video: this.video, title: this.lesson.title, onKey: this.keys.onKey, isDestroyed, toast,
-      relayout: () => { this.quality.apply(); this.redrawPdf(); this.render(true); this.menus.fitBar(); this.pops.place(); },
+      relayout: () => { this.updateFullscreenButton(); this.quality.apply(); this.redrawPdf(); this.render(true); this.menus.fitBar(); this.pops.place(); },
     }, this.d.feature('floating window'));
   }
 
@@ -870,8 +870,23 @@ class LitePlayer {
   // Where no element can be fullscreen (iPhone), the main video goes into the system's own
   // player: one view, its own controls; back inline it plays on in ours.
   toggleFullscreen() {
+    const why = this.fullscreenWhyNot();
+    if (why) { this.toast(why); return; }
     if (fullscreenElement()) exitFullscreen();
     else if (!requestFullscreen(this.host) && typeof this.video.webkitEnterFullscreen === 'function') this.video.webkitEnterFullscreen();
+  }
+
+  // Why full screen cannot be used here, or '': the floating window never allows it; in a
+  // frame whose page does not allow it, neither the player nor a video can be fullscreen.
+  fullscreenWhyNot() {
+    if (this.host.ownerDocument !== document) return tr('fullscreenPopout');
+    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') return tr('fullscreenBlocked');
+    return '';
+  }
+
+  // Said on the button instead of a click that does nothing.
+  updateFullscreenButton() {
+    setUnavailable(this.$('.fs'), this.fullscreenWhyNot(), tr('fullscreenKey'));
   }
 
   // ---- idle (auto-hide) handling ----
@@ -902,9 +917,7 @@ class LitePlayer {
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
     d.listen($('.fwd'), 'click', () => this.seek(this.clock.position() + 10));
     d.listen($('.fs'), 'click', () => this.toggleFullscreen());
-    // In a frame whose page does not allow it, neither the player nor a video can be
-    // fullscreen: said on the button instead of a click that does nothing.
-    if (!fullscreenAllowed(document) && typeof this.video.webkitEnterFullscreen !== 'function') setUnavailable($('.fs'), tr('fullscreenBlocked'), tr('fullscreenKey'));
+    this.updateFullscreenButton();
     d.listen($('.swapdot'), 'click', (e) => { e.stopPropagation(); this.swapViews(); });
     d.listen($('.layout'), 'click', () => this.setLayout(this.nextLayout()));
     const onFullscreen = () => {
@@ -1128,7 +1141,7 @@ class LitePlayer {
       this.deck.addFiles(e.dataTransfer.files).then((n) => {
         if (!n) { this.toast(tr('dropNotPdf')); return; }
         if (this.sidebar.has('slides')) this.sidebar.open('slides');
-      }).catch((err) => this.toast(this.deck.state === 'error' && this.deck.error ? this.deck.error : tr('deckError', { msg: String((err && err.message) || err) })));
+      }).catch((err) => this.toast(this.deck.notice || tr('deckError', { msg: String((err && err.message) || err) })));
     });
   }
 

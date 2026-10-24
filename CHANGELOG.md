@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1
+- **The extension is in the Chrome Web Store** and is no longer marked beta: [Lite Player for Echo360](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh). It updates itself. If you loaded the zip by hand, remove that copy and install it from the store.
+- The extension's name and summary are in Chinese for Chinese-language browsers.
+- **Chinese interface:** clearer wording throughout, and one word for each thing (摄像机, 单画面, PDF 自动翻页 and others).
+
+Fixes:
+- After the floating window was closed, the progress bar could stop moving until something else redrew it.
+- In the floating window, full screen (button, F or double-click) did nothing. Browsers don't allow it there, and now it says so.
+- A slide PDF that could not be added (too large, or the disk full) no longer stops the slides already added. A PDF whose removal could not be saved now stays in the list, with a message, instead of coming back on the next visit.
+- "View my data" no longer stays on "Loading…" when a stored time can't be read.
+- Dragging the divider, the seek bar or the speed slider before the player has its size no longer jumps to the edge.
+- The course page's watched bars work for any recording id.
+
 ## 1.0.0
 New:
 - **A Chrome and Edge extension (1.0 beta).** The same player, with nothing else to install first: for now from the zip attached to this release (Load unpacked), soon from the Chrome Web Store. It ships its libraries (and English text recognition) inside the package. Use either the extension or the userscript, not both: if both are installed, only one player starts.

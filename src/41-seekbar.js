@@ -116,8 +116,10 @@ class SeekBar {
     const frac = (cx) => clamp((cx - rect.left) / rect.width, 0, 1);
     let nearMarker = null;
     let downX = 0;
+    // null: the bar has no width (not laid out), so no position can be read from it.
     const hover = (e) => {
       if (!rect) rect = seekEl.getBoundingClientRect();
+      if (!(rect.width > 0)) return null;
       const f = frac(e.clientX);
       const dur = x.duration();
       seekEl.style.setProperty('--h', f.toFixed(4));
@@ -141,6 +143,7 @@ class SeekBar {
       start: (e) => {
         if (e.button !== 0) return null;
         rect = seekEl.getBoundingClientRect();
+        if (!(rect.width > 0)) return null;
         seekEl.setPointerCapture(e.pointerId);
         downX = e.clientX;
         x.ui.dragging = true;

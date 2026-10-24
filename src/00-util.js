@@ -261,13 +261,17 @@ class FrameTask {
 
   request() {
     const node = this.nodeOf();
-    if (this.id || hiddenFor(node)) return;
-    this.win = windowOf(node);
-    this.id = this.win.requestAnimationFrame(this.run);
+    if (hiddenFor(node)) return;
+    const win = windowOf(node);
+    // A frame asked for in another window (the floating window, since closed or left) may
+    // never come: ask this one instead.
+    if (this.id) { if (win === this.win) return; this.cancel(); }
+    this.win = win;
+    this.id = win.requestAnimationFrame(this.run);
   }
 
   cancel() {
-    if (this.id && this.win) this.win.cancelAnimationFrame(this.id);
+    if (this.id && this.win) { try { this.win.cancelAnimationFrame(this.id); } catch (e) { /* a closed window */ } }
     this.id = 0;
   }
 }

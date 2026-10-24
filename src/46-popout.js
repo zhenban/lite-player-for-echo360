@@ -86,6 +86,7 @@ class PopoutController {
       pip.addEventListener('resize', resize);
       // Moving can pause the elements in some browsers: carry on as before.
       if (playing && x.video.paused) x.video.play().catch(() => {});
+      x.relayout();
     } catch (e) {
       putBack();
       try { pip.close(); } catch (err) { /* already closed */ }

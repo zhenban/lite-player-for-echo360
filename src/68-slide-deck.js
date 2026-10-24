@@ -140,6 +140,7 @@ class SlideDeckController {
     this.state = 'empty';     // empty | loading | reading | ready | error
     this.corrections = 0;     // pages corrected by hand in this visit (usage data)
     this.error = '';
+    this.notice = '';         // why the last file added or removed was not (the deck goes on)
     this.job = null;
     this.rendered = new Map(); // page key -> { c: canvas (newest size), w: width asked for }, least recently used first
     this.pdfWorker = null;     // pdf.js worker (makePdfWorker), owned here
@@ -213,12 +214,12 @@ class SlideDeckController {
     const pdfs = [...fileList].filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     if (!pdfs.length) return 0;
     telemetry.use('pdfAdd');
+    this.notice = '';
     const big = pdfs.filter((f) => f.size > DECK_MAX_FILE_BYTES);
     if (big.length) {
-      this.state = 'error';
-      this.error = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
+      this.notice = tr('deckTooBig', { name: big.map((f) => f.name).join(tr('sepList')), max: Math.round(DECK_MAX_FILE_BYTES / 1024 / 1024) });
       this.onChange();
-      throw new Error(this.error);
+      throw new Error(this.notice);
     }
     const added = [];
     const blobs = new Map();
@@ -245,10 +246,9 @@ class SlideDeckController {
       }
     } catch (e) {
       this.files = this.files.filter((x) => !added.some((a) => a.hash === x.hash));
-      this.state = 'error';
-      this.error = tr('deckSaveFailed', { name: added.map((a) => a.name).join(tr('sepList')), msg: (e && e.message) || e });
+      this.notice = tr('deckSaveFailed', { name: added.map((a) => a.name).join(tr('sepList')), msg: (e && e.message) || e });
       this.onChange();
-      throw e;
+      throw new Error(this.notice);
     }
     await this.reload();
     return pdfs.length;
@@ -256,16 +256,30 @@ class SlideDeckController {
 
   // The file itself is deleted when no other recording uses it, in the same transaction as
   // this recording's list (no other tab can add itself in between).
+  // When that cannot be saved, the file stays (it would be back on the next visit).
   async removeFile(hash) {
     const prefix = pageKeyPrefix(hash);
-    await this.changeRecord((st) => {
-      st.files = st.files.filter((f) => f.hash !== hash);
-      st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
-    }, [hash], (old, next, mid) => {
-      const refs = (Array.isArray(old['deckref:' + hash]) ? old['deckref:' + hash] : []).filter((m) => m !== mid);
-      if (refs.length) next['deckref:' + hash] = refs;
-      else { next['deckref:' + hash] = undefined; next['deckfile:' + hash] = undefined; }
-    }).catch((e) => log.warn('slide file removal:', e));
+    const before = { files: this.files, fixes: this.fixes };
+    const file = this.files.find((f) => f.hash === hash);
+    this.notice = '';
+    try {
+      await this.changeRecord((st) => {
+        st.files = st.files.filter((f) => f.hash !== hash);
+        st.fixes = st.fixes.filter((x) => !String(x.page).startsWith(prefix));
+      }, [hash], (old, next, mid) => {
+        const refs = (Array.isArray(old['deckref:' + hash]) ? old['deckref:' + hash] : []).filter((m) => m !== mid);
+        if (refs.length) next['deckref:' + hash] = refs;
+        else { next['deckref:' + hash] = undefined; next['deckfile:' + hash] = undefined; }
+      });
+    } catch (e) {
+      log.warn('slide file removal:', e);
+      if (this.ac.signal.aborted) return;
+      this.files = before.files;
+      this.fixes = before.fixes;
+      this.notice = tr('deckRemoveFailed', { name: file ? file.name : '', msg: (e && e.message) || e });
+      this.onChange();
+      return;
+    }
     await this.reload();
   }
 

@@ -36,6 +36,8 @@ class LayoutControls {
         if (e.button !== 0) return null;
         e.stopPropagation();
         stageRect = x.stage.getBoundingClientRect();
+        // Not laid out (no width): nothing to measure the drag against.
+        if (!(stageRect.width > 0)) return null;
         divider.setPointerCapture(e.pointerId);
         divider.classList.add('dragging');
         x.ui.dragging = true;

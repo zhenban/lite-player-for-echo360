@@ -60,6 +60,7 @@ class SpeedControl {
     const track = this.track;
     const at = (e) => {
       const r = track.getBoundingClientRect();
+      if (!(r.width > 0)) return x.rate();   // not laid out: no speed can be read from it
       return snapSpeed(SPEED_MIN + clamp((e.clientX - r.left) / r.width, 0, 1) * (SPEED_MAX - SPEED_MIN));
     };
     onDrag(d, track, {

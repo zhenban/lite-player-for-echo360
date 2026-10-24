@@ -905,3 +905,20 @@ test('telemetry: the proof-of-work bits agree in the player, the Worker\'s defau
   const toml = Number(/^MINT_BITS = "(\d+)"/m.exec(readFileSync(join(root, 'telemetry-worker', 'wrangler.toml'), 'utf8'))[1]);
   assert.deepEqual([player, workerBits, toml], [21, 21, 21]);
 });
+
+test('B10: "View my data" shows the rows even when a time is not a date, not "Loading…" for ever', async () => {
+  const pg = page();
+  const p = pg.player();
+  await settle();
+  try {
+    pg.dev().telemetry.ask = async () => ({ status: 200, data: { env: [{ at: 'not a date', browser: 'Chrome' }], session: [], error: [], fallback: [], registration: [] } });
+    p.menus.showMyData('view');
+    await settle();
+    const text = p.$('.tdbody').textContent;
+    assert.match(text, /Chrome/);
+    assert.match(text, /not a date/);
+  } finally {
+    p.destroy();
+    await closeWindow(pg.w);
+  }
+});

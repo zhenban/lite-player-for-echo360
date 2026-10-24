@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenban/lite-player-for-echo360/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zhenban/lite-player-for-echo360)](https://github.com/zhenban/lite-player-for-echo360/releases/latest)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/bbcmnjnijjfpnngkkgoahjljibfackbh?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 **看 Echo360 课程回放，风扇不再狂转。** Echo360 原播放器播放时一直占满一个 CPU 核心：风扇响、掉电快，边看边记笔记时电脑也变卡。轻量播放器换上一个新的播放器，让浏览器自己用硬件解码播放同样的视频流，开销接近直接播放一个视频文件。它还带来看回放学习时用得上的工具：两路画面并排、幻灯片章节、自动翻页的幻灯片 PDF、可搜索的转录。
@@ -16,17 +17,20 @@
 
 同一个播放器有两种安装方式，功能和设置完全相同。二选一，不要同时装。
 
-### Chrome 或 Edge 扩展（1.0 beta）
+### Chrome 或 Edge 扩展（最简单）
 
-扩展刚推出，所以标为 beta。它即将上架 Chrome 应用商店；在那之前，用 zip 包安装：
+1. 打开 **[Chrome 应用商店里的 Lite Player for Echo360](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)**，点 **添加至 Chrome**。用 Edge 时，如果提示，先点 **允许来自其他应用商店的扩展**。
+2. 打开任意一节 Echo360 课程回放。
 
-1. 从[最新版本](https://github.com/zhenban/lite-player-for-echo360/releases/latest)下载 `lite-player-for-echo360-extension-….zip` 并解压。
-2. 打开 `chrome://extensions`（Edge：`edge://extensions`），开启 **开发者模式**，点 **加载已解压的扩展程序**，选择解压出的文件夹。
-3. 打开任意一节 Echo360 课程回放。
+扩展会自动更新。
 
-从 zip 加载的扩展不会自动更新：有新版本时重新加载新的 zip。
+<details>
+<summary>不用应用商店（手动安装）</summary>
 
-### 用户脚本（1.0.0，所有支持的浏览器）
+从[最新版本](https://github.com/zhenban/lite-player-for-echo360/releases/latest)下载 `lite-player-for-echo360-extension-….zip` 并解压。打开 `chrome://extensions`（Edge：`edge://extensions`），开启 **开发者模式**，点 **加载已解压的扩展程序**，选择解压出的文件夹。这样装的扩展不会自动更新：有新版本时重新加载新的 zip。改用商店版之前，先移除这一份。
+</details>
+
+### 用户脚本（所有支持的浏览器）
 
 1. **安装用户脚本管理器：**[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)。Chrome / Edge：在 `chrome://extensions` 打开脚本管理器的“详细信息”，开启 **“允许用户脚本”**（旧版本是开启“开发者模式”）。
 2. **安装轻量播放器：**打开 **[lite-player-for-echo360.user.js](https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js)**，脚本管理器提示时点 **安装**。
