@@ -43,6 +43,7 @@ const extBridge = {
   shared: new Map(), // settings and positions (EXT_SHARED), likewise
   kvRead: false,     // the settings were read, or no longer waited for (platform.whenKv)
   off: false,        // turned off with the toolbar button
+  news: '',          // a version whose changes are told once (background.js), or ''
   answers: null,     // the toolbar's questions: name -> () => value (platform.toolbar)
   replies: new Map(),
   seq: 0,
@@ -93,6 +94,7 @@ const extBridge = {
       const shared = msg.shared && typeof msg.shared === 'object' ? msg.shared : {};
       for (const [k, v] of Object.entries(shared)) if (typeof v === 'string' && EXT_SHARED(k) && !this.shared.has(k)) this.shared.set(k, v);
       this.off = msg.off === true;
+      this.news = typeof msg.news === 'string' && /^\d+\.\d+$/.test(msg.news) ? msg.news : '';
       this.readyResolve();
     } else if (msg.type === 'prefs' && typeof msg.name === 'string' && typeof msg.text === 'string' && EXT_SHARED(msg.name)) {
       // Changed in the toolbar or the options page (read again where it is used: whether
@@ -260,6 +262,9 @@ Object.assign(platform, {
     extBridge.send({ type: 'present' });
   },
   viewed() { extBridge.send({ type: 'viewed' }); },
+  news() { return extBridge.news; },
+  newsSeen() { extBridge.news = ''; extBridge.send({ type: 'newsSeen' }); },
+  openNews() { extBridge.send({ type: 'news' }); },
   privateKv: {
     get(name) { const v = extBridge.kv.get(name); return typeof v === 'string' ? v : null; },
     set(name, text) { extBridge.kv.set(name, text); extBridge.send({ type: 'set', name, text }); },

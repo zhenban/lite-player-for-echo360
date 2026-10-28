@@ -9,27 +9,8 @@
   const C = LitePlayerCore;
   const { tr } = C;
 
-  // The player's settings storage, here: chrome.storage (kv:<name>, the synced settings laid
-  // over this device's). Read once; written through.
-  const kv = new Map();
-  try {
-    const all = await chrome.storage.local.get(null);
-    for (const [k, v] of Object.entries(all)) if (k.startsWith(LP.KV) && typeof v === 'string') kv.set(k.slice(LP.KV.length), v);
-  } catch (e) { /* none yet */ }
-  try {
-    const s = (await chrome.storage.sync.get('prefs')).prefs;
-    if (typeof s === 'string') kv.set(LP.PREFS, LP.merged(kv.get(LP.PREFS), s));
-  } catch (e) { /* sync off */ }
-  C.platform.kv = {
-    get: (name) => (kv.has(name) ? kv.get(name) : null),
-    set(name, text) {
-      kv.set(name, text);
-      chrome.storage.local.set({ [LP.KV + name]: text }).catch(() => {});
-      if (name === LP.PREFS) { const p = LP.parse(text); if (p) chrome.storage.sync.set({ prefs: LP.synced(p) }).catch(() => {}); }
-    },
-    remove(name) { kv.delete(name); chrome.storage.local.remove(LP.KV + name).catch(() => {}); },
-    names: () => [...kv.keys()],
-  };
+  // The player's settings storage, here: chrome.storage (shared.js).
+  const kv = await LP.coreKv(C);
 
   // Writes to the data take the lock the player's frames take (store.js), so a lecture open
   // meanwhile cannot write between a read and a write of its own.

@@ -798,6 +798,27 @@ const STRINGS = {
     backupRestored: 'Restored {n} items. Reloading…',
     backupInvalid: 'This is not a Lite Player for Echo360 backup file',
     backupTooBig: 'This file is too large for a backup (at most {max} MB)',
+    welTitle: 'Lite Player is ready',
+    welLead: 'Open any Echo360 lecture recording and Lite Player starts by itself. Echo360\'s own player is always one click away: Settings and more (⋯), then Switch to the original player.',
+    welTour: 'What it does',
+    welSlidesT: 'Slides as chapters',
+    welSlides: 'The slide changes are found in the recording and listed as chapters, with previews on the timeline.',
+    welPdfT: 'Your PDF follows along',
+    welPdf: 'Drop the lecture\'s slide PDF on the player and it turns to the page being talked about.',
+    welAskT: 'Ask an AI about this moment',
+    welAsk: 'P copies the slide picture and A copies the last minute of what was said, ready to paste into a chat.',
+    welStudyT: 'Made for studying',
+    welStudy: 'A transcript you can search, skipping breaks and blank screens, clearer sound and zoom. Press ? in the player for every keyboard shortcut.',
+    welPin: 'Pin the toolbar button',
+    welPinText: 'Click the puzzle piece next to the address bar and pin Lite Player. The button turns it on or off and says what it is doing on the page.',
+    welSettings: 'Open settings',
+    welNew: 'New in {version}',
+    welNew1: 'A toolbar button: turn Lite Player on or off, and see what it is doing on the page.',
+    welNew2: 'A settings page with every setting, a compatibility check, and backups.',
+    welNew3: 'Your settings follow your Chrome account to your other computers (not the layout, volume or quality, which suit each screen).',
+    welNew4: 'Tags, slide PDFs and what you watched are the same on every Echo360 site, and are deleted after a year unused.',
+    newsToast: 'Lite Player {version}: a toolbar button, a settings page, and your settings on every computer.',
+    newsSee: 'See what\'s new',
     optTitle: 'Lite Player settings',
     optOn: 'Use Lite Player on Echo360',
     optApplyNote: 'Changes apply to a lecture the next time its page is loaded. Turning off usage data applies at once.',
@@ -1343,6 +1364,27 @@ STRINGS.zh = {
   backupRestored: '已恢复 {n} 项，正在刷新…',
   backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
   backupTooBig: '这个文件太大，不能作为备份文件（最多 {max} MB）',
+    welTitle: 'Lite Player 已就绪',
+    welLead: '打开任意一节 Echo360 课程回放，Lite Player 会自动启动。Echo360 自带的播放器随时可以切回：设置和更多（⋯）→ 切换到原播放器。',
+    welTour: '它能做什么',
+    welSlidesT: '幻灯片变成章节',
+    welSlides: '自动找出录像里的幻灯片切换，列成章节，进度条上可以预览。',
+    welPdfT: '你的 PDF 跟着翻页',
+    welPdf: '把这节课的幻灯片 PDF 拖到播放器上，讲到哪一页就翻到哪一页。',
+    welAskT: '就这一刻问 AI',
+    welAsk: 'P 复制幻灯片画面，A 复制最近一分钟讲的内容，直接粘贴到聊天里。',
+    welStudyT: '为学习而做',
+    welStudy: '可搜索的转录、跳过课间和黑屏、人声更清晰、画面缩放。在播放器里按 ? 查看所有快捷键。',
+    welPin: '固定工具栏按钮',
+    welPinText: '点击地址栏旁边的拼图图标，固定 Lite Player。这个按钮可以开关它，并显示它在当前页面上的状态。',
+    welSettings: '打开设置',
+    welNew: '{version} 新功能',
+    welNew1: '工具栏按钮：开关 Lite Player，查看它在当前页面上的状态。',
+    welNew2: '设置页：所有设置、兼容性检查和备份。',
+    welNew3: '设置跟随你的 Chrome 账户同步到其他电脑（布局、音量和画质除外，它们按每台电脑的屏幕来）。',
+    welNew4: '标签、幻灯片 PDF 和观看记录在所有 Echo360 站点上都一样，一年没用到会被删除。',
+    newsToast: 'Lite Player {version}：工具栏按钮、设置页，设置在每台电脑上都一样。',
+    newsSee: '看看有什么新功能',
     optTitle: 'Lite Player 设置',
     optOn: '在 Echo360 上使用 Lite Player',
     optApplyNote: '更改在课程页面下次加载时生效。关闭使用数据立即生效。',
@@ -1767,6 +1809,7 @@ const BOOT_CHECK_MS = 8000;            // the page's own player not started this
 const VIEWED_MIN = 10;                 // extension: minutes played that count a lecture as watched, for the toolbar's one-time rating line (a product choice: past the first look, a real viewing)
 const EXT_STORE_WAIT_MS = 10000;       // extension: its data store (a frame of the extension, extension/store.js) not ready by then: the page's own storage is used for this visit
 const EXT_STORE_OP_MS = 120000;        // extension: one request to the data store unanswered by then (the frame was removed with the page's content) fails; the next one makes a new frame. Long: writing a large slide PDF takes a few seconds
+const NEWS_DELAY_MS = 4000;            // extension: the one "what's new" note waits this long after the player is up (past the loading screen; a product choice)
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -2415,6 +2458,11 @@ const platform = {
   off() { return false; },
   toolbar(answers) {},
   viewed() {},
+  // Extension only: the version whose changes to tell about once ('' if none), marking that
+  // told, and opening the page that lists them.
+  news() { return ''; },
+  newsSeen() {},
+  openNews() {},
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');
@@ -5797,6 +5845,15 @@ class LitePlayer {
     // line): one check a minute.
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
+    // Updated to a new version (the extension): its changes, said once, in the first lecture
+    // opened; the button opens the page that lists them.
+    const news = platform.news();
+    if (news) {
+      d.timeout(() => {
+        platform.newsSeen();
+        this.toast(tr('newsToast', { version: news }), tr('newsSee'), () => platform.openNews(), { later: true, from: 'news' });
+      }, NEWS_DELAY_MS);
+    }
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));

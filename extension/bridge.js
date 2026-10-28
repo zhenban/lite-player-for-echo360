@@ -9,6 +9,7 @@
 //   prefs (sync)     the settings that follow the user's Chrome account (shared.js)
 //   off              true: turned off with the toolbar button (popup.js)
 //   viewed           lectures watched for a while (the toolbar's one rating line)
+//   news             a version whose changes the player tells about once (background.js)
 // It also answers the toolbar button about this page (status, diagnostics), when the page
 // is one the player handles (the player said so: 'present').
 (() => {
@@ -63,8 +64,10 @@
     } else if (msg.type === 'viewed') {
       // Counted for the toolbar's rating line (popup.js).
       chrome.storage.local.get('viewed').then((o) => chrome.storage.local.set({ viewed: (+o.viewed || 0) + 1 })).catch(() => {});
-    } else if (msg.type === 'options') {
-      chrome.runtime.sendMessage({ type: 'options' }).catch(() => {});
+    } else if (msg.type === 'options' || msg.type === 'news') {
+      chrome.runtime.sendMessage({ type: msg.type }).catch(() => {});
+    } else if (msg.type === 'newsSeen') {
+      chrome.storage.local.remove('news').catch(() => {});
     } else if (msg.type === 'present') {
       present = true;
     } else if (msg.type === 'answer') {
@@ -95,8 +98,13 @@
       if (typeof s === 'string' && LP.parse(s)) { synced = s; kv[PREFS] = LP.merged(kv[PREFS], s); }
     } catch (e) { /* sync off or unavailable: this device's copy */ }
     let off = false;
-    try { off = (await chrome.storage.local.get('off')).off === true; } catch (e) { /* on */ }
-    return { values, kv, off };
+    let news = '';
+    try {
+      const o = await chrome.storage.local.get(['off', 'news']);
+      off = o.off === true;
+      news = typeof o.news === 'string' ? o.news : '';
+    } catch (e) { /* on */ }
+    return { values, kv, off, news };
   }
 
   // The toolbar's questions (popup.js): answered by the page's player, when there is one
@@ -132,7 +140,7 @@
     n.setAttribute('data-base', chrome.runtime.getURL(''));
     n.addEventListener(TO_EXT, receive);
     window.removeEventListener(HELLO, onHello, true);
-    snapshot().then(({ values, kv, off }) => toPage({ type: 'kv', values, shared: kv, off }));
+    snapshot().then(({ values, kv, off, news }) => toPage({ type: 'kv', values, shared: kv, off, news }));
     return true;
   }
 

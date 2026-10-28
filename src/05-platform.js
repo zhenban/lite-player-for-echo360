@@ -184,6 +184,11 @@ const platform = {
   off() { return false; },
   toolbar(answers) {},
   viewed() {},
+  // Extension only: the version whose changes to tell about once ('' if none), marking that
+  // told, and opening the page that lists them.
+  news() { return ''; },
+  newsSeen() {},
+  openNews() {},
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');

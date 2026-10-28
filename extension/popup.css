@@ -83,3 +83,11 @@ button.danger { color: var(--danger); }
 .compat .what { display: flex; flex-direction: column; }
 .compat .what .desc { margin: 2px 0 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The welcome page. */
+body.welcome header h1 { font-size: 24px; }
+.lead { font-size: 15px; margin: 0 0 var(--sp4); }
+.features { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp2) var(--sp4); }
+.features h3 { margin: var(--sp2) 0 var(--sp1); }
+ul.plain { margin: 0; padding-left: var(--sp4); }
+ul.plain li { margin: var(--sp1) 0; }

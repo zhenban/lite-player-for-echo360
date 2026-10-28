@@ -315,31 +315,58 @@ test('service worker: posts only to the usage-data server, without cookies', asy
   assert.equal(fetched[0].init.body, '{"e":1}');
 });
 
-test('service worker: "OFF" on the toolbar button while turned off; the install date noted once', async () => {
+function runWorker(store, version) {
   const badge = [];
   const changed = [];
   const installed = [];
-  const store = { off: true };
+  const tabs = [];
   const ctx = vm.createContext({
     chrome: {
-      runtime: { id: 'ext', onMessage: { addListener() {} }, onInstalled: { addListener: (fn) => installed.push(fn) } },
+      runtime: { id: 'ext', getManifest: () => ({ version }), onMessage: { addListener() {} }, onInstalled: { addListener: (fn) => installed.push(fn) } },
       storage: { local: { get: async (k) => (k in store ? { [k]: store[k] } : {}), set: async (o) => { Object.assign(store, o); } }, onChanged: { addListener: (fn) => changed.push(fn) } },
       action: { setBadgeText: async (o) => { badge.push(o.text); }, setBadgeBackgroundColor: async () => {} },
+      tabs: { create: async (o) => { tabs.push(o.url); } },
     },
-    fetch: async () => ({}), AbortSignal: { timeout: () => undefined }, Math, Date,
+    fetch: async () => ({}), AbortSignal: { timeout: () => undefined }, Math, Date, String, Number,
   });
   vm.runInContext(x.files['background.js'], ctx);
+  return { badge, changed, tabs, install: (details) => { for (const fn of installed) fn(details); } };
+}
+
+test('service worker: "OFF" on the toolbar button while turned off; the install date noted once; the welcome page after an install', async () => {
+  const store = { off: true };
+  const w = runWorker(store, '1.1.0');
   await tick();
-  assert.deepEqual(badge, ['OFF']);
-  for (const fn of changed) fn({ off: { newValue: false } }, 'local');
-  assert.deepEqual(badge, ['OFF', '']);
-  for (const fn of installed) fn();
+  assert.deepEqual(w.badge, ['OFF']);
+  for (const fn of w.changed) fn({ off: { newValue: false } }, 'local');
+  assert.deepEqual(w.badge, ['OFF', '']);
+  w.install({ reason: 'install' });
   await tick();
   const at = store.installedAt;
   assert.ok(at > 0);
-  for (const fn of installed) fn();
+  assert.deepEqual(w.tabs, ['welcome.html']);
+  assert.equal(store.news, undefined, 'a new install has nothing to tell');
+  w.install({ reason: 'chrome_update' });
   await tick();
   assert.equal(store.installedAt, at, 'kept from the first install');
+  assert.deepEqual(w.tabs, ['welcome.html'], 'opened after the install only');
+});
+
+test('the version told about is the one the welcome page lists', () => {
+  const told = /const NEWS = '([\d.]+)';/.exec(x.files['background.js'])[1];
+  assert.equal(/const NEWS = '([\d.]+)';/.exec(x.files['welcome.js'])[1], told);
+});
+
+test('service worker: an update to the version with news has the player tell it once; others do not', async () => {
+  const cases = [['1.1.0', '1.0.1', '1.1'], ['1.1.2', '1.0.0.1', '1.1'], ['1.1.1', '1.1.0', undefined], ['1.2.0', '1.0.1', undefined], ['1.1.0', '1.1.0', undefined]];
+  for (const [now, before, want] of cases) {
+    const store = {};
+    const w = runWorker(store, now);
+    w.install({ reason: 'update', previousVersion: before });
+    await tick();
+    assert.equal(store.news, want, before + ' -> ' + now);
+    assert.deepEqual(w.tabs, [], 'no tab opened on an update');
+  }
 });
 
 // The data store's frame (store.js): it serves only a parent on one of Echo360's sites.

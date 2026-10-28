@@ -916,6 +916,15 @@ class LitePlayer {
     // line): one check a minute.
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
+    // Updated to a new version (the extension): its changes, said once, in the first lecture
+    // opened; the button opens the page that lists them.
+    const news = platform.news();
+    if (news) {
+      d.timeout(() => {
+        platform.newsSeen();
+        this.toast(tr('newsToast', { version: news }), tr('newsSee'), () => platform.openNews(), { later: true, from: 'news' });
+      }, NEWS_DELAY_MS);
+    }
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));

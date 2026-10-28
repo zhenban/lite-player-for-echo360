@@ -113,7 +113,7 @@ ${parts.join('\n')}
 // { name: text }, icons: [file names in extension/], libs: { npm path: SHA-256 } } or null.
 // dev: with the test hooks (DEV_HOOKS), for dev/extension-check.mjs only.
 // The extension's own files (extension/), with their placeholders filled.
-const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'store.html', 'store.js', 'options.html', 'options.js'];
+const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'store.html', 'store.js', 'options.html', 'options.js', 'welcome.html', 'welcome.js'];
 
 export function extensionFiles({ dev = false } = {}) {
   const r = assemble({ target: 'extension', dev });

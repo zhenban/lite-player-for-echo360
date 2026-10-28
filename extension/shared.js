@@ -1,6 +1,6 @@
 // Lite Player for Echo360, the extension's own pages and its bridge: where the player's
 // settings are kept, in one place (loaded before bridge.js in the content script, and by the
-// toolbar popup and the options page).
+// toolbar popup, the options page and the welcome page).
 //   chrome.storage.local  kv:<name>  the player's settings and saved positions (<name> is its
 //                                    page-storage name, lite-player-for-echo360:...)
 //   chrome.storage.sync   prefs      the settings that follow the Chrome account: all but
@@ -50,5 +50,31 @@ const LP = (() => {
     return next;
   }
 
-  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs };
+  // The extension's pages using the player's code (core.js): its settings storage made
+  // chrome.storage, as the bridge keeps it (kv:<name>, the synced settings laid over this
+  // device's). Read once, written through. Returns the Map of what was read.
+  async function coreKv(core) {
+    const kv = new Map();
+    try {
+      const all = await chrome.storage.local.get(null);
+      for (const [k, v] of Object.entries(all)) if (k.startsWith(KV) && typeof v === 'string') kv.set(k.slice(KV.length), v);
+    } catch (e) { /* none yet */ }
+    try {
+      const s = (await chrome.storage.sync.get('prefs')).prefs;
+      if (typeof s === 'string') kv.set(PREFS, merged(kv.get(PREFS), s));
+    } catch (e) { /* sync off */ }
+    core.platform.kv = {
+      get: (name) => (kv.has(name) ? kv.get(name) : null),
+      set(name, text) {
+        kv.set(name, text);
+        chrome.storage.local.set({ [KV + name]: text }).catch(() => {});
+        if (name === PREFS) { const p = parse(text); if (p) chrome.storage.sync.set({ prefs: synced(p) }).catch(() => {}); }
+      },
+      remove(name) { kv.delete(name); chrome.storage.local.remove(KV + name).catch(() => {}); },
+      names: () => [...kv.keys()],
+    };
+    return kv;
+  }
+
+  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs, coreKv };
 })();
