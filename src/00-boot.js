@@ -35,14 +35,23 @@ function pageWindow() {
 // runs first keeps the page, the other does nothing (90-main.js) and says so in the console.
 // boot.other: the version of the copy already running ('' if this is the first).
 const BOOT_MARK = '__litePlayerForEcho360Running';
+const BOOT_DUPLICATE_MARK = '__litePlayerForEcho360Duplicate';
 boot.other = (() => {
   try {
     const page = pageWindow();
-    if (page[BOOT_MARK]) return String(page[BOOT_MARK]);
+    if (page[BOOT_MARK]) {
+      // Seen by the copy that runs (its toolbar button says it is installed twice).
+      try { Object.defineProperty(page, BOOT_DUPLICATE_MARK, { value: VERSION, enumerable: false, configurable: true }); } catch (e) { /* not marked */ }
+      return String(page[BOOT_MARK]);
+    }
     Object.defineProperty(page, BOOT_MARK, { value: VERSION, enumerable: false });
   } catch (e) { /* not marked: runs as if alone */ }
   return '';
 })();
+
+function readDuplicateMark() {
+  try { return pageWindow()[BOOT_DUPLICATE_MARK] || ''; } catch (e) { return ''; }
+}
 
 // Echo360 lesson pages bootstrap their React player with an inline call
 //   Echo["echoPlayerV2FullApp"]("<json>")

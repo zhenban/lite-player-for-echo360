@@ -35,8 +35,13 @@ test('manifest: the userscript\'s pages, the usage-data server, storage, nothing
   assert.deepEqual(m.permissions, ['storage']);
   assert.deepEqual(m.host_permissions, [/const TELEMETRY_URL = '([^']+)'/.exec(src('87-telemetry.js'))[1] + '/*']);
   // In frames too: a learning system may show Echo360 in a frame (as the userscript does).
-  assert.deepEqual(m.content_scripts.map((c) => [c.js[0], c.world, c.run_at, c.matches, c.all_frames]),
-    [['bridge.js', 'ISOLATED', 'document_start', matches, true], ['player.js', 'MAIN', 'document_start', matches, true]]);
+  assert.deepEqual(m.content_scripts.map((c) => [c.js.join(' '), c.world, c.run_at, c.matches, c.all_frames]),
+    [['shared.js bridge.js', 'ISOLATED', 'document_start', matches, true], ['player.js', 'MAIN', 'document_start', matches, true]]);
+  // The toolbar button opens the popup; its files are in the package.
+  assert.equal(m.action.default_popup, 'popup.html');
+  for (const f of ['popup.html', 'popup.js', 'popup.css', 'shared.js']) assert.ok(x.files[f], f);
+  const html = x.files['popup.html'];
+  for (const ref of html.matchAll(/(?:src|href)="([^"#]+)"/g)) assert.ok(x.files[ref[1]] || x.icons.includes(ref[1]), 'popup.html refers to a missing file: ' + ref[1]);
   const hosts = JSON.parse(/const SITE_HOSTS = (\[[^\]]*\]);/.exec(src('03-common.js'))[1].replace(/'/g, '"'));
   assert.deepEqual(m.web_accessible_resources, [{ resources: ['lib/*'], matches: hosts.map((h) => 'https://' + h + '/*') }]);
   for (const f of [m.background.service_worker, ...m.content_scripts.flatMap((c) => c.js)]) assert.ok(x.files[f], f);
@@ -67,19 +72,22 @@ function fakeChrome(syncStore = {}) {
   const store = { 'private:telemetrySecret': 's'.repeat(43), 'someone else': 'x' };
   const sent = [];
   const syncWrites = [];
+  const on = { message: [], changed: [] };
   const chrome = {
-    runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => { sent.push(m); return { status: 200, text: '{"ok":true}' }; } },
+    runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => { sent.push(m); return { status: 200, text: '{"ok":true}' }; },
+      onMessage: { addListener: (fn) => on.message.push(fn) } },
     storage: {
+      onChanged: { addListener: (fn) => on.changed.push(fn) },
       local: { get: async () => Object.assign({}, store), set: async (o) => { Object.assign(store, o); }, remove: async (k) => { delete store[k]; } },
       sync: { get: async (k) => (k in syncStore ? { [k]: syncStore[k] } : {}), set: async (o) => { syncWrites.push(o); Object.assign(syncStore, o); } },
     },
   };
-  return { chrome, store, sent, syncStore, syncWrites };
+  return { chrome, store, sent, syncStore, syncWrites, on };
 }
 function world(w, extra) {
   return vm.createContext(Object.assign({ window: w, document: w.document, CustomEvent: w.CustomEvent, MouseEvent: w.MouseEvent, setTimeout, clearTimeout, JSON, Promise, Object, Map }, extra));
 }
-const runBridge = (w, chrome) => vm.runInContext(x.files['bridge.js'], world(w, { chrome }));
+const runBridge = (w, chrome) => vm.runInContext(x.files['shared.js'] + '\n' + x.files['bridge.js'], world(w, { chrome }));
 // The page's storage (localStorage in the userscript's platform).
 function pageKv(initial = {}) {
   const m = new Map(Object.entries(initial));
@@ -203,6 +211,57 @@ test('settings: a removed position goes from the extension and from the page\'s 
   assert.equal(platform.kv.get('lite-player-for-echo360:pos:L3'), null);
 });
 
+// The toolbar asks the tab: each frame's bridge hears it; only one with a player answers.
+const askTab = (on, name) => new Promise((resolve) => {
+  let open = false;
+  for (const fn of on.message) if (fn({ type: 'ask', name }, { id: 'ext' }, resolve)) open = true;
+  if (!open) resolve('nobody');
+});
+
+test('toolbar: a page the player handles answers status and diagnostics; others stay silent', async () => {
+  const w = newWindow();
+  const { chrome, on } = fakeChrome();
+  runBridge(w, chrome);
+  const platform = runPlayer(w);
+  await new Promise((r) => platform.whenKv(r));
+  assert.equal(await askTab(on, 'status'), 'nobody', 'not a page the player handles');
+  platform.toolbar({ status: () => ({ state: 'running' }), diagnostics: async () => 'diag text' });
+  await tick();
+  assert.deepEqual(plain(await askTab(on, 'status')), { state: 'running' });
+  assert.equal(await askTab(on, 'diagnostics'), 'diag text');
+  assert.equal(await askTab(on, 'cookies'), 'nobody', 'only known questions');
+  // Another extension's message is not answered.
+  let answered = false;
+  for (const fn of on.message) answered = fn({ type: 'ask', name: 'status' }, { id: 'other' }, () => {}) || answered;
+  assert.equal(answered, false);
+});
+
+test('toolbar: answers offered before the bridge was there are still heard', async () => {
+  const w = newWindow();
+  const { chrome, on } = fakeChrome();
+  const platform = runPlayer(w);
+  platform.toolbar({ status: () => ({ state: 'waiting' }) });
+  runBridge(w, chrome);
+  await tick();
+  assert.deepEqual(plain(await askTab(on, 'status')), { state: 'waiting' });
+});
+
+test('toolbar: turned off is read with the settings; settings changed elsewhere reach the page, its own writes are not echoed', async () => {
+  const w = newWindow();
+  const { chrome, store, on } = fakeChrome();
+  store.off = true;
+  runBridge(w, chrome);
+  const platform = runPlayer(w);
+  await new Promise((r) => platform.whenKv(r));
+  assert.equal(platform.off(), true);
+  platform.kv.set(P, '{"telemetry":true}');
+  await tick();
+  for (const fn of on.changed) fn({ ['kv:' + P]: { newValue: '{"telemetry":true}' } }, 'local');
+  assert.equal(platform.kv.get(P), '{"telemetry":true}');
+  for (const fn of on.changed) fn({ ['kv:' + P]: { newValue: '{"telemetry":false}' } }, 'local');
+  assert.equal(platform.kv.get(P), '{"telemetry":false}');
+});
+
 test('settings: sync is written at most once per gap, and not when nothing synced changed', async () => {
   const w = newWindow();
   const { chrome, syncWrites } = fakeChrome();
@@ -230,7 +289,11 @@ test('service worker: posts only to the usage-data server, without cookies', asy
   let listener = null;
   const fetched = [];
   const ctx = vm.createContext({
-    chrome: { runtime: { id: 'ext', onMessage: { addListener: (fn) => { listener = fn; } } } },
+    chrome: {
+      runtime: { id: 'ext', onMessage: { addListener: (fn) => { listener = fn; } }, onInstalled: { addListener() {} } },
+      storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: { addListener() {} } },
+      action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    },
     fetch: async (url, init) => { fetched.push({ url, init }); return { status: 200, text: async () => 'ok' }; },
     AbortSignal: { timeout: () => undefined }, Math,
   });
@@ -245,4 +308,31 @@ test('service worker: posts only to the usage-data server, without cookies', asy
   assert.equal(fetched.length, 1);
   assert.equal(fetched[0].init.credentials, 'omit');
   assert.equal(fetched[0].init.body, '{"e":1}');
+});
+
+test('service worker: "OFF" on the toolbar button while turned off; the install date noted once', async () => {
+  const badge = [];
+  const changed = [];
+  const installed = [];
+  const store = { off: true };
+  const ctx = vm.createContext({
+    chrome: {
+      runtime: { id: 'ext', onMessage: { addListener() {} }, onInstalled: { addListener: (fn) => installed.push(fn) } },
+      storage: { local: { get: async (k) => (k in store ? { [k]: store[k] } : {}), set: async (o) => { Object.assign(store, o); } }, onChanged: { addListener: (fn) => changed.push(fn) } },
+      action: { setBadgeText: async (o) => { badge.push(o.text); }, setBadgeBackgroundColor: async () => {} },
+    },
+    fetch: async () => ({}), AbortSignal: { timeout: () => undefined }, Math, Date,
+  });
+  vm.runInContext(x.files['background.js'], ctx);
+  await tick();
+  assert.deepEqual(badge, ['OFF']);
+  for (const fn of changed) fn({ off: { newValue: false } }, 'local');
+  assert.deepEqual(badge, ['OFF', '']);
+  for (const fn of installed) fn();
+  await tick();
+  const at = store.installedAt;
+  assert.ok(at > 0);
+  for (const fn of installed) fn();
+  await tick();
+  assert.equal(store.installedAt, at, 'kept from the first install');
 });

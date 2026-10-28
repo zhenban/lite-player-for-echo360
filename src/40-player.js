@@ -912,6 +912,10 @@ class LitePlayer {
     const d = this.d;
     // Old analysis results are cleaned up in the background, once the page has settled.
     d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
+    // A lecture watched for a while (the extension's toolbar counts them for its one rating
+    // line): one check a minute.
+    let playedMin = 0;
+    d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));

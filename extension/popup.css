@@ -1,0 +1,56 @@
+/* The toolbar popup and the options page: the player's light and dark tokens (src/30-ui-assets.js),
+   following the system theme. System fonts only. */
+:root {
+  --s0: #F2F3F4; --s1: #E7E8EA; --s2: #F8F8F9; --line: rgba(0,0,0,.12); --fill: rgba(0,0,0,.06);
+  --text: #232529; --text-2: #555960; --accent: #076B75; --on-accent: #FFFFFF; --accent-soft: rgba(7,107,117,.12);
+  --warn-bg: rgba(181,120,0,.12); --warn-text: #6B4A00;
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --r1: 4px; --r2: 8px; --t: 150ms;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --s0: #18191B; --s1: #222326; --s2: #2C2D31; --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10);
+    --text: #ECEDEF; --text-2: #A8ABB2; --accent: #3DBEC4; --on-accent: #0B2E30; --accent-soft: rgba(61,190,196,.16);
+    --warn-bg: rgba(255,170,0,.14); --warn-text: #FFD38A;
+    color-scheme: dark;
+  }
+}
+@media (prefers-reduced-motion: reduce) { :root { --t: 0ms; } }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--s0); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body.popup { width: 320px; padding: var(--sp3) var(--sp4) var(--sp4); }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; align-items: center; gap: var(--sp2); margin-bottom: var(--sp3); }
+header h1 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }
+.ver { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp3); min-height: 40px; }
+.switch { font-weight: 600; }
+section { border-top: 1px solid var(--line); padding: var(--sp2) 0; }
+.status p { margin: var(--sp1) 0; color: var(--text-2); }
+.status.warn p { color: var(--warn-text); }
+
+select { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp2); }
+
+/* A switch: the track and the knob, with the state also in the knob's position. */
+input[type=checkbox][role=switch] { appearance: none; width: 36px; height: 20px; margin: 0; flex: none; border-radius: 10px; background: var(--fill); border: 1px solid var(--line);
+  position: relative; cursor: pointer; transition: background var(--t) ease-out; }
+input[type=checkbox][role=switch]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-2);
+  transition: transform var(--t) ease-out, background var(--t) ease-out; }
+input[type=checkbox][role=switch]:checked { background: var(--accent); border-color: var(--accent); }
+input[type=checkbox][role=switch]:checked::after { transform: translateX(16px); background: #FFFFFF; }
+
+button.secondary { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp3); cursor: pointer; min-height: 32px; }
+button.secondary:hover { background: var(--s1); }
+button.link { background: none; border: 0; padding: var(--sp1) 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+.rate { display: flex; align-items: center; justify-content: space-between; gap: var(--sp2); margin: var(--sp2) 0 0; padding: var(--sp2) var(--sp3); border-radius: var(--r2); background: var(--accent-soft); }
+.rate a { color: var(--text); }
+button.close { background: none; border: 0; color: var(--text-2); cursor: pointer; padding: var(--sp1); min-width: 28px; min-height: 28px; }
+
+footer { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: var(--sp2); margin-top: var(--sp2); }
+.note { margin: var(--sp2) 0 0; color: var(--text-2); font-size: 13px; }

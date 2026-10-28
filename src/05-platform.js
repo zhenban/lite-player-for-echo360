@@ -159,6 +159,12 @@ const platform = {
       try { localStorage.setItem(NS + name, text); } catch (e) { /* storage blocked: a new secret next time */ }
     },
   },
+  // Extension only (06-platform-extension.js): whether the user turned the player off with
+  // the toolbar button, and the toolbar's questions to this page (name -> function giving
+  // the answer), offered once the page is one the player handles.
+  off() { return false; },
+  toolbar(answers) {},
+  viewed() {},
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');

@@ -1,5 +1,8 @@
-// Lite Player for Echo360, the extension's service worker: sends the player's usage data
-// (asked for by the bridge, bridge.js) to the usage-data server, and nothing else.
+// Lite Player for Echo360, the extension's service worker:
+//   - sends the player's usage data (asked for by the bridge, bridge.js) to the usage-data
+//     server, and nothing else
+//   - shows "OFF" on the toolbar button while the player is turned off (popup.js)
+//   - notes when the extension was installed (the popup's one rating line waits a while)
 const SERVER = '{{TELEMETRY_URL}}/';
 const MAX_MS = 60000;
 
@@ -10,4 +13,17 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     .then((r) => r.text().then((text) => reply({ status: r.status, text })))
     .catch(() => reply({ status: 0, text: '' }));
   return true;   // answered later
+});
+
+function showOff(off) {
+  chrome.action.setBadgeText({ text: off ? 'OFF' : '' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: '#555960' }).catch(() => {});
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.off) showOff(changes.off.newValue === true);
+});
+chrome.storage.local.get('off').then((o) => showOff(o.off === true), () => {});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get('installedAt').then((o) => { if (!o.installedAt) chrome.storage.local.set({ installedAt: Date.now() }); }, () => {});
 });

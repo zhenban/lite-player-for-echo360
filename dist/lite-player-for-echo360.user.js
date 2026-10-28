@@ -70,14 +70,23 @@ function pageWindow() {
 // runs first keeps the page, the other does nothing (90-main.js) and says so in the console.
 // boot.other: the version of the copy already running ('' if this is the first).
 const BOOT_MARK = '__litePlayerForEcho360Running';
+const BOOT_DUPLICATE_MARK = '__litePlayerForEcho360Duplicate';
 boot.other = (() => {
   try {
     const page = pageWindow();
-    if (page[BOOT_MARK]) return String(page[BOOT_MARK]);
+    if (page[BOOT_MARK]) {
+      // Seen by the copy that runs (its toolbar button says it is installed twice).
+      try { Object.defineProperty(page, BOOT_DUPLICATE_MARK, { value: VERSION, enumerable: false, configurable: true }); } catch (e) { /* not marked */ }
+      return String(page[BOOT_MARK]);
+    }
     Object.defineProperty(page, BOOT_MARK, { value: VERSION, enumerable: false });
   } catch (e) { /* not marked: runs as if alone */ }
   return '';
 })();
+
+function readDuplicateMark() {
+  try { return pageWindow()[BOOT_DUPLICATE_MARK] || ''; } catch (e) { return ''; }
+}
 
 // Echo360 lesson pages bootstrap their React player with an inline call
 //   Echo["echoPlayerV2FullApp"]("<json>")
@@ -1697,6 +1706,7 @@ const LOADING_SHOW_MS = 400;          // hls.js not there this long after the pa
 const LOADING_SLOW_MS = 5000;          // from then on the loading screen says the network is slow, how long it has waited and what happens at HLS_LOAD_TIMEOUT_MS (the whole file takes about 0.5 s on a 10 Mbit/s link)
 const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
+const VIEWED_MIN = 10;                 // extension: minutes played that count a lecture as watched, for the toolbar's one-time rating line (a product choice: past the first look, a real viewing)
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -2320,6 +2330,12 @@ const platform = {
       try { localStorage.setItem(NS + name, text); } catch (e) { /* storage blocked: a new secret next time */ }
     },
   },
+  // Extension only (06-platform-extension.js): whether the user turned the player off with
+  // the toolbar button, and the toolbar's questions to this page (name -> function giving
+  // the answer), offered once the page is one the player handles.
+  off() { return false; },
+  toolbar(answers) {},
+  viewed() {},
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');
@@ -5698,6 +5714,10 @@ class LitePlayer {
     const d = this.d;
     // Old analysis results are cleaned up in the background, once the page has settled.
     d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
+    // A lecture watched for a while (the extension's toolbar counts them for its one rating
+    // line): one check a minute.
+    let playedMin = 0;
+    d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
@@ -15729,14 +15749,30 @@ function unsupportedReason() {
     const stack = String((r && r.stack) || '');
     if (/lite[ -]player[ -]for[ -]echo360/i.test(stack)) { log.warn('unhandled rejection', r); logEvent('warn', 'unhandled rejection: ' + ((r && r.message) || r)); }
   });
+  const isList = courseList.matches();
+  const adapter = isList ? null : ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
+  let player = null;
+  // What the toolbar button (extension) shows for this page, and its diagnostics.
+  if (isList || adapter) {
+    platform.toolbar({
+      status: () => ({
+        state: platform.off() ? 'off' : boot.other ? 'duplicate' : isList ? 'courseList'
+          : boot.path === 'intercept' || boot.path === 'takeover' ? 'running' : boot.path === 'fallback' ? 'original' : 'waiting',
+        // Why the original player is used: the reason, or what the page itself needs.
+        reason: boot.path !== 'fallback' ? '' : /live lessons/.test(boot.reason) ? 'live' : /copyright/.test(boot.reason) ? 'copyright' : boot.reason.split(':')[0],
+        // A second copy (the userscript too) marks the page (00-boot.js).
+        duplicate: !!boot.other || !!readDuplicateMark(),
+        version: VERSION,
+      }),
+      diagnostics: () => (player ? diagnosticsText(player) : startupDiagnosticsText()),
+    });
+  }
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }
-  if (courseList.matches()) { platform.whenKv(() => { try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
-  const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
+  if (isList) { platform.whenKv(() => { if (platform.off()) return; try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
   if (!adapter) return;
   if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
 
   let booted = false;
-  let player = null;
   // Why the page goes to the original player (usage data): the player's reasons.
   const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
 
@@ -15779,6 +15815,12 @@ function unsupportedReason() {
   }
 
   function launchNow(arg, callOriginal, takeover) {
+    // Turned off with the toolbar button: the page as Echo360 made it (no CPU fix, no notice).
+    if (platform.off()) {
+      boot.path = 'off';
+      if (!takeover) callOriginal(arg);
+      return;
+    }
     if (store.get('forceOriginal', false)) {
       fellBack('user');
       if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);
@@ -15907,7 +15949,7 @@ function unsupportedReason() {
   const checkBootstrap = () => {
     let tries = 0;
     const check = () => {
-      if (booted) return;
+      if (booted || platform.off()) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
       fellBack('noBootstrap');
       cpuFix.start();

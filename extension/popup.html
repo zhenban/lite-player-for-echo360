@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body class="popup">
+  <header>
+    <img src="icon-32.png" alt="" width="20" height="20">
+    <h1 data-t="title"></h1>
+    <span class="ver"></span>
+  </header>
+
+  <label class="row switch">
+    <span data-t="onLabel"></span>
+    <input type="checkbox" id="on" role="switch">
+  </label>
+
+  <section class="status" aria-live="polite">
+    <p id="status"></p>
+    <button id="reload" class="secondary" data-t="reload" hidden></button>
+  </section>
+
+  <section class="settings">
+    <label class="row">
+      <span data-t="language"></span>
+      <select id="lang">
+        <option value="auto" data-t="langAuto"></option>
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
+    </label>
+    <label class="row">
+      <span data-t="usageData"></span>
+      <input type="checkbox" id="telemetry" role="switch">
+    </label>
+  </section>
+
+  <p id="rate" class="rate" hidden>
+    <a href="#" id="rateLink" data-t="rate"></a>
+    <button id="rateClose" class="close" data-t-label="rateClose">✕</button>
+  </p>
+
+  <footer>
+    <button id="options" class="link" data-t="settings"></button>
+    <button id="report" class="link" data-t="report"></button>
+  </footer>
+  <p id="note" class="note" role="status" hidden></p>
+
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

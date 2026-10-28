@@ -38,14 +38,30 @@ function unsupportedReason() {
     const stack = String((r && r.stack) || '');
     if (/lite[ -]player[ -]for[ -]echo360/i.test(stack)) { log.warn('unhandled rejection', r); logEvent('warn', 'unhandled rejection: ' + ((r && r.message) || r)); }
   });
+  const isList = courseList.matches();
+  const adapter = isList ? null : ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
+  let player = null;
+  // What the toolbar button (extension) shows for this page, and its diagnostics.
+  if (isList || adapter) {
+    platform.toolbar({
+      status: () => ({
+        state: platform.off() ? 'off' : boot.other ? 'duplicate' : isList ? 'courseList'
+          : boot.path === 'intercept' || boot.path === 'takeover' ? 'running' : boot.path === 'fallback' ? 'original' : 'waiting',
+        // Why the original player is used: the reason, or what the page itself needs.
+        reason: boot.path !== 'fallback' ? '' : /live lessons/.test(boot.reason) ? 'live' : /copyright/.test(boot.reason) ? 'copyright' : boot.reason.split(':')[0],
+        // A second copy (the userscript too) marks the page (00-boot.js).
+        duplicate: !!boot.other || !!readDuplicateMark(),
+        version: VERSION,
+      }),
+      diagnostics: () => (player ? diagnosticsText(player) : startupDiagnosticsText()),
+    });
+  }
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }
-  if (courseList.matches()) { platform.whenKv(() => { try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
-  const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
+  if (isList) { platform.whenKv(() => { if (platform.off()) return; try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
   if (!adapter) return;
   if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
 
   let booted = false;
-  let player = null;
   // Why the page goes to the original player (usage data): the player's reasons.
   const FALLBACK_REASON = { error: 'playbackError', auth: 'auth', user: 'user', extras: 'extras', attachment: 'attachment' };
 
@@ -88,6 +104,12 @@ function unsupportedReason() {
   }
 
   function launchNow(arg, callOriginal, takeover) {
+    // Turned off with the toolbar button: the page as Echo360 made it (no CPU fix, no notice).
+    if (platform.off()) {
+      boot.path = 'off';
+      if (!takeover) callOriginal(arg);
+      return;
+    }
     if (store.get('forceOriginal', false)) {
       fellBack('user');
       if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);
@@ -216,7 +238,7 @@ function unsupportedReason() {
   const checkBootstrap = () => {
     let tries = 0;
     const check = () => {
-      if (booted) return;
+      if (booted || platform.off()) return;
       if (!document.querySelector('video') && ++tries < 4) { setTimeout(check, BOOT_CHECK_MS); return; }
       fellBack('noBootstrap');
       cpuFix.start();

@@ -24,8 +24,9 @@ body:
   - type: dropdown
     id: manager
     attributes:
-      label: Userscript manager
+      label: Installed as
       options:
+        - Chrome extension
         - Tampermonkey
         - Violentmonkey
         - Other (say which below)
@@ -34,16 +35,16 @@ body:
   - type: input
     id: version
     attributes:
-      label: Script version
-      description: Shown in the ⋯ menu of the player, and in your userscript manager.
-      placeholder: e.g. 0.15.0
+      label: Version
+      description: Shown in the ⋯ menu of the player, in the extension's toolbar button, or in your userscript manager.
+      placeholder: e.g. 1.1.0
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: In the player, open the ⋯ menu, choose "Copy diagnostics" and paste the text here. It contains no sign-in data, addresses, names, notes or posts.
+      description: In the player, open the ⋯ menu, choose "Copy diagnostics" and paste the text here (the extension's "Report a problem" copies it for you). It contains no sign-in data, addresses, names, notes or posts.
       render: text
     validations:
       required: true

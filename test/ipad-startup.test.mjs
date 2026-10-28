@@ -138,8 +138,31 @@ test('installed twice (the extension and the userscript): the first copy keeps t
   // Two copies made two players (the second without the id).
   assert.equal([...t.w.document.querySelectorAll('*')].filter((e) => e.shadowRoot).length, 1, 'one player');
   assert.ok(warned.some((x) => /another copy \(.+\) already runs on this page/.test(x)), warned.join('\n'));
+  // The second copy marks the page: the first one's toolbar button says it is installed twice.
+  assert.ok(t.w.__litePlayerForEcho360Duplicate);
   await t.close();
 });
+
+for (const late of [false, true]) {
+  test('turned off with the toolbar button (' + (late ? 'run late' : 'run early') + '): the page as Echo360 made it, no fix, no notice', async () => {
+    const off = script.replace('off() { return false; },', 'off() { return true; },');
+    assert.notEqual(off, script);
+    const t = page(late ? { state: 'complete', started: true, src: off } : { src: off });
+    await settle(60);
+    assert.equal(t.boot().path, 'off');
+    assert.equal(t.player(), undefined);
+    assert.equal(t.notice(), null);
+    if (late) {
+      assert.equal(t.video.paused, false, 'the original player goes on');
+      assert.equal(t.unmounts, 0);
+      assert.equal(t.calls.length, 0);
+    } else {
+      assert.equal(t.calls.length, 1, 'the original player started, once');
+    }
+    assert.equal(t.w.document.querySelectorAll('style').length, 0, 'no CPU fix (its style)');
+    await t.close();
+  });
+}
 
 test('start-up: run late on a page whose start-up data is not there: the original player with the reason (the check is not lost)', async () => {
   const t = page({ state: 'complete', started: true, inline: false });

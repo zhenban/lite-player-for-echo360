@@ -103,6 +103,9 @@ ${parts.join('\n')}
 // The extension's files, without the libraries (the tests use it too): { manifest, files:
 // { name: text }, icons: [file names in extension/], libs: { npm path: SHA-256 } } or null.
 // dev: with the test hooks (DEV_HOOKS), for dev/extension-check.mjs only.
+// The extension's own files (extension/), with their placeholders filled.
+const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js'];
+
 export function extensionFiles({ dev = false } = {}) {
   const r = assemble({ target: 'extension', dev });
   if (!r) return null;
@@ -115,7 +118,7 @@ export function extensionFiles({ dev = false } = {}) {
     .replace(/\{\{TELEMETRY_URL\}\}/g, telemetry).replace(/"\{\{MATCHES\}\}"/g, JSON.stringify(matches)).replace(/"\{\{SITES\}\}"/g, JSON.stringify(sites));
   const manifest = JSON.parse(fill(readFileSync(join(extDir, 'manifest.json'), 'utf8')));
   const files = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'player.js': r.out };
-  for (const f of ['bridge.js', 'background.js']) files[f] = fill(readFileSync(join(extDir, f), 'utf8'));
+  for (const f of EXT_TEXT_FILES) files[f] = fill(readFileSync(join(extDir, f), 'utf8'));
   // The name and store summary in each language of the store listing (Chrome picks one).
   for (const lang of readdirSync(join(extDir, '_locales'))) {
     const f = '_locales/' + lang + '/messages.json';

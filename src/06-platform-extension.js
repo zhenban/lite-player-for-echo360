@@ -12,6 +12,8 @@
 //     extension does not have yet (kept there before 1.1.0)
 //   - post: made by the extension's service worker (no cookies; the page's content
 //     security policy does not apply there)
+//   - off, toolbar: the toolbar button's switch (read with the settings), and its
+//     questions to this page (status, diagnostics), answered through the bridge
 //   - libraries: shipped in the package; Tesseract's language data other than English comes
 //     from the CDN, hash checked as in the userscript
 // The two worlds share the DOM. They meet at start-up, before any of the page's scripts has
@@ -37,6 +39,8 @@ const extBridge = {
   kv: new Map(),     // private values (chrome.storage.local), as read at start-up and written since
   shared: new Map(), // settings and positions (EXT_SHARED), likewise
   kvRead: false,     // the settings were read, or no longer waited for (platform.whenKv)
+  off: false,        // turned off with the toolbar button
+  answers: null,     // the toolbar's questions: name -> () => value (platform.toolbar)
   replies: new Map(),
   seq: 0,
   ready: null,       // resolves once kv is read
@@ -48,6 +52,9 @@ const extBridge = {
     this.node = node;
     node.addEventListener(EXT_TO_PAGE, (e) => this.receive(e));
     window.removeEventListener(EXT_HELLO, this.onHello, true);
+    // The player may have offered answers before the bridge was there (it ran first). Sent
+    // after this turn: the bridge starts listening once it has the acknowledgement.
+    Promise.resolve().then(() => { if (this.answers) this.send({ type: 'present' }); });
     return true;
   },
 
@@ -82,7 +89,17 @@ const extBridge = {
       for (const [k, v] of Object.entries(msg.values)) if (typeof v === 'string' && !this.kv.has(k)) this.kv.set(k, v);
       const shared = msg.shared && typeof msg.shared === 'object' ? msg.shared : {};
       for (const [k, v] of Object.entries(shared)) if (typeof v === 'string' && EXT_SHARED(k) && !this.shared.has(k)) this.shared.set(k, v);
+      this.off = msg.off === true;
       this.readyResolve();
+    } else if (msg.type === 'prefs' && typeof msg.name === 'string' && typeof msg.text === 'string' && EXT_SHARED(msg.name)) {
+      // Changed in the toolbar or the options page (read again where it is used: whether
+      // usage data is sent, before each request).
+      this.shared.set(msg.name, msg.text);
+    } else if (msg.type === 'ask' && typeof msg.name === 'string') {
+      const fn = this.answers && Object.prototype.hasOwnProperty.call(this.answers, msg.name) ? this.answers[msg.name] : null;
+      const id = msg.id;
+      new Promise((resolve) => resolve(fn ? fn() : null))
+        .then((value) => this.send({ type: 'answer', id, value: value === undefined ? null : value }), () => this.send({ type: 'answer', id, value: null }));
     } else if (msg.type === 'posted') {
       const done = this.replies.get(msg.id);
       if (done) done(+msg.status || 0, typeof msg.text === 'string' ? msg.text : '');
@@ -148,6 +165,12 @@ Object.assign(platform, {
       extBridge.send({ type: 'post', id, url, body, timeoutMs });
     });
   },
+  off() { return extBridge.off; },
+  toolbar(answers) {
+    extBridge.answers = answers;
+    extBridge.send({ type: 'present' });
+  },
+  viewed() { extBridge.send({ type: 'viewed' }); },
   privateKv: {
     get(name) { const v = extBridge.kv.get(name); return typeof v === 'string' ? v : null; },
     set(name, text) { extBridge.kv.set(name, text); extBridge.send({ type: 'set', name, text }); },

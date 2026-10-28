@@ -6,19 +6,18 @@
 // What it keeps for the player (chrome.storage.local unless said otherwise):
 //   private:<name>   values out of the page's reach (the usage-data secret); never synced
 //   kv:<name>        the settings and saved positions, the same on every Echo360 site
-//   prefs (sync)     the settings that follow the user's Chrome account: all but those of
-//                    this device's screen and sound (DEVICE_PREFS)
+//   prefs (sync)     the settings that follow the user's Chrome account (shared.js)
+//   off              true: turned off with the toolbar button (popup.js)
+//   viewed           lectures watched for a while (the toolbar's one rating line)
+// It also answers the toolbar button about this page (status, diagnostics), when the page
+// is one the player handles (the player said so: 'present').
 (() => {
   const HELLO = 'lite-player-for-echo360:hello';
   const ACK = 'lite-player-for-echo360:ack';
   const TO_PAGE = 'lite-player-for-echo360:to-page';
   const TO_EXT = 'lite-player-for-echo360:to-ext';
   const KEY = 'private:';
-  const KV = 'kv:';
-  const PREFS = 'lite-player-for-echo360:prefs';   // the player's name for its settings
-  // Settings of this device, not synced: the layout suits its screen, the volume and quality
-  // its speakers and connection.
-  const DEVICE_PREFS = ['primary', 'layout', 'ratio', 'pipw', 'corner', 'panel', 'panelw', 'volume', 'muted', 'quality'];
+  const { KV, PREFS } = LP;   // shared.js, loaded before this file
   // Chrome allows about one sync write every 2 s on average: at most one per SYNC_GAP_MS
   // per page, and none when nothing synced changed.
   const SYNC_GAP_MS = 5000;
@@ -26,19 +25,18 @@
   let synced = null;   // the text last read from or written to sync
   let syncTimer = 0;
   let syncNext = null;
+  const mineWritten = new Set();   // settings this page wrote (not sent back to it)
+  let present = false;   // the player handles this page and answers questions
+  const asked = new Map();
+  let askSeq = 0;
+  const ASK_MS = 3000;
 
   const toPage = (msg) => node.dispatchEvent(new CustomEvent(TO_PAGE, { detail: JSON.stringify(msg) }));
-  const parse = (text) => { try { const v = JSON.parse(text); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch (e) { return null; } };
-  const shared = (prefs) => {
-    const out = {};
-    for (const [k, v] of Object.entries(prefs)) if (!DEVICE_PREFS.includes(k)) out[k] = v;
-    return JSON.stringify(out);
-  };
 
   function syncPrefs(text) {
-    const p = parse(text);
+    const p = LP.parse(text);
     if (!p) return;
-    syncNext = shared(p);
+    syncNext = LP.synced(p);
     if (syncTimer) return;
     const write = () => {
       syncTimer = 0;
@@ -59,9 +57,17 @@
       chrome.storage.local.set({ [KEY + msg.name]: msg.text }).catch(() => {});
     } else if (msg.type === 'kvset' && typeof msg.name === 'string' && typeof msg.text === 'string') {
       chrome.storage.local.set({ [KV + msg.name]: msg.text }).catch(() => {});
-      if (msg.name === PREFS) syncPrefs(msg.text);
+      if (msg.name === PREFS) { mineWritten.add(msg.text); syncPrefs(msg.text); }
     } else if (msg.type === 'kvdel' && typeof msg.name === 'string') {
       chrome.storage.local.remove(KV + msg.name).catch(() => {});
+    } else if (msg.type === 'viewed') {
+      // Counted for the toolbar's rating line (popup.js).
+      chrome.storage.local.get('viewed').then((o) => chrome.storage.local.set({ viewed: (+o.viewed || 0) + 1 })).catch(() => {});
+    } else if (msg.type === 'present') {
+      present = true;
+    } else if (msg.type === 'answer') {
+      const done = asked.get(msg.id);
+      if (done) done(msg.value === undefined ? null : msg.value);
     } else if (msg.type === 'post' && typeof msg.url === 'string' && typeof msg.body === 'string') {
       const id = msg.id;
       chrome.runtime.sendMessage({ type: 'post', url: msg.url, body: msg.body, timeoutMs: +msg.timeoutMs || 0 })
@@ -84,16 +90,39 @@
     } catch (e) { /* nothing read: the player starts with what the page has */ }
     try {
       const s = (await chrome.storage.sync.get('prefs')).prefs;
-      const fromSync = typeof s === 'string' ? parse(s) : null;
-      if (fromSync) {
-        synced = s;
-        const mine = parse(kv[PREFS] || '') || {};
-        for (const k of DEVICE_PREFS) delete fromSync[k];
-        kv[PREFS] = JSON.stringify(Object.assign(mine, fromSync));
-      }
+      if (typeof s === 'string' && LP.parse(s)) { synced = s; kv[PREFS] = LP.merged(kv[PREFS], s); }
     } catch (e) { /* sync off or unavailable: this device's copy */ }
-    return { values, kv };
+    let off = false;
+    try { off = (await chrome.storage.local.get('off')).off === true; } catch (e) { /* on */ }
+    return { values, kv, off };
   }
+
+  // The toolbar's questions (popup.js): answered by the page's player, when there is one
+  // here (frames without one stay silent, so the one with the player answers).
+  function ask(name) {
+    return new Promise((resolve) => {
+      const id = ++askSeq;
+      const timer = setTimeout(() => done(null), ASK_MS);
+      const done = (value) => { clearTimeout(timer); asked.delete(id); resolve(value); };
+      asked.set(id, done);
+      toPage({ type: 'ask', id, name });
+    });
+  }
+  chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    if (sender.id !== chrome.runtime.id || !msg || msg.type !== 'ask' || !present || !node) return false;
+    if (!['status', 'diagnostics'].includes(msg.name)) return false;
+    ask(msg.name).then(reply);
+    return true;
+  });
+  // Settings changed elsewhere (the toolbar, the options page, another tab): the page's copy
+  // follows (usage data turned off stops at once).
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !node) return;
+    const c = changes[KV + PREFS];
+    if (!c || typeof c.newValue !== 'string') return;
+    if (mineWritten.delete(c.newValue)) return;
+    toPage({ type: 'prefs', name: PREFS, text: c.newValue });
+  });
 
   function adopt(n) {
     if (node || !n || n.nodeType !== 1) return false;
@@ -101,7 +130,7 @@
     n.setAttribute('data-base', chrome.runtime.getURL(''));
     n.addEventListener(TO_EXT, receive);
     window.removeEventListener(HELLO, onHello, true);
-    snapshot().then(({ values, kv }) => toPage({ type: 'kv', values, shared: kv }));
+    snapshot().then(({ values, kv, off }) => toPage({ type: 'kv', values, shared: kv, off }));
     return true;
   }
 
