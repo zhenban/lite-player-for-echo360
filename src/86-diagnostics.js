@@ -52,6 +52,7 @@ function diagnosticsText(p) {
   add('Lite Player for Echo360', VERSION);
   add('Browser', browserName());
   add('Runs in', platform.manager());
+  add('Data kept in', idbCache.where);
   add('Page', location.hostname + ' (lesson page)');
   lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));
@@ -79,4 +80,22 @@ function diagnosticsText(p) {
   if (!eventLog.length) lines.push('  none');
   for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
   return lines.join('\n');
+}
+
+// Why this browser cannot run the player ('' if it can): checked before anything starts.
+// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
+// that pass (Safari 15: iOS and iPadOS 15).
+function unsupportedReason() {
+  const need = [
+    ['Proxy', typeof Proxy === 'function'],
+    ['fetch', typeof fetch === 'function'],
+    ['AbortController', typeof AbortController === 'function'],
+    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
+    ['ResizeObserver', typeof ResizeObserver === 'function'],
+    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
+    ['createImageBitmap', typeof createImageBitmap === 'function'],
+    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
+  ];
+  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
+  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
 }

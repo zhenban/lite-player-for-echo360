@@ -63,6 +63,8 @@
     } else if (msg.type === 'viewed') {
       // Counted for the toolbar's rating line (popup.js).
       chrome.storage.local.get('viewed').then((o) => chrome.storage.local.set({ viewed: (+o.viewed || 0) + 1 })).catch(() => {});
+    } else if (msg.type === 'options') {
+      chrome.runtime.sendMessage({ type: 'options' }).catch(() => {});
     } else if (msg.type === 'present') {
       present = true;
     } else if (msg.type === 'answer') {

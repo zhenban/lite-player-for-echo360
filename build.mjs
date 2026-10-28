@@ -23,6 +23,13 @@ const LANG_FILE = /^01-lang-[a-z]+\.js$/;
 
 // Only in the extension's build: the platform parts of the extension.
 const EXTENSION_ONLY = '06-platform-extension.js';
+// The extension's options page uses the player's code without the player (core.js, target
+// 'options'): its words, settings checks, storage, backups and browser checks. Left out:
+// what starts a player on a page. What the page uses is handed out as LitePlayerCore.
+const OPTIONS_SKIP = [EXTENSION_ONLY, '90-main.js'];
+const OPTIONS_EXPORTS = ['platform', 'store', 'storageLock', 'NS', 'tr', 'uiLang', 'uiLocale', 'UI_LANGS', 'langLabel', 'themeKey', 'spanLabel',
+  'THEMES', 'COPY_SPANS', 'CAPTION_SIZES', 'SILENCE_MIN_CHOICES', 'SILENCE_SENSITIVITY', 'prefDefaults', 'sanitizePrefs',
+  'idbCache', 'analysisCaches', 'USER_DATA_KEYS', 'makeBackup', 'restoreBackup', 'BACKUP_MAX_BYTES', 'unsupportedReason', 'AudioChain'];
 
 // The whole userscript as one string (the tests use it too, to run the player in a
 // simulated page). Returns null after reporting what is wrong. dev: with the test hooks
@@ -31,7 +38,7 @@ const EXTENSION_ONLY = '06-platform-extension.js';
 export function assemble({ dev = false, target = 'userscript' } = {}) {
   const version = readFileSync(join(root, 'VERSION'), 'utf8').trim();
   const all = readdirSync(srcDir).filter((f) => f.endsWith('.js')).sort();
-  const files = target === 'extension' ? all : all.filter((f) => f !== EXTENSION_ONLY);
+  const files = target === 'extension' ? all : target === 'options' ? all.filter((f) => !OPTIONS_SKIP.includes(f)) : all.filter((f) => f !== EXTENSION_ONLY);
   let failed = false;
   const parts = files.map((f) => {
     const text = readFileSync(join(srcDir, f), 'utf8');
@@ -76,7 +83,9 @@ export function assemble({ dev = false, target = 'userscript' } = {}) {
     console.error('meta.txt @connect (' + connect.join(', ') + ') must be exactly the host of TELEMETRY_URL (' + (worker ? worker[1] : 'not found') + ')');
     return null;
   }
-  const header = target === 'extension' ? `// Lite Player for Echo360 ${version}, the Chrome extension's player (built from src/ by build.mjs).` : meta;
+  const header = target === 'extension' ? `// Lite Player for Echo360 ${version}, the Chrome extension's player (built from src/ by build.mjs).`
+    : target === 'options' ? `// Lite Player for Echo360 ${version}, the player's code for the extension's options page (built from src/ by build.mjs).` : meta;
+  if (target === 'options') parts.push(`window.LitePlayerCore = { ${OPTIONS_EXPORTS.join(', ')} };\n`);
   const out = `${header}
 
 /* global Hls */
@@ -104,7 +113,7 @@ ${parts.join('\n')}
 // { name: text }, icons: [file names in extension/], libs: { npm path: SHA-256 } } or null.
 // dev: with the test hooks (DEV_HOOKS), for dev/extension-check.mjs only.
 // The extension's own files (extension/), with their placeholders filled.
-const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js'];
+const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'store.html', 'store.js', 'options.html', 'options.js'];
 
 export function extensionFiles({ dev = false } = {}) {
   const r = assemble({ target: 'extension', dev });
@@ -117,7 +126,9 @@ export function extensionFiles({ dev = false } = {}) {
   const fill = (text) => text.replace(/\{\{VERSION\}\}/g, r.version)
     .replace(/\{\{TELEMETRY_URL\}\}/g, telemetry).replace(/"\{\{MATCHES\}\}"/g, JSON.stringify(matches)).replace(/"\{\{SITES\}\}"/g, JSON.stringify(sites));
   const manifest = JSON.parse(fill(readFileSync(join(extDir, 'manifest.json'), 'utf8')));
-  const files = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'player.js': r.out };
+  const core = assemble({ target: 'options' });
+  if (!core) return null;
+  const files = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'player.js': r.out, 'core.js': core.out };
   for (const f of EXT_TEXT_FILES) files[f] = fill(readFileSync(join(extDir, f), 'utf8'));
   // The name and store summary in each language of the store listing (Chrome picks one).
   for (const lang of readdirSync(join(extDir, '_locales'))) {

@@ -14,6 +14,9 @@
 //     security policy does not apply there)
 //   - off, toolbar: the toolbar button's switch (read with the settings), and its
 //     questions to this page (status, diagnostics), answered through the bridge
+//   - dataStore: tags, slide files, watched records and the analyses' caches, kept in the
+//     extension's IndexedDB (the same on every Echo360 site, and reachable from the options
+//     page) through a hidden frame of the extension (extension/store.js) and a MessagePort
 //   - libraries: shipped in the package; Tesseract's language data other than English comes
 //     from the CDN, hash checked as in the userscript
 // The two worlds share the DOM. They meet at start-up, before any of the page's scripts has
@@ -118,6 +121,90 @@ const extKvDone = () => {
 extBridge.ready.then(extKvDone);
 setTimeout(extKvDone, EXT_KV_WAIT_MS);
 
+// The extension's data store (extension/store.js): a hidden frame, made when first needed.
+// Its requests: get, keys, write (entries), and lock (keys) -> commit / release, which make
+// a read-change-write that no other tab can overtake (61-media-io.js, idbCache).
+const extStore = {
+  ready: null,       // Promise of the backend, or rejected (the page's own storage is used)
+  port: null,
+  frame: null,
+  seq: 0,
+  calls: new Map(),  // id -> { resolve, reject, timer }
+
+  connect() {
+    if (this.ready) return this.ready;
+    this.ready = new Promise((resolve, reject) => {
+      if (!extBridge.base) { reject(new Error('the extension is not reachable')); return; }
+      const origin = new URL(extBridge.base).origin;
+      const frame = document.createElement('iframe');
+      frame.src = extBridge.base + 'store.html';
+      frame.style.display = 'none';
+      frame.setAttribute('aria-hidden', 'true');
+      frame.tabIndex = -1;
+      this.frame = frame;
+      const stop = () => { clearTimeout(timer); window.removeEventListener('message', onMessage); };
+      const timer = setTimeout(() => { stop(); frame.remove(); reject(new Error('the data store did not answer')); }, EXT_STORE_WAIT_MS);
+      const onMessage = (e) => {
+        if (e.source !== frame.contentWindow || e.origin !== origin || e.data !== 'lite-player-for-echo360:store-ready') return;
+        stop();
+        const ch = new MessageChannel();
+        ch.port1.onmessage = (m) => this.receive(m.data);
+        frame.contentWindow.postMessage('lite-player-for-echo360:store', origin, [ch.port2]);
+        this.port = ch.port1;
+        resolve(this.backend);
+      };
+      window.addEventListener('message', onMessage);
+      document.documentElement.appendChild(frame);
+    });
+    return this.ready;
+  },
+
+  receive(m) {
+    const c = m && this.calls.get(m.id);
+    if (!c) return;
+    this.calls.delete(m.id);
+    clearTimeout(c.timer);
+    if (m.ok) c.resolve(m.value); else c.reject(new Error('data store: ' + m.error));
+  },
+
+  call(msg) {
+    return new Promise((resolve, reject) => {
+      const id = ++this.seq;
+      const timer = setTimeout(() => {
+        this.calls.delete(id);
+        // Gone with its frame: the next request makes a new one.
+        if (this.frame) this.frame.remove();
+        this.port = null;
+        this.ready = null;
+        reject(new Error('data store: no answer'));
+      }, EXT_STORE_OP_MS);
+      this.calls.set(id, { resolve, reject, timer });
+      this.port.postMessage(Object.assign({ id }, msg));
+    });
+  },
+
+  // Each request makes sure there is a frame (a lost one is made again).
+  async request(msg) {
+    if (!this.port) await this.connect();
+    return this.call(msg);
+  },
+
+  backend: null,
+};
+extStore.backend = {
+  where: 'extension',
+  get: (key) => extStore.request({ op: 'get', key }),
+  keys: () => extStore.request({ op: 'keys' }),
+  write: (entries) => extStore.request({ op: 'write', entries }),
+  async updateMany(keys, fn) {
+    const { lock, old } = await extStore.request({ op: 'lock', keys });
+    let next;
+    try { next = fn(old || {}); } catch (e) { extStore.call({ op: 'release', lock }).catch(() => {}); throw e; }
+    await extStore.call({ op: 'commit', lock, entries: Object.entries(next) });
+    return next;
+  },
+};
+
 // The page's storage, for what stays there.
 const extPageKv = platform.kv;
 
@@ -165,6 +252,8 @@ Object.assign(platform, {
       extBridge.send({ type: 'post', id, url, body, timeoutMs });
     });
   },
+  dataStore() { return extStore.connect(); },
+  openSettings() { extBridge.send({ type: 'options' }); },
   off() { return extBridge.off; },
   toolbar(answers) {
     extBridge.answers = answers;

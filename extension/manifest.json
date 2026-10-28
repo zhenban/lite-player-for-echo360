@@ -9,10 +9,11 @@
   "permissions": ["storage"],
   "host_permissions": ["{{TELEMETRY_URL}}/*"],
   "background": { "service_worker": "background.js" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "action": { "default_popup": "popup.html", "default_title": "__MSG_name__", "default_icon": { "16": "icon-16.png", "32": "icon-32.png" } },
   "content_scripts": [
     { "matches": "{{MATCHES}}", "js": ["shared.js", "bridge.js"], "run_at": "document_start", "world": "ISOLATED", "all_frames": true },
     { "matches": "{{MATCHES}}", "js": ["player.js"], "run_at": "document_start", "world": "MAIN", "all_frames": true }
   ],
-  "web_accessible_resources": [{ "resources": ["lib/*"], "matches": "{{SITES}}" }]
+  "web_accessible_resources": [{ "resources": ["lib/*", "store.html"], "matches": "{{SITES}}" }]
 }

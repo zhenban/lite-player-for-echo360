@@ -6,7 +6,9 @@
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
 //     an extension reads a snapshot first: whenKv(fn) runs fn once it is there, at once
 //     when it already is, as always in a userscript)
-//   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
+//   - openDb, dbExists, deleteDb: the page's IndexedDB, for larger data (slide files,
+//     analyses, tags); dataStore: where that data is kept instead, or null for the page's
+//     (an extension keeps it in its own storage, 06-platform-extension.js)
 //   - libUrl / libBlobUrl / importLib: the libraries loaded when first needed (pdf.js,
 //     Tesseract and its language data), named by their npm path ('pdfjs-dist@6.4.299/
 //     build/...'). A userscript fetches them from a CDN and runs a file only after its
@@ -62,6 +64,23 @@ const platform = {
     if (typeof indexedDB === 'undefined') return null;
     return indexedDB.open(name, version);
   },
+  // Whether the page has that database (without making it), and deleting it.
+  async dbExists(name) {
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return false;
+    try { return (await indexedDB.databases()).some((d) => d.name === name); } catch (e) { return false; }
+  },
+  deleteDb(name) {
+    return new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') { resolve(false); return; }
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+      req.onblocked = () => log.warn('storage: deleting the page\'s copy waits for another tab');
+    });
+  },
+  dataStore: null,
+  // Extension only: opens its settings page (backups are made there). null: none.
+  openSettings: null,
   libUrl(path) { return 'https://cdn.jsdelivr.net/npm/' + path; },
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it

@@ -103,15 +103,24 @@ function fetchRange(url, offset, length, signal) {
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot
 // be used just means work is done again) but failures are logged; writes whose loss the
-// user would notice (slide files, a restore) use putStrict, which throws. A failed open is
-// tried again on the next call; when another tab needs a newer database version, this
-// connection closes so it is not in the way.
-const idbCache = {
+// user would notice (slide files, a restore) use putStrict, which throws.
+// Where it is kept (the backend): the page's IndexedDB (pageDb), or what the platform
+// keeps instead (platform.dataStore: the extension's own storage). Moving to the latter,
+// the user's data in the page's copy (USER_DATA_KEYS) goes along once and the page's copy
+// is deleted; the analyses' caches are left behind (they are made again).
+const DB_NAME = 'lite-player-for-echo360';
+// What the user made or chose (kept, in backups, 85-export.js); the rest is analyses.
+const USER_DATA_KEYS = /^(tags|tagmap|deck|deckref|deckfile|watched|screenpick):/;
+
+// The page's IndexedDB. A failed open is tried again on the next call; when another tab
+// needs a newer database version, this connection closes so it is not in the way.
+const pageDb = {
+  where: 'page',
   db: null,
   open() {
     if (this.db) return this.db;
     const p = new Promise((resolve, reject) => {
-      const req = platform.openDb('lite-player-for-echo360', 1);
+      const req = platform.openDb(DB_NAME, 1);
       if (!req) { reject(new Error('no IndexedDB')); return; }
       req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('cache')) req.result.createObjectStore('cache'); };
       req.onsuccess = () => {
@@ -136,43 +145,14 @@ const idbCache = {
       tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     }));
   },
-  soft(what, key, p) {
-    return p.catch((e) => { log.warn('storage ' + what + ' failed (' + String(key).split(':')[0] + '):', e); return undefined; });
+  get(key) { return this.tx('readonly', (s) => s.get(key)); },
+  keys() { return this.tx('readonly', (s) => s.getAllKeys()); },
+  // [[key, value | undefined (delete)], ...] in one transaction.
+  write(entries) {
+    return this.tx('readwrite', (s) => { for (const [k, v] of entries) { if (v === undefined) s.delete(k); else s.put(v, k); } return null; });
   },
-  get(key) { return this.soft('read', key, this.tx('readonly', (s) => s.get(key))); },
-  put(key, value) { return storageLock.frozen ? Promise.resolve() : this.soft('write', key, this.tx('readwrite', (s) => s.put(value, key))); },
-  putStrict(key, value) { return this.tx('readwrite', (s) => s.put(value, key)); },
-  // Several entries in one transaction: all are written or none (throws on failure).
-  putMany(entries) {
-    if (!entries.length) return Promise.resolve();
-    return this.tx('readwrite', (s) => { let req = null; for (const [k, v] of entries) req = s.put(v, k); return req; });
-  },
-  del(key) { return this.soft('delete', key, this.tx('readwrite', (s) => s.delete(key))); },
-  keys() { return this.soft('list', '', this.tx('readonly', (s) => s.getAllKeys())).then((k) => k || []); },
-  // Read, change and write one entry in a single transaction (no other tab or task can
-  // write in between). fn(old) returns the new value, or undefined to delete the entry.
-  // Resolves to the new value.
-  update(key, fn) {
-    if (storageLock.frozen) return Promise.resolve(undefined);
-    return this.open().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction('cache', 'readwrite');
-      const os = tx.objectStore('cache');
-      let next;
-      const req = os.get(key);
-      req.onsuccess = () => {
-        try { next = fn(req.result); } catch (e) { tx.abort(); reject(e); return; }
-        if (next === undefined) os.delete(key); else os.put(next, key);
-      };
-      tx.oncomplete = () => resolve(next);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-    }));
-  },
-  // The same for several entries: fn({ key: old }) returns { key: new } (undefined deletes;
-  // keys left out stay as they are, and need not have been read). Resolves to that object;
-  // throws when it could not be written.
+  // See idbCache.updateMany.
   updateMany(keys, fn) {
-    if (storageLock.frozen) return Promise.resolve(undefined);
     return this.open().then((db) => new Promise((resolve, reject) => {
       const tx = db.transaction('cache', 'readwrite');
       const os = tx.objectStore('cache');
@@ -192,6 +172,80 @@ const idbCache = {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     }));
+  },
+  async close() {
+    const p = this.db;
+    this.db = null;
+    if (p) { try { (await p).close(); } catch (e) { /* not open */ } }
+  },
+};
+
+// The user's data in the page's copy, moved to the platform's store (what is there already
+// stays; the recordings using a PDF are joined, so it is not deleted while one still does),
+// then the page's copy deleted. Run by every tab that finds a page copy: moving twice
+// changes nothing.
+async function movePageData(target) {
+  if (!(await platform.dbExists(DB_NAME))) return;
+  const keys = (await pageDb.keys()).map(String).filter((k) => USER_DATA_KEYS.test(k));
+  const mine = new Map();
+  for (const k of keys) mine.set(k, await pageDb.get(k));
+  if (keys.length) {
+    await target.updateMany(keys, (old) => {
+      const next = {};
+      for (const k of keys) {
+        const v = mine.get(k);
+        if (v === undefined) continue;
+        if (old[k] === undefined) next[k] = v;
+        else if (k.startsWith('deckref:') && Array.isArray(old[k]) && Array.isArray(v)) next[k] = [...new Set(old[k].concat(v))];
+      }
+      return next;
+    });
+  }
+  await pageDb.close();
+  await platform.deleteDb(DB_NAME);
+  log.info('storage: moved ' + keys.length + ' entries from the page to the extension');
+}
+
+const idbCache = {
+  backend: null,   // Promise of pageDb or the platform's store
+  where: 'not used yet',   // for diagnostics: 'page' or 'extension'
+  use() {
+    if (!this.backend) {
+      this.backend = platform.dataStore
+        ? platform.dataStore().then(
+          (ext) => movePageData(ext).then(() => ext, (e) => { log.warn('storage: moving the page\'s data failed, kept there:', e); return ext; }),
+          (e) => { log.warn('storage: the platform\'s store is not available, the page\'s is used:', e); return pageDb; })
+        : Promise.resolve(pageDb);
+      this.backend.then((b) => { this.where = b.where; });
+    }
+    return this.backend;
+  },
+  soft(what, key, p) {
+    return p.catch((e) => { log.warn('storage ' + what + ' failed (' + String(key).split(':')[0] + '):', e); return undefined; });
+  },
+  get(key) { return this.soft('read', key, this.use().then((b) => b.get(key))); },
+  put(key, value) { return storageLock.frozen ? Promise.resolve() : this.soft('write', key, this.putStrict(key, value)); },
+  putStrict(key, value) { return this.use().then((b) => b.write([[key, value]])); },
+  // Several entries in one transaction: all are written or none (throws on failure).
+  putMany(entries) {
+    if (!entries.length) return Promise.resolve();
+    return this.use().then((b) => b.write(entries));
+  },
+  del(key) { return this.soft('delete', key, this.use().then((b) => b.write([[key, undefined]]))); },
+  keys() { return this.soft('list', '', this.use().then((b) => b.keys())).then((k) => k || []); },
+  // Read, change and write one entry, with no other tab or task writing in between.
+  // fn(old) returns the new value, or undefined to delete the entry. Resolves to the new
+  // value.
+  update(key, fn) {
+    if (storageLock.frozen) return Promise.resolve(undefined);
+    return this.use().then((b) => b.updateMany([key], (old) => ({ [key]: fn(old[key]) }))).then((next) => next[key]);
+  },
+  // The same for several entries: fn({ key: old }) returns { key: new } (undefined deletes;
+  // keys left out stay as they are, and need not have been read). Resolves to that object;
+  // throws when it could not be written.
+  updateMany(keys, fn) {
+    if (storageLock.frozen) return Promise.resolve(undefined);
+    return this.use().then((b) => b.updateMany(keys, fn));
   },
 };
 

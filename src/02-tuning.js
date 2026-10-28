@@ -283,6 +283,8 @@ const LOADING_SLOW_MS = 5000;          // from then on the loading screen says t
 const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 const VIEWED_MIN = 10;                 // extension: minutes played that count a lecture as watched, for the toolbar's one-time rating line (a product choice: past the first look, a real viewing)
+const EXT_STORE_WAIT_MS = 10000;       // extension: its data store (a frame of the extension, extension/store.js) not ready by then: the page's own storage is used for this visit
+const EXT_STORE_OP_MS = 120000;        // extension: one request to the data store unanswered by then (the frame was removed with the page's content) fails; the next one makes a new frame. Long: writing a large slide PDF takes a few seconds
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----

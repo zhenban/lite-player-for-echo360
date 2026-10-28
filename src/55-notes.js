@@ -435,13 +435,15 @@ class NotesPane {
       file.value = '';
     }));
     const restore = el('button.pbtn', { text: tr('backupRestore'), onclick: () => file.click() });
+    // The extension keeps the data itself: backups are made on its settings page.
+    const backupPart = platform.openSettings
+      ? [el('div.pinfo', { text: tr('backupInSettings') }), el('div.crow', null, el('button.pbtn', { text: tr('backupOpenSettings'), onclick: () => platform.openSettings() }))]
+      : [el('div.pinfo', { text: tr('backupInfo') }), el('label.crow', null, pdfs, el('span', { text: tr('backupPdfs') })), el('div.crow', null, backup, restore, file)];
     return el('div.tagman', null,
       el('div.pinfo', { text: tr('exportInfo') }),
       el('label.crow', null, pics, el('span', { text: hasPdf ? tr('exportPictures') : tr('exportPicturesNoPdf') })),
       el('div.crow', null, one, all),
-      el('div.pinfo', { text: tr('backupInfo') }),
-      el('label.crow', null, pdfs, el('span', { text: tr('backupPdfs') })),
-      el('div.crow', null, backup, restore, file),
+      ...backupPart,
       el('div.crow', null, el('span.grow'), el('button.link', { text: tr('done'), onclick: () => { this.exporting = false; this.render(); } })));
   }
 

@@ -40,10 +40,15 @@ test('manifest: the userscript\'s pages, the usage-data server, storage, nothing
   // The toolbar button opens the popup; its files are in the package.
   assert.equal(m.action.default_popup, 'popup.html');
   for (const f of ['popup.html', 'popup.js', 'popup.css', 'shared.js']) assert.ok(x.files[f], f);
-  const html = x.files['popup.html'];
-  for (const ref of html.matchAll(/(?:src|href)="([^"#]+)"/g)) assert.ok(x.files[ref[1]] || x.icons.includes(ref[1]), 'popup.html refers to a missing file: ' + ref[1]);
+  // The settings page, and the data store's frame (only Echo360's sites may load it).
+  assert.equal(m.options_ui.page, 'options.html');
+  for (const page of ['popup.html', 'options.html', 'store.html']) {
+    for (const ref of x.files[page].matchAll(/(?:src|href)="([^"#]+)"/g)) assert.ok(x.files[ref[1]] || x.icons.includes(ref[1]), page + ' refers to a missing file: ' + ref[1]);
+  }
+  assert.match(x.files['core.js'], /window\.LitePlayerCore = \{/);
+  assert.doesNotMatch(x.files['core.js'], /---- 90-main\.js ----|---- 06-platform-extension\.js ----/, 'the options page starts no player');
   const hosts = JSON.parse(/const SITE_HOSTS = (\[[^\]]*\]);/.exec(src('03-common.js'))[1].replace(/'/g, '"'));
-  assert.deepEqual(m.web_accessible_resources, [{ resources: ['lib/*'], matches: hosts.map((h) => 'https://' + h + '/*') }]);
+  assert.deepEqual(m.web_accessible_resources, [{ resources: ['lib/*', 'store.html'], matches: hosts.map((h) => 'https://' + h + '/*') }]);
   for (const f of [m.background.service_worker, ...m.content_scripts.flatMap((c) => c.js)]) assert.ok(x.files[f], f);
   for (const f of Object.values(m.icons)) assert.ok(x.icons.includes(f), f);
   for (const text of Object.values(x.files)) assert.doesNotMatch(text, /\{\{[A-Z_]+\}\}/, 'a placeholder left');
@@ -335,4 +340,24 @@ test('service worker: "OFF" on the toolbar button while turned off; the install 
   for (const fn of installed) fn();
   await tick();
   assert.equal(store.installedAt, at, 'kept from the first install');
+});
+
+// The data store's frame (store.js): it serves only a parent on one of Echo360's sites.
+function runStore(parentOrigin) {
+  const posted = [];
+  const listeners = [];
+  const parent = { postMessage: (data, origin) => posted.push([data, origin]) };
+  const win = { parent, addEventListener: (type, fn) => listeners.push(type) };
+  vm.runInNewContext(x.files['store.js'], { window: win, location: { ancestorOrigins: parentOrigin ? [parentOrigin] : [] }, indexedDB: {}, navigator: {}, setTimeout, clearTimeout, Promise, Map, Array, String, Object, Error });
+  return { posted, listeners };
+}
+
+test('data store frame: serves an Echo360 site only', () => {
+  const ok = runStore('https://echo360.org');
+  assert.deepEqual(ok.posted, [['lite-player-for-echo360:store-ready', 'https://echo360.org']]);
+  assert.deepEqual(ok.listeners, ['message']);
+  for (const other of ['https://evil.example', 'https://lms.test', 'https://echo360.org.evil.example', '']) {
+    const r = runStore(other);
+    assert.equal(r.posted.length + r.listeners.length, 0, other);
+  }
 });

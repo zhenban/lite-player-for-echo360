@@ -1,4 +1,5 @@
 // Lite Player for Echo360, the extension's service worker:
+//   - opens the settings page when the player asks (options.html)
 //   - sends the player's usage data (asked for by the bridge, bridge.js) to the usage-data
 //     server, and nothing else
 //   - shows "OFF" on the toolbar button while the player is turned off (popup.js)
@@ -7,6 +8,8 @@ const SERVER = '{{TELEMETRY_URL}}/';
 const MAX_MS = 60000;
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  // The player's "Open settings page" (backups are made there).
+  if (sender.id === chrome.runtime.id && msg && msg.type === 'options') { chrome.runtime.openOptionsPage().catch(() => {}); return false; }
   if (sender.id !== chrome.runtime.id || !msg || msg.type !== 'post' || typeof msg.url !== 'string' || !msg.url.startsWith(SERVER) || typeof msg.body !== 'string') return false;
   const ms = Math.min(Math.max(+msg.timeoutMs || 0, 1000), MAX_MS);
   fetch(msg.url, { method: 'POST', body: msg.body, headers: { 'Content-Type': 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(ms) })

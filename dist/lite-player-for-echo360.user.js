@@ -798,6 +798,35 @@ const STRINGS = {
     backupRestored: 'Restored {n} items. Reloading…',
     backupInvalid: 'This is not a Lite Player for Echo360 backup file',
     backupTooBig: 'This file is too large for a backup (at most {max} MB)',
+    optTitle: 'Lite Player settings',
+    optOn: 'Use Lite Player on Echo360',
+    optApplyNote: 'Changes apply to a lecture the next time its page is loaded. Turning off usage data applies at once.',
+    optCaptionsDefault: 'Captions on when a lecture starts',
+    optAppearance: 'Appearance',
+    compatTitle: 'Compatibility',
+    compatRun: 'Runs Lite Player',
+    compatVideo: 'Plays the lecture video',
+    compatSlides: 'Reads slide PDFs and text on screen',
+    compatSound: 'Sound tools (even out volume, clearer voice, mono)',
+    compatCopy: 'Copies pictures to the clipboard',
+    compatPopout: 'Floating window',
+    compatOnce: 'Installed once',
+    compatYes: 'Yes',
+    compatNo: 'No',
+    compatOnceUnknown: 'Checked while an Echo360 lecture is open',
+    compatOnceTwice: 'Also installed as a userscript. Remove it from your userscript manager.',
+    dataTitle: 'Your data',
+    dataInfo: 'Tags, slide files and their corrections, and what you watched are kept by the extension in this browser, the same on every Echo360 site. Anything unused for a year is deleted.',
+    dataUsed: '{mb} MB used. Slide files: {pdfs}. Recordings watched: {watched}. Courses with tags: {tags}.',
+    dataMeasuring: 'Measuring…',
+    dataClear: 'Delete all data…',
+    dataClearAsk: 'Delete all tags, slide files, watched records and saved positions? Settings stay. This cannot be undone.',
+    dataClearYes: 'Delete',
+    dataCleared: 'Deleted {n} items.',
+    dataBackupTitle: 'Backup',
+    dataRestored: 'Restored {n} items. Open lectures use them the next time they are loaded.',
+    backupInSettings: 'Backup and restore are on the extension\'s settings page.',
+    backupOpenSettings: 'Open settings page',
     mdRecorded: 'Recorded {date}',
     mdOpen: 'Open in Echo360',
     mdNothing: 'No notes or bookmarks.',
@@ -1314,6 +1343,35 @@ STRINGS.zh = {
   backupRestored: '已恢复 {n} 项，正在刷新…',
   backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
   backupTooBig: '这个文件太大，不能作为备份文件（最多 {max} MB）',
+    optTitle: 'Lite Player 设置',
+    optOn: '在 Echo360 上使用 Lite Player',
+    optApplyNote: '更改在课程页面下次加载时生效。关闭使用数据立即生效。',
+    optCaptionsDefault: '课程开始时显示字幕',
+    optAppearance: '外观',
+    compatTitle: '兼容性',
+    compatRun: '可以运行 Lite Player',
+    compatVideo: '可以播放课程视频',
+    compatSlides: '可以读取幻灯片 PDF 和屏幕上的文字',
+    compatSound: '声音工具（均衡音量、人声更清晰、单声道）',
+    compatCopy: '可以把图片复制到剪贴板',
+    compatPopout: '悬浮窗',
+    compatOnce: '只装了一份',
+    compatYes: '是',
+    compatNo: '否',
+    compatOnceUnknown: '打开 Echo360 课程时检查',
+    compatOnceTwice: '还装了用户脚本版。请在用户脚本管理器里删除它。',
+    dataTitle: '你的数据',
+    dataInfo: '标签、幻灯片文件及其更正、观看记录由扩展保存在这个浏览器里，所有 Echo360 站点共用。一年没用到的会被删除。',
+    dataUsed: '已用 {mb} MB。幻灯片文件：{pdfs}。看过的录像：{watched}。有标签的课程：{tags}。',
+    dataMeasuring: '正在计算…',
+    dataClear: '删除全部数据…',
+    dataClearAsk: '删除所有标签、幻灯片文件、观看记录和播放位置？设置会保留。删除后无法恢复。',
+    dataClearYes: '删除',
+    dataCleared: '已删除 {n} 项。',
+    dataBackupTitle: '备份',
+    dataRestored: '已恢复 {n} 项。打开着的课程下次加载时使用。',
+    backupInSettings: '备份和恢复在扩展的设置页里。',
+    backupOpenSettings: '打开设置页',
   mdRecorded: '录制于 {date}',
   mdOpen: '在 Echo360 中打开',
   mdNothing: '没有笔记或书签。',
@@ -1707,6 +1765,8 @@ const LOADING_SLOW_MS = 5000;          // from then on the loading screen says t
 const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
 const VIEWED_MIN = 10;                 // extension: minutes played that count a lecture as watched, for the toolbar's one-time rating line (a product choice: past the first look, a real viewing)
+const EXT_STORE_WAIT_MS = 10000;       // extension: its data store (a frame of the extension, extension/store.js) not ready by then: the page's own storage is used for this visit
+const EXT_STORE_OP_MS = 120000;        // extension: one request to the data store unanswered by then (the frame was removed with the page's content) fails; the next one makes a new frame. Long: writing a large slide PDF takes a few seconds
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -2177,7 +2237,9 @@ const LIB_SHA256 = {
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
 //     an extension reads a snapshot first: whenKv(fn) runs fn once it is there, at once
 //     when it already is, as always in a userscript)
-//   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
+//   - openDb, dbExists, deleteDb: the page's IndexedDB, for larger data (slide files,
+//     analyses, tags); dataStore: where that data is kept instead, or null for the page's
+//     (an extension keeps it in its own storage, 06-platform-extension.js)
 //   - libUrl / libBlobUrl / importLib: the libraries loaded when first needed (pdf.js,
 //     Tesseract and its language data), named by their npm path ('pdfjs-dist@6.4.299/
 //     build/...'). A userscript fetches them from a CDN and runs a file only after its
@@ -2233,6 +2295,23 @@ const platform = {
     if (typeof indexedDB === 'undefined') return null;
     return indexedDB.open(name, version);
   },
+  // Whether the page has that database (without making it), and deleting it.
+  async dbExists(name) {
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return false;
+    try { return (await indexedDB.databases()).some((d) => d.name === name); } catch (e) { return false; }
+  },
+  deleteDb(name) {
+    return new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') { resolve(false); return; }
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+      req.onblocked = () => log.warn('storage: deleting the page\'s copy waits for another tab');
+    });
+  },
+  dataStore: null,
+  // Extension only: opens its settings page (backups are made there). null: none.
+  openSettings: null,
   libUrl(path) { return 'https://cdn.jsdelivr.net/npm/' + path; },
   // A blob URL of the pinned file, made once per page from bytes that match its SHA-256
   // (a file that differs is refused). Kept for the page's life: workers are made from it
@@ -9002,13 +9081,15 @@ class NotesPane {
       file.value = '';
     }));
     const restore = el('button.pbtn', { text: tr('backupRestore'), onclick: () => file.click() });
+    // The extension keeps the data itself: backups are made on its settings page.
+    const backupPart = platform.openSettings
+      ? [el('div.pinfo', { text: tr('backupInSettings') }), el('div.crow', null, el('button.pbtn', { text: tr('backupOpenSettings'), onclick: () => platform.openSettings() }))]
+      : [el('div.pinfo', { text: tr('backupInfo') }), el('label.crow', null, pdfs, el('span', { text: tr('backupPdfs') })), el('div.crow', null, backup, restore, file)];
     return el('div.tagman', null,
       el('div.pinfo', { text: tr('exportInfo') }),
       el('label.crow', null, pics, el('span', { text: hasPdf ? tr('exportPictures') : tr('exportPicturesNoPdf') })),
       el('div.crow', null, one, all),
-      el('div.pinfo', { text: tr('backupInfo') }),
-      el('label.crow', null, pdfs, el('span', { text: tr('backupPdfs') })),
-      el('div.crow', null, backup, restore, file),
+      ...backupPart,
       el('div.crow', null, el('span.grow'), el('button.link', { text: tr('done'), onclick: () => { this.exporting = false; this.render(); } })));
   }
 
@@ -9932,15 +10013,24 @@ function fetchRange(url, offset, length, signal) {
 
 // IndexedDB, one object store. Reads and ordinary writes never throw (a cache that cannot
 // be used just means work is done again) but failures are logged; writes whose loss the
-// user would notice (slide files, a restore) use putStrict, which throws. A failed open is
-// tried again on the next call; when another tab needs a newer database version, this
-// connection closes so it is not in the way.
-const idbCache = {
+// user would notice (slide files, a restore) use putStrict, which throws.
+// Where it is kept (the backend): the page's IndexedDB (pageDb), or what the platform
+// keeps instead (platform.dataStore: the extension's own storage). Moving to the latter,
+// the user's data in the page's copy (USER_DATA_KEYS) goes along once and the page's copy
+// is deleted; the analyses' caches are left behind (they are made again).
+const DB_NAME = 'lite-player-for-echo360';
+// What the user made or chose (kept, in backups, 85-export.js); the rest is analyses.
+const USER_DATA_KEYS = /^(tags|tagmap|deck|deckref|deckfile|watched|screenpick):/;
+
+// The page's IndexedDB. A failed open is tried again on the next call; when another tab
+// needs a newer database version, this connection closes so it is not in the way.
+const pageDb = {
+  where: 'page',
   db: null,
   open() {
     if (this.db) return this.db;
     const p = new Promise((resolve, reject) => {
-      const req = platform.openDb('lite-player-for-echo360', 1);
+      const req = platform.openDb(DB_NAME, 1);
       if (!req) { reject(new Error('no IndexedDB')); return; }
       req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('cache')) req.result.createObjectStore('cache'); };
       req.onsuccess = () => {
@@ -9965,43 +10055,14 @@ const idbCache = {
       tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     }));
   },
-  soft(what, key, p) {
-    return p.catch((e) => { log.warn('storage ' + what + ' failed (' + String(key).split(':')[0] + '):', e); return undefined; });
+  get(key) { return this.tx('readonly', (s) => s.get(key)); },
+  keys() { return this.tx('readonly', (s) => s.getAllKeys()); },
+  // [[key, value | undefined (delete)], ...] in one transaction.
+  write(entries) {
+    return this.tx('readwrite', (s) => { for (const [k, v] of entries) { if (v === undefined) s.delete(k); else s.put(v, k); } return null; });
   },
-  get(key) { return this.soft('read', key, this.tx('readonly', (s) => s.get(key))); },
-  put(key, value) { return storageLock.frozen ? Promise.resolve() : this.soft('write', key, this.tx('readwrite', (s) => s.put(value, key))); },
-  putStrict(key, value) { return this.tx('readwrite', (s) => s.put(value, key)); },
-  // Several entries in one transaction: all are written or none (throws on failure).
-  putMany(entries) {
-    if (!entries.length) return Promise.resolve();
-    return this.tx('readwrite', (s) => { let req = null; for (const [k, v] of entries) req = s.put(v, k); return req; });
-  },
-  del(key) { return this.soft('delete', key, this.tx('readwrite', (s) => s.delete(key))); },
-  keys() { return this.soft('list', '', this.tx('readonly', (s) => s.getAllKeys())).then((k) => k || []); },
-  // Read, change and write one entry in a single transaction (no other tab or task can
-  // write in between). fn(old) returns the new value, or undefined to delete the entry.
-  // Resolves to the new value.
-  update(key, fn) {
-    if (storageLock.frozen) return Promise.resolve(undefined);
-    return this.open().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction('cache', 'readwrite');
-      const os = tx.objectStore('cache');
-      let next;
-      const req = os.get(key);
-      req.onsuccess = () => {
-        try { next = fn(req.result); } catch (e) { tx.abort(); reject(e); return; }
-        if (next === undefined) os.delete(key); else os.put(next, key);
-      };
-      tx.oncomplete = () => resolve(next);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-    }));
-  },
-  // The same for several entries: fn({ key: old }) returns { key: new } (undefined deletes;
-  // keys left out stay as they are, and need not have been read). Resolves to that object;
-  // throws when it could not be written.
+  // See idbCache.updateMany.
   updateMany(keys, fn) {
-    if (storageLock.frozen) return Promise.resolve(undefined);
     return this.open().then((db) => new Promise((resolve, reject) => {
       const tx = db.transaction('cache', 'readwrite');
       const os = tx.objectStore('cache');
@@ -10021,6 +10082,80 @@ const idbCache = {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     }));
+  },
+  async close() {
+    const p = this.db;
+    this.db = null;
+    if (p) { try { (await p).close(); } catch (e) { /* not open */ } }
+  },
+};
+
+// The user's data in the page's copy, moved to the platform's store (what is there already
+// stays; the recordings using a PDF are joined, so it is not deleted while one still does),
+// then the page's copy deleted. Run by every tab that finds a page copy: moving twice
+// changes nothing.
+async function movePageData(target) {
+  if (!(await platform.dbExists(DB_NAME))) return;
+  const keys = (await pageDb.keys()).map(String).filter((k) => USER_DATA_KEYS.test(k));
+  const mine = new Map();
+  for (const k of keys) mine.set(k, await pageDb.get(k));
+  if (keys.length) {
+    await target.updateMany(keys, (old) => {
+      const next = {};
+      for (const k of keys) {
+        const v = mine.get(k);
+        if (v === undefined) continue;
+        if (old[k] === undefined) next[k] = v;
+        else if (k.startsWith('deckref:') && Array.isArray(old[k]) && Array.isArray(v)) next[k] = [...new Set(old[k].concat(v))];
+      }
+      return next;
+    });
+  }
+  await pageDb.close();
+  await platform.deleteDb(DB_NAME);
+  log.info('storage: moved ' + keys.length + ' entries from the page to the extension');
+}
+
+const idbCache = {
+  backend: null,   // Promise of pageDb or the platform's store
+  where: 'not used yet',   // for diagnostics: 'page' or 'extension'
+  use() {
+    if (!this.backend) {
+      this.backend = platform.dataStore
+        ? platform.dataStore().then(
+          (ext) => movePageData(ext).then(() => ext, (e) => { log.warn('storage: moving the page\'s data failed, kept there:', e); return ext; }),
+          (e) => { log.warn('storage: the platform\'s store is not available, the page\'s is used:', e); return pageDb; })
+        : Promise.resolve(pageDb);
+      this.backend.then((b) => { this.where = b.where; });
+    }
+    return this.backend;
+  },
+  soft(what, key, p) {
+    return p.catch((e) => { log.warn('storage ' + what + ' failed (' + String(key).split(':')[0] + '):', e); return undefined; });
+  },
+  get(key) { return this.soft('read', key, this.use().then((b) => b.get(key))); },
+  put(key, value) { return storageLock.frozen ? Promise.resolve() : this.soft('write', key, this.putStrict(key, value)); },
+  putStrict(key, value) { return this.use().then((b) => b.write([[key, value]])); },
+  // Several entries in one transaction: all are written or none (throws on failure).
+  putMany(entries) {
+    if (!entries.length) return Promise.resolve();
+    return this.use().then((b) => b.write(entries));
+  },
+  del(key) { return this.soft('delete', key, this.use().then((b) => b.write([[key, undefined]]))); },
+  keys() { return this.soft('list', '', this.use().then((b) => b.keys())).then((k) => k || []); },
+  // Read, change and write one entry, with no other tab or task writing in between.
+  // fn(old) returns the new value, or undefined to delete the entry. Resolves to the new
+  // value.
+  update(key, fn) {
+    if (storageLock.frozen) return Promise.resolve(undefined);
+    return this.use().then((b) => b.updateMany([key], (old) => ({ [key]: fn(old[key]) }))).then((next) => next[key]);
+  },
+  // The same for several entries: fn({ key: old }) returns { key: new } (undefined deletes;
+  // keys left out stay as they are, and need not have been read). Resolves to that object;
+  // throws when it could not be written.
+  updateMany(keys, fn) {
+    if (storageLock.frozen) return Promise.resolve(undefined);
+    return this.use().then((b) => b.updateMany(keys, fn));
   },
 };
 
@@ -14537,6 +14672,7 @@ function diagnosticsText(p) {
   add('Lite Player for Echo360', VERSION);
   add('Browser', browserName());
   add('Runs in', platform.manager());
+  add('Data kept in', idbCache.where);
   add('Page', location.hostname + ' (lesson page)');
   lines.push(...startupLines());
   add('Recording', (p.lesson.mediaId ? String(p.lesson.mediaId).slice(0, 8) + '…' : '-') + ', ' + p.sources.length + ' view(s), ' + fmtTime(p.duration(), true));
@@ -14564,6 +14700,24 @@ function diagnosticsText(p) {
   if (!eventLog.length) lines.push('  none');
   for (const e of eventLog) lines.push('  ' + e.t + ' ' + e.level + ' ' + maskUrls(e.text));
   return lines.join('\n');
+}
+
+// Why this browser cannot run the player ('' if it can): checked before anything starts.
+// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
+// that pass (Safari 15: iOS and iPadOS 15).
+function unsupportedReason() {
+  const need = [
+    ['Proxy', typeof Proxy === 'function'],
+    ['fetch', typeof fetch === 'function'],
+    ['AbortController', typeof AbortController === 'function'],
+    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
+    ['ResizeObserver', typeof ResizeObserver === 'function'],
+    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
+    ['createImageBitmap', typeof createImageBitmap === 'function'],
+    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
+  ];
+  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
+  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
 }
 
 // ---- 87-telemetry.js ----
@@ -15723,24 +15877,6 @@ class LoadingScreen {
 // before anything starts.
 // ===================================================================================
 
-// Why this browser cannot run the player ('' if it can): checked before anything starts.
-// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
-// that pass (Safari 15: iOS and iPadOS 15).
-function unsupportedReason() {
-  const need = [
-    ['Proxy', typeof Proxy === 'function'],
-    ['fetch', typeof fetch === 'function'],
-    ['AbortController', typeof AbortController === 'function'],
-    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
-    ['ResizeObserver', typeof ResizeObserver === 'function'],
-    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
-    ['createImageBitmap', typeof createImageBitmap === 'function'],
-    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
-  ];
-  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
-  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
-}
-
 (function main() {
   // Rejections nobody handled: logged when they come from this script (the page's own are
   // not ours to report). Never a fallback.
@@ -15902,7 +16038,7 @@ function unsupportedReason() {
       if (store.get('debug', false)) {
         platform.page.__litePlayerForEcho360 = player;
         platform.page.__litePlayerForEcho360Dev = Object.assign({ HlsVideoReader, frameLuma, thumbChange, learnThreshold, boot, bgWork },
-          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST } : {});
+          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST, idbCache } : {});
       }
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {

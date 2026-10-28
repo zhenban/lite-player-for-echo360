@@ -1,17 +1,17 @@
-/* The toolbar popup and the options page: the player's light and dark tokens (src/30-ui-assets.js),
+/* The toolbar popup and the options page (body.options): the player's light and dark tokens (src/30-ui-assets.js),
    following the system theme. System fonts only. */
 :root {
   --s0: #F2F3F4; --s1: #E7E8EA; --s2: #F8F8F9; --line: rgba(0,0,0,.12); --fill: rgba(0,0,0,.06);
   --text: #232529; --text-2: #555960; --accent: #076B75; --on-accent: #FFFFFF; --accent-soft: rgba(7,107,117,.12);
-  --warn-bg: rgba(181,120,0,.12); --warn-text: #6B4A00;
-  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --r1: 4px; --r2: 8px; --t: 150ms;
+  --warn-bg: rgba(181,120,0,.12); --warn-text: #6B4A00; --danger: #A8261B;
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp6: 24px; --sp8: 32px; --r1: 4px; --r2: 8px; --t: 150ms;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --s0: #18191B; --s1: #222326; --s2: #2C2D31; --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10);
     --text: #ECEDEF; --text-2: #A8ABB2; --accent: #3DBEC4; --on-accent: #0B2E30; --accent-soft: rgba(61,190,196,.16);
-    --warn-bg: rgba(255,170,0,.14); --warn-text: #FFD38A;
+    --warn-bg: rgba(255,170,0,.14); --warn-text: #FFD38A; --danger: #FF8A80;
     color-scheme: dark;
   }
 }
@@ -54,3 +54,32 @@ button.close { background: none; border: 0; color: var(--text-2); cursor: pointe
 
 footer { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: var(--sp2); margin-top: var(--sp2); }
 .note { margin: var(--sp2) 0 0; color: var(--text-2); font-size: 13px; }
+
+/* The options page: one column of cards. */
+body.options { padding: var(--sp6) var(--sp4) var(--sp8); }
+body.options main { max-width: 640px; margin: 0 auto; }
+body.options header { margin-bottom: var(--sp4); }
+body.options header h1 { font-size: 20px; }
+.card { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r2); padding: var(--sp3) var(--sp4); margin: 0 0 var(--sp4); }
+.card h2 { font-size: 15px; font-weight: 600; margin: var(--sp1) 0 var(--sp2); }
+.card h3 { font-size: 14px; font-weight: 600; margin: var(--sp4) 0 var(--sp1); }
+.opt + .opt { border-top: 1px solid var(--line); }
+.opt .row label { flex: 1; }
+.desc { margin: 0 0 var(--sp2); color: var(--text-2); font-size: 13px; }
+.card > .desc:first-of-type { margin-top: 0; }
+.status { margin: var(--sp2) 0; font-variant-numeric: tabular-nums; }
+.buttons { display: flex; flex-wrap: wrap; gap: var(--sp2); margin: var(--sp2) 0; }
+.check { display: flex; align-items: center; gap: var(--sp2); margin: var(--sp2) 0; }
+button.danger { color: var(--danger); }
+.ask { border-left: 3px solid var(--danger); padding-left: var(--sp3); }
+.ask p { margin: var(--sp2) 0 0; }
+.compat { list-style: none; margin: 0; padding: 0; }
+.compat li { display: flex; gap: var(--sp3); padding: var(--sp2) 0; }
+.compat li + li { border-top: 1px solid var(--line); }
+.compat .mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.compat .ok .mark { background: var(--accent-soft); color: var(--accent); }
+.compat .no .mark { background: var(--warn-bg); color: var(--warn-text); }
+.compat .unknown .mark { background: var(--fill); color: var(--text-2); }
+.compat .what { display: flex; flex-direction: column; }
+.compat .what .desc { margin: 2px 0 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

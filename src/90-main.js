@@ -12,24 +12,6 @@
 // before anything starts.
 // ===================================================================================
 
-// Why this browser cannot run the player ('' if it can): checked before anything starts.
-// What the player needs; CSS aspect-ratio and createImageBitmap set the oldest browsers
-// that pass (Safari 15: iOS and iPadOS 15).
-function unsupportedReason() {
-  const need = [
-    ['Proxy', typeof Proxy === 'function'],
-    ['fetch', typeof fetch === 'function'],
-    ['AbortController', typeof AbortController === 'function'],
-    ['Shadow DOM', typeof Element.prototype.attachShadow === 'function'],
-    ['ResizeObserver', typeof ResizeObserver === 'function'],
-    ['crypto.subtle', typeof crypto === 'object' && !!crypto.subtle],
-    ['createImageBitmap', typeof createImageBitmap === 'function'],
-    ['CSS aspect-ratio', typeof CSS === 'object' && typeof CSS.supports === 'function' && CSS.supports('aspect-ratio', '1')],
-  ];
-  const missing = need.filter(([, ok]) => !ok).map(([name]) => name);
-  return missing.length ? 'browser too old (no ' + missing.join(', ') + ')' : '';
-}
-
 (function main() {
   // Rejections nobody handled: logged when they come from this script (the page's own are
   // not ours to report). Never a fallback.
@@ -191,7 +173,7 @@ function unsupportedReason() {
       if (store.get('debug', false)) {
         platform.page.__litePlayerForEcho360 = player;
         platform.page.__litePlayerForEcho360Dev = Object.assign({ HlsVideoReader, frameLuma, thumbChange, learnThreshold, boot, bgWork },
-          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST } : {});
+          DEV_HOOKS ? { telemetry, telemetryEnv, TelemetryValues, sig2, netGuard, OWN_REQUEST, idbCache } : {});
       }
       // Any unexpected error in our handlers from now on: hand the page to the original player.
       unexpected.handler = () => {
