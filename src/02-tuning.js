@@ -282,6 +282,7 @@ const LOADING_SHOW_MS = 400;          // hls.js not there this long after the pa
 const LOADING_SLOW_MS = 5000;          // from then on the loading screen says the network is slow, how long it has waited and what happens at HLS_LOAD_TIMEOUT_MS (the whole file takes about 0.5 s on a 10 Mbit/s link)
 const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
+const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
 // Product choices, not measurements: few small requests, nothing while the page is in the

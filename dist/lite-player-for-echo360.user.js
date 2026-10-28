@@ -1697,6 +1697,7 @@ const LOADING_SHOW_MS = 400;          // hls.js not there this long after the pa
 const LOADING_SLOW_MS = 5000;          // from then on the loading screen says the network is slow, how long it has waited and what happens at HLS_LOAD_TIMEOUT_MS (the whole file takes about 0.5 s on a 10 Mbit/s link)
 const LOADING_TIP_MS = 6000;           // the loading screen's tips change this often (time to read one sentence)
 const BOOT_CHECK_MS = 8000;            // the page's own player not started this long after load: check why
+const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
 // Product choices, not measurements: few small requests, nothing while the page is in the
@@ -2164,7 +2165,8 @@ const LIB_SHA256 = {
 // which replaces some of these (06-platform-extension.js). The rest of the code uses only
 // `platform` for these things (the build checks it):
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
-//     an extension reads a snapshot before it starts the player)
+//     an extension reads a snapshot first: whenKv(fn) runs fn once it is there, at once
+//     when it already is, as always in a userscript)
 //   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
 //   - libUrl / libBlobUrl / importLib: the libraries loaded when first needed (pdf.js,
 //     Tesseract and its language data), named by their npm path ('pdfjs-dist@6.4.299/
@@ -2304,6 +2306,7 @@ const platform = {
     });
   },
   privateReady: Promise.resolve(),
+  whenKv(fn) { fn(); },
   // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
   // it; without one, the page's storage like the settings.
   privateKv: {
@@ -15674,7 +15677,7 @@ function unsupportedReason() {
     if (/lite[ -]player[ -]for[ -]echo360/i.test(stack)) { log.warn('unhandled rejection', r); logEvent('warn', 'unhandled rejection: ' + ((r && r.message) || r)); }
   });
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }
-  if (courseList.matches()) { try { courseList.start(); } catch (e) { /* the page works without it */ } return; }
+  if (courseList.matches()) { platform.whenKv(() => { try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
   const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
   if (!adapter) return;
   if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
@@ -15709,9 +15712,20 @@ function unsupportedReason() {
   }
 
   // Our player for the page's bootstrap argument. takeover: the original player is running
-  // (not yet stopped) and callOriginal would start it again.
+  // (not yet stopped) and callOriginal would start it again. Starts once the settings are
+  // there (the extension reads them asynchronously, in a few ms; the userscript has them).
   function launch(arg, callOriginal, takeover) {
     booted = true;
+    platform.whenKv(() => {
+      try { launchNow(arg, callOriginal, takeover); } catch (e) {
+        log.error('could not start, using the original player:', e);
+        fellBack('startFailed', String((e && e.message) || e));
+        if (!takeover) startOriginal(callOriginal, arg, tr('fallbackNotice')); else keepOriginal(tr('fallbackNotice'));
+      }
+    });
+  }
+
+  function launchNow(arg, callOriginal, takeover) {
     if (store.get('forceOriginal', false)) {
       fellBack('user');
       if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);

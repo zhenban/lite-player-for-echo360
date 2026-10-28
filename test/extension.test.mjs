@@ -63,22 +63,31 @@ test('libraries: every pinned code file is shipped (no code from elsewhere); lan
 });
 
 // ---- the two worlds ----
-function fakeChrome() {
+function fakeChrome(syncStore = {}) {
   const store = { 'private:telemetrySecret': 's'.repeat(43), 'someone else': 'x' };
   const sent = [];
+  const syncWrites = [];
   const chrome = {
     runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => { sent.push(m); return { status: 200, text: '{"ok":true}' }; } },
-    storage: { local: { get: async () => Object.assign({}, store), set: async (o) => { Object.assign(store, o); } } },
+    storage: {
+      local: { get: async () => Object.assign({}, store), set: async (o) => { Object.assign(store, o); } },
+      sync: { get: async (k) => (k in syncStore ? { [k]: syncStore[k] } : {}), set: async (o) => { syncWrites.push(o); Object.assign(syncStore, o); } },
+    },
   };
-  return { chrome, store, sent };
+  return { chrome, store, sent, syncStore, syncWrites };
 }
 function world(w, extra) {
   return vm.createContext(Object.assign({ window: w, document: w.document, CustomEvent: w.CustomEvent, MouseEvent: w.MouseEvent, setTimeout, clearTimeout, JSON, Promise, Object, Map }, extra));
 }
 const runBridge = (w, chrome) => vm.runInContext(x.files['bridge.js'], world(w, { chrome }));
-function runPlayer(w) {
-  const platform = { name: 'userscript' };
-  const ctx = world(w, { platform, VERSION: '9.9.9' });
+// The page's storage (localStorage in the userscript's platform).
+function pageKv(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return { m, get: (k) => (m.has(k) ? m.get(k) : null), set: (k, v) => { m.set(k, v); }, names: () => [...m.keys()] };
+}
+function runPlayer(w, page = pageKv()) {
+  const platform = { name: 'userscript', kv: page };
+  const ctx = world(w, { platform, VERSION: '9.9.9', NS: 'lite-player-for-echo360:', EXT_KV_WAIT_MS: 50, Set, TAG: 'test', console });
   vm.runInContext(src('06-platform-extension.js'), ctx);
   return platform;
 }
@@ -134,6 +143,72 @@ test('without the bridge: nothing is sent, private values wait', async () => {
   await tick();
   assert.equal(ready, false);
   assert.equal(platform.libUrl('hls.js@1.7.3/dist/hls.min.js'), 'https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js');
+});
+
+const P = 'lite-player-for-echo360:prefs';
+
+test('settings: kept by the extension, the synced ones win, this device\'s layout and sound stay', async () => {
+  const w = newWindow();
+  const { chrome, store } = fakeChrome({ prefs: JSON.stringify({ rate: 1.5, lang: 'zh', layout: 'pip' }) });
+  store['kv:' + P] = JSON.stringify({ rate: 1, layout: 'single', volume: 0.4, captions: true });
+  store['kv:lite-player-for-echo360:pos:L1'] = '{"t":12,"at":1}';
+  runBridge(w, chrome);
+  const page = pageKv({ [P]: JSON.stringify({ rate: 2 }), 'lite-player-for-echo360:debug': 'true' });
+  const platform = runPlayer(w, page);
+  await new Promise((r) => platform.whenKv(r));
+  // rate and lang from sync; layout (a device setting) not taken from it; the rest this device's.
+  assert.deepEqual(JSON.parse(platform.kv.get(P)), { rate: 1.5, layout: 'single', volume: 0.4, captions: true, lang: 'zh' });
+  assert.equal(platform.kv.get('lite-player-for-echo360:pos:L1'), '{"t":12,"at":1}');
+  // Development switches stay in the page's storage.
+  assert.equal(platform.kv.get('lite-player-for-echo360:debug'), 'true');
+  assert.deepEqual(plain(platform.kv.names()).sort(), ['lite-player-for-echo360:debug', 'lite-player-for-echo360:pos:L1', P].sort());
+});
+
+test('settings: from before 1.1.0 (only in the page\'s storage) read there until written', async () => {
+  const w = newWindow();
+  const { chrome, store, syncStore } = fakeChrome();
+  runBridge(w, chrome);
+  const page = pageKv({ [P]: JSON.stringify({ rate: 2, layout: 'pip' }), 'lite-player-for-echo360:pos:L2': '{"t":5,"at":2}' });
+  const platform = runPlayer(w, page);
+  await new Promise((r) => platform.whenKv(r));
+  assert.equal(platform.kv.get(P), JSON.stringify({ rate: 2, layout: 'pip' }));
+  assert.equal(platform.kv.get('lite-player-for-echo360:pos:L2'), '{"t":5,"at":2}');
+  platform.kv.set(P, JSON.stringify({ rate: 1.25, layout: 'side', volume: 0.5 }));
+  platform.kv.set('lite-player-for-echo360:pos:L2', '{"t":9,"at":3}');
+  platform.kv.set('lite-player-for-echo360:reloadAt', 'null');
+  await tick();
+  assert.equal(store['kv:' + P], JSON.stringify({ rate: 1.25, layout: 'side', volume: 0.5 }));
+  assert.equal(store['kv:lite-player-for-echo360:pos:L2'], '{"t":9,"at":3}');
+  // Synced: the settings without this device's.
+  assert.deepEqual(JSON.parse(syncStore.prefs), { rate: 1.25 });
+  assert.equal(platform.kv.get(P), JSON.stringify({ rate: 1.25, layout: 'side', volume: 0.5 }));
+  // The page's storage is no longer written for these (only for the rest).
+  assert.equal(page.get(P), JSON.stringify({ rate: 2, layout: 'pip' }));
+  assert.equal(page.get('lite-player-for-echo360:reloadAt'), 'null');
+  assert.equal(store['kv:lite-player-for-echo360:reloadAt'], undefined);
+});
+
+test('settings: sync is written at most once per gap, and not when nothing synced changed', async () => {
+  const w = newWindow();
+  const { chrome, syncWrites } = fakeChrome();
+  runBridge(w, chrome);
+  const platform = runPlayer(w);
+  await new Promise((r) => platform.whenKv(r));
+  platform.kv.set(P, JSON.stringify({ rate: 1.5 }));
+  platform.kv.set(P, JSON.stringify({ rate: 1.5, volume: 0.2 }));   // a device setting only
+  platform.kv.set(P, JSON.stringify({ rate: 1.75, volume: 0.2 }));
+  await tick();
+  assert.deepEqual(syncWrites.map((o) => JSON.parse(o.prefs)), [{ rate: 1.5 }], 'the first at once, the next after the gap');
+});
+
+test('settings: without the bridge, the page\'s storage, and the player still starts', async () => {
+  const w = newWindow();
+  const page = pageKv({ [P]: '{"rate":2}' });
+  const platform = runPlayer(w, page);
+  await new Promise((r) => platform.whenKv(r));   // after EXT_KV_WAIT_MS
+  assert.equal(platform.kv.get(P), '{"rate":2}');
+  platform.kv.set(P, '{"rate":3}');
+  assert.equal(page.get(P), '{"rate":3}');
 });
 
 test('service worker: posts only to the usage-data server, without cookies', async () => {

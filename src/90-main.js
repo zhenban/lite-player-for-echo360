@@ -39,7 +39,7 @@ function unsupportedReason() {
     if (/lite[ -]player[ -]for[ -]echo360/i.test(stack)) { log.warn('unhandled rejection', r); logEvent('warn', 'unhandled rejection: ' + ((r && r.message) || r)); }
   });
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }
-  if (courseList.matches()) { try { courseList.start(); } catch (e) { /* the page works without it */ } return; }
+  if (courseList.matches()) { platform.whenKv(() => { try { courseList.start(); } catch (e) { /* the page works without it */ } }); return; }
   const adapter = ADAPTERS.find((a) => { try { return a.matches(); } catch (e) { return false; } });
   if (!adapter) return;
   if (store.get('debug', false)) platform.page.__litePlayerForEcho360Boot = boot; // development only
@@ -74,9 +74,20 @@ function unsupportedReason() {
   }
 
   // Our player for the page's bootstrap argument. takeover: the original player is running
-  // (not yet stopped) and callOriginal would start it again.
+  // (not yet stopped) and callOriginal would start it again. Starts once the settings are
+  // there (the extension reads them asynchronously, in a few ms; the userscript has them).
   function launch(arg, callOriginal, takeover) {
     booted = true;
+    platform.whenKv(() => {
+      try { launchNow(arg, callOriginal, takeover); } catch (e) {
+        log.error('could not start, using the original player:', e);
+        fellBack('startFailed', String((e && e.message) || e));
+        if (!takeover) startOriginal(callOriginal, arg, tr('fallbackNotice')); else keepOriginal(tr('fallbackNotice'));
+      }
+    });
+  }
+
+  function launchNow(arg, callOriginal, takeover) {
     if (store.get('forceOriginal', false)) {
       fellBack('user');
       if (!takeover) startOriginal(callOriginal, arg, null); else keepOriginal(null);

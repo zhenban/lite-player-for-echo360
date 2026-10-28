@@ -5,6 +5,11 @@
 // @inject-into page); the extension's own parts are reached through a bridge, a content
 // script in the extension's isolated world (extension/bridge.js):
 //   - privateKv: chrome.storage.local, read once at start-up (platform.privateReady)
+//   - kv: the settings and saved positions also live in the extension (the same on every
+//     Echo360 site and in learning systems' frames; the settings follow the Chrome account,
+//     bridge.js), read with the private values (platform.kvReady); the page's storage keeps
+//     the rest (development switches, the reload marker), and is read for a setting the
+//     extension does not have yet (kept there before 1.1.0)
 //   - post: made by the extension's service worker (no cookies; the page's content
 //     security policy does not apply there)
 //   - libraries: shipped in the package; Tesseract's language data other than English comes
@@ -23,10 +28,15 @@ const EXT_TO_EXT = 'lite-player-for-echo360:to-ext';
 // (language data other than English) come from the CDN.
 const EXT_SHIPPED = /^(hls\.js|pdfjs-dist|tesseract\.js|tesseract\.js-core)@|^@tesseract\.js-data\/eng@/;
 
+// The page-storage names kept in the extension instead (see kv above).
+const EXT_SHARED = (name) => name === NS + 'prefs' || name.startsWith(NS + 'pos:');
+
 const extBridge = {
   node: null,        // the node the two worlds talk through
   base: '',          // the package's URL (chrome-extension://<id>/)
-  kv: new Map(),     // chrome.storage.local, as read at start-up and written since
+  kv: new Map(),     // private values (chrome.storage.local), as read at start-up and written since
+  shared: new Map(), // settings and positions (EXT_SHARED), likewise
+  kvRead: false,     // the settings were read, or no longer waited for (platform.whenKv)
   replies: new Map(),
   seq: 0,
   ready: null,       // resolves once kv is read
@@ -70,6 +80,8 @@ const extBridge = {
     if (msg.type === 'kv' && msg.values && typeof msg.values === 'object') {
       // Written before the snapshot arrived: kept.
       for (const [k, v] of Object.entries(msg.values)) if (typeof v === 'string' && !this.kv.has(k)) this.kv.set(k, v);
+      const shared = msg.shared && typeof msg.shared === 'object' ? msg.shared : {};
+      for (const [k, v] of Object.entries(shared)) if (typeof v === 'string' && EXT_SHARED(k) && !this.shared.has(k)) this.shared.set(k, v);
       this.readyResolve();
     } else if (msg.type === 'posted') {
       const done = this.replies.get(msg.id);
@@ -79,9 +91,43 @@ const extBridge = {
 };
 extBridge.start();
 
+// Run once the settings are read (or EXT_KV_WAIT_MS has passed without them).
+const extKvWaiting = [];
+const extKvDone = () => {
+  if (extBridge.kvRead) return;
+  extBridge.kvRead = true;
+  for (const fn of extKvWaiting.splice(0)) { try { fn(); } catch (e) { console.error(TAG, e); } }
+};
+extBridge.ready.then(extKvDone);
+setTimeout(extKvDone, EXT_KV_WAIT_MS);
+
+// The page's storage, for what stays there.
+const extPageKv = platform.kv;
+
 Object.assign(platform, {
   name: 'extension',
   privateReady: extBridge.ready,
+  // Settings are needed to start: waited for, but not for ever (without the bridge, the
+  // page's copy).
+  whenKv(fn) {
+    if (extBridge.kvRead) { fn(); return; }
+    extKvWaiting.push(fn);
+  },
+  kv: {
+    get(name) {
+      if (!EXT_SHARED(name)) return extPageKv.get(name);
+      const v = extBridge.shared.get(name);
+      return typeof v === 'string' ? v : extPageKv.get(name);
+    },
+    set(name, text) {
+      if (!EXT_SHARED(name) || !extBridge.node) { extPageKv.set(name, text); return; }
+      extBridge.shared.set(name, text);
+      extBridge.send({ type: 'kvset', name, text });
+    },
+    names() {
+      return [...new Set([...extPageKv.names(), ...extBridge.shared.keys()])];
+    },
+  },
   libUrl(path) {
     return extBridge.base && EXT_SHIPPED.test(path) ? extBridge.base + 'lib/' + path : 'https://cdn.jsdelivr.net/npm/' + path;
   },

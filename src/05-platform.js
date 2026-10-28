@@ -4,7 +4,8 @@
 // which replaces some of these (06-platform-extension.js). The rest of the code uses only
 // `platform` for these things (the build checks it):
 //   - kv: small settings kept on this device (synchronous: settings are needed at start-up;
-//     an extension reads a snapshot before it starts the player)
+//     an extension reads a snapshot first: whenKv(fn) runs fn once it is there, at once
+//     when it already is, as always in a userscript)
 //   - openDb: the IndexedDB database for larger data (slide files, analyses, tags)
 //   - libUrl / libBlobUrl / importLib: the libraries loaded when first needed (pdf.js,
 //     Tesseract and its language data), named by their npm path ('pdfjs-dist@6.4.299/
@@ -144,6 +145,7 @@ const platform = {
     });
   },
   privateReady: Promise.resolve(),
+  whenKv(fn) { fn(); },
   // Kept by the userscript manager (GM_getValue), where the page's own scripts cannot read
   // it; without one, the page's storage like the settings.
   privateKv: {
