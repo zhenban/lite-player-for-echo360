@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0
+New in the extension:
+- **Add lecture moment.** In an AI chat, press **Alt+Shift+L** (or use the toolbar button): the lecture's picture and what was said just before go into the chat box, ready for your question. Nothing is sent until you send it. The extension gets into the chat's page only at that moment; it has no access to any AI site otherwise.
+- **A toolbar button.** Turn Lite Player on or off: off means Echo360's own player, with nothing added. It also says what Lite Player is doing on the page (and why Echo360's player is used, when it is), and **Report a problem** copies the diagnostics for you.
+- **A settings page** with every setting, a check of what your browser can do (and whether the userscript is installed too), the space your data takes, and backup, restore and delete. In the player, backups now point there.
+- **Your settings follow your Chrome account** to your other computers. The layout, volume and quality stay per computer.
+- **Tags, slide PDFs and what you watched are the same on every Echo360 site**, also inside a learning system's page. They move over by themselves on the first visit after the update.
+- A welcome page after installing, and a one-time note in the player about what is new.
+
+For both the extension and the userscript:
+- Slide PDFs, watched records and saved positions unused for a year are deleted, so they don't fill the browser's storage. Tags stay.
+
 ## 1.0.1
 - **The extension is in the Chrome Web Store** and is no longer marked beta: [Lite Player for Echo360](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh). It updates itself. If you loaded the zip by hand, remove that copy and install it from the store.
 - The extension's name and summary are in Chinese for Chinese-language browsers.

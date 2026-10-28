@@ -15,7 +15,7 @@ Your notes, bookmarks, discussion and viewing progress stay Echo360's own, and t
 
 ## Install
 
-Two ways to install the same player, with the same features and settings. Use one or the other, not both.
+Two ways to install the same player. The extension adds a few things of its own ([below](#only-in-the-extension)). Use one or the other, not both.
 
 ### Chrome or Edge extension (easiest)
 
@@ -84,6 +84,14 @@ The manager keeps it up to date; each [release](https://github.com/zhenban/lite-
 - Slide chapters come from changes on the screen; a whiteboard filmed by a camera may get only a few. If the wrong view is used for slides, pick the right one in the Slides tab.
 - The PDF read-along reads English, Chinese, Japanese, Korean, Russian, Greek, Arabic, Hebrew, Thai and Hindi (other languages as English). Languages other than English download 0.6–2.7 MB of recognition data once.
 - Without a transcript, silence is found from the audio, so very quiet speech far from the microphone can be marked as silence. Nothing is skipped unless you choose to, or turn on auto-skip.
+
+### Only in the extension
+
+- **Add lecture moment.** In an AI chat (ChatGPT, Claude, Gemini or any other), press **Alt+Shift+L** or click **Add lecture moment** on the toolbar button: the lecture's picture and what was said just before go into the chat box, ready for your question. Nothing is sent until you send it. It takes the lecture that is playing (or the one you used last), and the extension gets into the chat's page only at that moment. Change the shortcut at `chrome://extensions/shortcuts`.
+- **A toolbar button:** turn Lite Player on or off (off means Echo360's own player, with nothing added), see what it is doing on the page and why, and report a problem with the diagnostics already copied.
+- **A settings page** with every setting, a check of what your browser can do, the space your data takes, backup, restore and delete.
+- **Your settings follow your Chrome account** to your other computers, except the layout, volume and quality, which suit each screen.
+- **Tags, slide PDFs and what you watched are the same on every Echo360 site**, also when a learning system shows the recording in its own page. Anything unused for a year is deleted.
 
 ## Keyboard shortcuts
 
