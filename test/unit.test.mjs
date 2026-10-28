@@ -51,7 +51,7 @@ function loadSources(names, overrides) {
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
     + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'parseMaster', 'fetchRange', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'pageSimilarity', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
-      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
+      'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'userData', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
   return { ...ctx.__exports, timers, window: ctx.window, setFetch: (fn) => { ctx.__fetch = fn; } };
@@ -1414,6 +1414,42 @@ test('E2: a backup restore takes only known keys, validated, and skips damaged e
   assert.equal(db.has('tags:bad'), false);
   assert.equal(db.has('other:x'), false);
   assert.equal(db.has('watched:l'), true);
+});
+
+test('a year unused: slide PDFs (the file once no recording uses it), watched records and positions go; tags stay', async () => {
+  const DAY = 864e5;
+  const now = Date.UTC(2027, 0, 1);
+  const local = new Map([
+    ['lite-player-for-echo360:pos:old', JSON.stringify({ t: 5, at: now - 400 * DAY })],
+    ['lite-player-for-echo360:pos:new', JSON.stringify({ t: 6, at: now - 10 * DAY })],
+    ['lite-player-for-echo360:pos:undated', JSON.stringify({ t: 7 })],
+    ['lite-player-for-echo360:prefs', '{}'],
+  ]);
+  const ls = {
+    getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => local.set(k, v), removeItem: (k) => local.delete(k),
+    key: (i) => [...local.keys()][i] ?? null, get length() { return local.size; },
+  };
+  const m = loadSources(['00-util', '39-prefs', '61-media-io', '63-caches'], { localStorage: ls });
+  const db = new Map([
+    ['deck:oldA', { files: [{ hash: 'h1', name: 'a.pdf' }, { hash: 'h2', name: 'b.pdf' }], fixes: [], used: now - 366 * DAY }],
+    ['deck:newB', { files: [{ hash: 'h2', name: 'b.pdf' }], fixes: [], used: now - DAY }],
+    ['deck:before', { files: [{ hash: 'h3', name: 'c.pdf' }], fixes: [] }],
+    ['deckref:h1', ['oldA']], ['deckref:h2', ['oldA', 'newB']], ['deckref:h3', ['before']],
+    ['deckfile:h1', 'pdf1'], ['deckfile:h2', 'pdf2'], ['deckfile:h3', 'pdf3'],
+    ['watched:old', { d: 100, r: [[0, 50]], at: now - 400 * DAY }],
+    ['watched:new', { d: 100, r: [[0, 50]], at: now - 30 * DAY }],
+    ['tags:s', { tags: [] }], ['tagmap:m', {}],
+  ]);
+  Object.assign(m.idbCache, memIdb(db), {
+    update: async (k, fn) => { const v = fn(db.get(k)); if (v === undefined) db.delete(k); else db.set(k, v); return v; },
+  });
+  const removed = await m.userData.prune(now);
+  assert.equal(removed, 3);   // one recording's PDFs, one watched record, one position
+  assert.deepEqual([...db.keys()].sort(), ['deck:before', 'deck:newB', 'deckfile:h2', 'deckfile:h3', 'deckref:h2', 'deckref:h3', 'tagmap:m', 'tags:s', 'watched:new']);
+  assert.deepEqual([...db.get('deckref:h2')], ['newB']);
+  // From before the date was kept: counted from now, not deleted.
+  assert.equal(db.get('deck:before').used, now);
+  assert.deepEqual([...local.keys()].sort(), ['lite-player-for-echo360:pos:new', 'lite-player-for-echo360:pos:undated', 'lite-player-for-echo360:prefs']);
 });
 
 test('T1.5 backup: everything made by a backup comes back from it, through a file', async () => {

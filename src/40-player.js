@@ -911,7 +911,7 @@ class LitePlayer {
     const v = this.video;
     const d = this.d;
     // Old analysis results are cleaned up in the background, once the page has settled.
-    d.timeout(() => analysisCaches.prune().catch(() => {}), 60000);
+    d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));

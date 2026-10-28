@@ -168,6 +168,8 @@ class SlideDeckController {
     if (!this.lesson.mediaId) return;
     const rec = await idbCache.get(this.key);
     if (!rec || !Array.isArray(rec.files) || !rec.files.length) return;
+    // Opened: kept another USER_DATA_KEEP_DAYS (63-caches.js).
+    idbCache.update(this.key, (r) => (r && Array.isArray(r.files) ? Object.assign(r, { used: Date.now() }) : r)).catch(() => {});
     this.files = rec.files;
     this.fixes = Array.isArray(rec.fixes) ? rec.fixes : [];
     await this.reload();
@@ -190,7 +192,7 @@ class SlideDeckController {
         const rec = old[this.key];
         const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
         op(st);
-        next[this.key] = { files: st.files, fixes: st.fixes };
+        next[this.key] = { files: st.files, fixes: st.fixes, used: Date.now() };
       }
       if (stored) stored(old, next, mid);
       return next;

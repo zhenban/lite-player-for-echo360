@@ -2212,6 +2212,7 @@ const platform = {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
     set(name, text) { localStorage.setItem(name, text); },
+    remove(name) { try { localStorage.removeItem(name); } catch (e) { /* blocked */ } },
     names() {
       const out = [];
       try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k != null) out.push(k); } } catch (e) { /* blocked */ }
@@ -5696,7 +5697,7 @@ class LitePlayer {
     const v = this.video;
     const d = this.d;
     // Old analysis results are cleaned up in the background, once the page has settled.
-    d.timeout(() => analysisCaches.prune().catch(() => {}), 60000);
+    d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
     d.add(() => { clearTimeout(this.idleTimer); clearTimeout(this.toastTimer); clearTimeout(this.sharpTimer); clearTimeout(this.prefsTimer); store.set('prefs', this.prefs); });
     d.listen($('.play'), 'click', () => this.togglePlay());
     d.listen($('.rew'), 'click', () => this.seek(this.clock.position() - 10));
@@ -10556,8 +10557,10 @@ class SilenceAnalyzer {
 //   records of these kinds that were not used for CACHE_KEEP_DAYS, or are from another
 //   version, are deleted in the background.
 // - Settings menu: how much space they take, and clearing them all.
-// User data (tags, slide files, watched records) is not an analysis cache and is never
-// pruned here.
+// User data is not an analysis cache. Most of it is kept for good (tags), but what only
+// matters while a course runs is deleted when unused for USER_DATA_KEEP_DAYS
+// (userData.prune): a recording's slide PDFs (the files themselves once no recording uses
+// them), what was watched, and the saved position. A year covers a course and its exam.
 // ===================================================================================
 
 const CACHE_KINDS = {
@@ -10566,6 +10569,7 @@ const CACHE_KINDS = {
   ocr: 1,             // text read on screen
 };
 const CACHE_KEEP_DAYS = 60;
+const USER_DATA_KEEP_DAYS = 365;
 
 function cacheKind(key) {
   const k = String(key).split(':')[0];
@@ -10639,6 +10643,53 @@ const analysisCaches = {
       if (!cacheValid(cacheKind(k), rec) || !(cacheLastUse(rec) > old)) { await idbCache.del(k); n++; }
     }
     if (n) log.info('removed ' + n + ' old analysis results');
+    return n;
+  },
+};
+
+const userData = {
+  // Deletes slide PDFs, watched records and saved positions unused for USER_DATA_KEEP_DAYS.
+  // A recording's PDFs from before `used` was kept start counting now.
+  async prune(now = Date.now()) {
+    const old = now - USER_DATA_KEEP_DAYS * 864e5;
+    let n = 0;
+    for (const k of await idbCache.keys()) {
+      const key = String(k);
+      if (key.startsWith('watched:')) {
+        const rec = await idbCache.get(key);
+        if (rec && typeof rec.at === 'number' && rec.at < old) { await idbCache.del(key); n++; }
+      } else if (key.startsWith('deck:')) {
+        const rec = await idbCache.get(key);
+        if (!rec || !Array.isArray(rec.files)) continue;
+        if (typeof rec.used !== 'number') {
+          await idbCache.update(key, (r) => (r && typeof r === 'object' && typeof r.used !== 'number' ? Object.assign(r, { used: now }) : r));
+          continue;
+        }
+        if (rec.used >= old) continue;
+        const mid = key.slice(5);
+        const hashes = rec.files.map((f) => f && f.hash).filter((h) => typeof h === 'string');
+        // As removing a file (68-slide-deck.js): its users in the same transaction, and
+        // nothing if the recording was opened meanwhile.
+        await idbCache.updateMany([key].concat(hashes.map((h) => 'deckref:' + h)), (cur) => {
+          const r = cur[key];
+          if (!r || typeof r.used !== 'number' || r.used >= old) return {};
+          const next = { [key]: undefined };
+          for (const h of hashes) {
+            const refs = (Array.isArray(cur['deckref:' + h]) ? cur['deckref:' + h] : []).filter((m) => m !== mid);
+            if (refs.length) next['deckref:' + h] = refs;
+            else { next['deckref:' + h] = undefined; next['deckfile:' + h] = undefined; }
+          }
+          return next;
+        });
+        n++;
+      }
+    }
+    for (const name of platform.kv.names()) {
+      if (!name.startsWith(NS + 'pos:')) continue;
+      const pos = sanitizePos(store.get(name.slice(NS.length), null));
+      if (pos && pos.at > 0 && pos.at < old) { platform.kv.remove(name); n++; }
+    }
+    if (n) log.info('removed ' + n + ' records unused for a year');
     return n;
   },
 };
@@ -13144,6 +13195,8 @@ class SlideDeckController {
     if (!this.lesson.mediaId) return;
     const rec = await idbCache.get(this.key);
     if (!rec || !Array.isArray(rec.files) || !rec.files.length) return;
+    // Opened: kept another USER_DATA_KEEP_DAYS (63-caches.js).
+    idbCache.update(this.key, (r) => (r && Array.isArray(r.files) ? Object.assign(r, { used: Date.now() }) : r)).catch(() => {});
     this.files = rec.files;
     this.fixes = Array.isArray(rec.fixes) ? rec.fixes : [];
     await this.reload();
@@ -13166,7 +13219,7 @@ class SlideDeckController {
         const rec = old[this.key];
         const st = { files: rec && Array.isArray(rec.files) ? rec.files : [], fixes: rec && Array.isArray(rec.fixes) ? rec.fixes : [] };
         op(st);
-        next[this.key] = { files: st.files, fixes: st.fixes };
+        next[this.key] = { files: st.files, fixes: st.fixes, used: Date.now() };
       }
       if (stored) stored(old, next, mid);
       return next;

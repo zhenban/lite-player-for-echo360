@@ -70,7 +70,7 @@ function fakeChrome(syncStore = {}) {
   const chrome = {
     runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => { sent.push(m); return { status: 200, text: '{"ok":true}' }; } },
     storage: {
-      local: { get: async () => Object.assign({}, store), set: async (o) => { Object.assign(store, o); } },
+      local: { get: async () => Object.assign({}, store), set: async (o) => { Object.assign(store, o); }, remove: async (k) => { delete store[k]; } },
       sync: { get: async (k) => (k in syncStore ? { [k]: syncStore[k] } : {}), set: async (o) => { syncWrites.push(o); Object.assign(syncStore, o); } },
     },
   };
@@ -83,7 +83,7 @@ const runBridge = (w, chrome) => vm.runInContext(x.files['bridge.js'], world(w, 
 // The page's storage (localStorage in the userscript's platform).
 function pageKv(initial = {}) {
   const m = new Map(Object.entries(initial));
-  return { m, get: (k) => (m.has(k) ? m.get(k) : null), set: (k, v) => { m.set(k, v); }, names: () => [...m.keys()] };
+  return { m, get: (k) => (m.has(k) ? m.get(k) : null), set: (k, v) => { m.set(k, v); }, remove: (k) => { m.delete(k); }, names: () => [...m.keys()] };
 }
 function runPlayer(w, page = pageKv()) {
   const platform = { name: 'userscript', kv: page };
@@ -186,6 +186,21 @@ test('settings: from before 1.1.0 (only in the page\'s storage) read there until
   assert.equal(page.get(P), JSON.stringify({ rate: 2, layout: 'pip' }));
   assert.equal(page.get('lite-player-for-echo360:reloadAt'), 'null');
   assert.equal(store['kv:lite-player-for-echo360:reloadAt'], undefined);
+});
+
+test('settings: a removed position goes from the extension and from the page\'s storage', async () => {
+  const w = newWindow();
+  const { chrome, store } = fakeChrome();
+  store['kv:lite-player-for-echo360:pos:L3'] = '{"t":1,"at":1}';
+  runBridge(w, chrome);
+  const page = pageKv({ 'lite-player-for-echo360:pos:L3': '{"t":2,"at":1}' });
+  const platform = runPlayer(w, page);
+  await new Promise((r) => platform.whenKv(r));
+  platform.kv.remove('lite-player-for-echo360:pos:L3');
+  await tick();
+  assert.equal(store['kv:lite-player-for-echo360:pos:L3'], undefined);
+  assert.equal(page.get('lite-player-for-echo360:pos:L3'), null);
+  assert.equal(platform.kv.get('lite-player-for-echo360:pos:L3'), null);
 });
 
 test('settings: sync is written at most once per gap, and not when nothing synced changed', async () => {

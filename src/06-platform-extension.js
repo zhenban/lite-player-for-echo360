@@ -124,6 +124,12 @@ Object.assign(platform, {
       extBridge.shared.set(name, text);
       extBridge.send({ type: 'kvset', name, text });
     },
+    remove(name) {
+      extPageKv.remove(name);
+      if (!EXT_SHARED(name) || !extBridge.node) return;
+      extBridge.shared.delete(name);
+      extBridge.send({ type: 'kvdel', name });
+    },
     names() {
       return [...new Set([...extPageKv.names(), ...extBridge.shared.keys()])];
     },

@@ -60,6 +60,8 @@
     } else if (msg.type === 'kvset' && typeof msg.name === 'string' && typeof msg.text === 'string') {
       chrome.storage.local.set({ [KV + msg.name]: msg.text }).catch(() => {});
       if (msg.name === PREFS) syncPrefs(msg.text);
+    } else if (msg.type === 'kvdel' && typeof msg.name === 'string') {
+      chrome.storage.local.remove(KV + msg.name).catch(() => {});
     } else if (msg.type === 'post' && typeof msg.url === 'string' && typeof msg.body === 'string') {
       const id = msg.id;
       chrome.runtime.sendMessage({ type: 'post', url: msg.url, body: msg.body, timeoutMs: +msg.timeoutMs || 0 })

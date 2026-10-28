@@ -51,6 +51,7 @@ const platform = {
     get(name) { try { return localStorage.getItem(name); } catch (e) { return null; } },
     // Throws when storage is full or blocked; callers decide whether that matters.
     set(name, text) { localStorage.setItem(name, text); },
+    remove(name) { try { localStorage.removeItem(name); } catch (e) { /* blocked */ } },
     names() {
       const out = [];
       try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k != null) out.push(k); } } catch (e) { /* blocked */ }
