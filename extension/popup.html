@@ -22,6 +22,14 @@
     <button id="reload" class="secondary" data-t="reload" hidden></button>
   </section>
 
+  <section class="moment" id="moment" hidden>
+    <button id="momentAdd" class="primary" data-t="moment"></button>
+    <p class="desc" data-t="momentHint"></p>
+    <p id="momentKey" class="desc small"></p>
+    <button id="momentSetKey" class="link small" data-t="momentNoKey" hidden></button>
+    <p id="momentSay" class="desc" role="status" hidden></p>
+  </section>
+
   <section class="settings">
     <label class="row">
       <span data-t="language"></span>
@@ -49,6 +57,7 @@
   <p id="note" class="note" role="status" hidden></p>
 
   <script src="shared.js"></script>
+  <script src="moment.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

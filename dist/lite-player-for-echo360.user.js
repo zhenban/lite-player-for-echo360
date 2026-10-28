@@ -5843,6 +5843,14 @@ class LitePlayer {
     d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
     // A lecture watched for a while (the extension's toolbar counts them for its one rating
     // line): one check a minute.
+    // When the user last used this lecture (playing, a click, a key): the extension's "Add
+    // lecture moment" takes the lecture playing, or else the one used last.
+    this.usedAt = Date.now();
+    const used = () => { this.usedAt = Date.now(); };
+    d.listen(this.host, 'pointerdown', used, true);
+    d.listen(this.host, 'keydown', used, true);
+    d.listen(v, 'playing', used);
+    d.listen(v, 'pause', used);
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     // Updated to a new version (the extension): its changes, said once, in the first lecture
@@ -6284,6 +6292,22 @@ class LitePlayer {
   // waits while another source's message is shown, so that it does not take away an action
   // the user may still want (such as "Start over"); it replaces one from its own source.
   // When the shown one closes, the newest waiting one follows if opts.valid() still holds.
+  // The moment for an AI chat (the extension's "Add lecture moment"): what Copy picture and
+  // Copy text give, as { title, picture (a PNG data URL, or null), text, from, to }. Asked from
+  // another tab: not a user action here, so nothing touches this page's clipboard.
+  async moment() {
+    const pic = this.menus.framePicture();
+    let picture = null;
+    if (pic) {
+      const blob = await pic.blob;
+      if (blob) picture = await new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+    }
+    const said = this.menus.captionText();
+    const long = this.duration() >= 3600;
+    const now = fmtTime(this.video.currentTime, long);
+    return { title: this.lesson.title, picture, text: said ? said.text : this.lesson.title + '\n' + now + '\n', from: said ? said.from : now, to: said ? said.to : now };
+  }
+
   toast(msg, action, fn, opts) {
     const elem = this.$('.toast');
     const o = opts || {};
@@ -7342,47 +7366,56 @@ class MenuBar {
 
   // ---- copying (picture, what was said) ----
 
-  // Copies the current picture at the video's own resolution. Must run from a user action.
-  // Copies the picture the user is looking at: the larger one shown, a video frame or the
-  // PDF page (drawn PDF_COPY_WIDTH wide).
-  copyFrame() {
-    const x = this.x;
-    const f = x.focusView();
+  // The picture the user is looking at: the larger one shown, a video frame or the PDF page
+  // (drawn PDF_COPY_WIDTH wide). -> { blob: Promise of a PNG Blob, w, h, page } or null
+  // (no picture yet). The blob is a promise so that a clipboard item can be made at once,
+  // within the user's action.
+  framePicture() {
+    const f = this.x.focusView();
     if (f.page) {
       const pg = f.page;
-      const shot = pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png')));
-      navigator.clipboard.write([new ClipboardItem({ 'image/png': shot })])
-        .then(() => x.toast(tr('copiedPage', { n: pg.num, file: pg.file })))
-        .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
-      return;
+      return { blob: pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png'))), w: 0, h: 0, page: pg };
     }
     const v = f.video;
-    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
+    if (!v.videoWidth) return null;
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;
     c.getContext('2d').drawImage(v, 0, 0);
-    // The clipboard item is created synchronously (within the user action) from a promise.
-    const blob = new Promise((resolve) => c.toBlob(resolve, 'image/png'));
-    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-      .then(() => x.toast(tr('copiedFrame', { w: c.width, h: c.height })))
-      .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+    return { blob: new Promise((resolve) => c.toBlob(resolve, 'image/png')), w: c.width, h: c.height, page: null };
   }
 
-  // Copies what was said in the last copySpan seconds, in whole sentences, with the
-  // lecture's name and the time range.
-  copyCaptions() {
+  // What was said in the last copySpan seconds, in whole sentences, with the lecture's name
+  // and the time range: { text, from, to } or null (no captions there).
+  captionText() {
     const x = this.x;
     const cues = x.cues();
-    if (!cues.length) { x.toast(tr('copyNoCaptions')); return; }
+    if (!cues.length) return null;
     const ex = captionExcerpt(cues, x.video.currentTime, x.prefs.copySpan || 60);
-    if (!ex) { x.toast(tr('copyNoCaptions')); return; }
+    if (!ex) return null;
     const long = x.duration() >= 3600;
     const from = fmtTime(ex.start, long);
     const to = fmtTime(ex.end, long);
-    const text = x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n';
-    navigator.clipboard.writeText(text)
-      .then(() => x.toast(tr('copiedCaptions', { from, to })))
+    return { text: x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n', from, to };
+  }
+
+  // Copies the picture the user is looking at (framePicture). Must run from a user action.
+  copyFrame() {
+    const x = this.x;
+    const pic = this.framePicture();
+    if (!pic) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': pic.blob })])
+      .then(() => x.toast(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h })))
+      .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+  }
+
+  // Copies what was said just before (captionText).
+  copyCaptions() {
+    const x = this.x;
+    const said = this.captionText();
+    if (!said) { x.toast(tr('copyNoCaptions')); return; }
+    navigator.clipboard.writeText(said.text)
+      .then(() => x.toast(tr('copiedCaptions', { from: said.from, to: said.to })))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 
@@ -15956,8 +15989,11 @@ class LoadingScreen {
         // A second copy (the userscript too) marks the page (00-boot.js).
         duplicate: !!boot.other || !!readDuplicateMark(),
         version: VERSION,
+        // For "Add lecture moment": which lecture to take (the one playing, or used last).
+        lecture: player && !player.destroyed ? { playing: player.clock.playing(), usedAt: player.usedAt } : null,
       }),
       diagnostics: () => (player ? diagnosticsText(player) : startupDiagnosticsText()),
+      moment: () => (player && !player.destroyed ? player.moment() : null),
     });
   }
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }

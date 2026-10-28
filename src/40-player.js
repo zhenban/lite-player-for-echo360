@@ -914,6 +914,14 @@ class LitePlayer {
     d.timeout(() => analysisCaches.prune().catch(() => {}).then(() => userData.prune()).catch(() => {}), 60000);
     // A lecture watched for a while (the extension's toolbar counts them for its one rating
     // line): one check a minute.
+    // When the user last used this lecture (playing, a click, a key): the extension's "Add
+    // lecture moment" takes the lecture playing, or else the one used last.
+    this.usedAt = Date.now();
+    const used = () => { this.usedAt = Date.now(); };
+    d.listen(this.host, 'pointerdown', used, true);
+    d.listen(this.host, 'keydown', used, true);
+    d.listen(v, 'playing', used);
+    d.listen(v, 'pause', used);
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     // Updated to a new version (the extension): its changes, said once, in the first lecture
@@ -1355,6 +1363,22 @@ class LitePlayer {
   // waits while another source's message is shown, so that it does not take away an action
   // the user may still want (such as "Start over"); it replaces one from its own source.
   // When the shown one closes, the newest waiting one follows if opts.valid() still holds.
+  // The moment for an AI chat (the extension's "Add lecture moment"): what Copy picture and
+  // Copy text give, as { title, picture (a PNG data URL, or null), text, from, to }. Asked from
+  // another tab: not a user action here, so nothing touches this page's clipboard.
+  async moment() {
+    const pic = this.menus.framePicture();
+    let picture = null;
+    if (pic) {
+      const blob = await pic.blob;
+      if (blob) picture = await new Promise((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+    }
+    const said = this.menus.captionText();
+    const long = this.duration() >= 3600;
+    const now = fmtTime(this.video.currentTime, long);
+    return { title: this.lesson.title, picture, text: said ? said.text : this.lesson.title + '\n' + now + '\n', from: said ? said.from : now, to: said ? said.to : now };
+  }
+
   toast(msg, action, fn, opts) {
     const elem = this.$('.toast');
     const o = opts || {};

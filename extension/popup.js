@@ -36,6 +36,8 @@ const WORDS = {
       playbackError: 'playback failed, so Lite Player stepped aside.',
       other: 'this page was not recognised. Report a problem if it keeps happening.',
     },
+    moment: 'Add lecture moment', momentHint: 'Adds the lecture\'s picture and what was said just before to the chat box on this page.',
+    momentKey: 'Shortcut: {key}', momentNoKey: 'Set a shortcut',
     copied: 'Diagnostics copied. Paste them into the form that just opened.',
     copyFailed: 'Could not copy the diagnostics. The form opened anyway.',
   },
@@ -66,6 +68,8 @@ const WORDS = {
       playbackError: '播放出错，Lite Player 已让位。',
       other: '没能识别这个页面。如果反复出现，请报告问题。',
     },
+    moment: '添加课程片段', momentHint: '把课程画面和刚才讲的内容添加到这个页面的聊天框。',
+    momentKey: '快捷键：{key}', momentNoKey: '设置快捷键',
     copied: '诊断信息已复制。请粘贴到刚打开的表单里。',
     copyFailed: '没能复制诊断信息，表单已经打开。',
   },
@@ -149,6 +153,7 @@ async function main() {
   $('on').addEventListener('change', async () => {
     off = !$('on').checked;
     await chrome.storage.local.set({ off });
+    $('status').parentElement.hidden = false;
     showStatus(off);
   });
   $('reload').addEventListener('click', () => { if (tab) chrome.tabs.reload(tab.id); window.close(); });
@@ -164,6 +169,27 @@ async function main() {
   $('telemetry').addEventListener('change', () => { LP.writePrefs({ telemetry: $('telemetry').checked }); });
   $('options').addEventListener('click', () => { chrome.runtime.openOptionsPage(); window.close(); });
   $('report').addEventListener('click', () => { reportProblem(tab); });
+
+  // "Add lecture moment" (moment.js): on a page other than a lecture, while one is open.
+  if (!tabStatus && tab && (await lectureTabs(tab.id)).length) {
+    $('moment').hidden = false;
+    let key = '';
+    try { key = ((await chrome.commands.getAll()).find((c) => c.name === 'add-lecture-moment') || {}).shortcut || ''; } catch (e) { /* none */ }
+    // A lecture is open elsewhere: "open a lecture" would read wrong here.
+    if (!off) $('status').parentElement.hidden = true;
+    $('momentKey').textContent = key ? fill(w.momentKey, { key }) : '';
+    $('momentKey').hidden = !key;
+    $('momentSetKey').hidden = !!key;
+    $('momentSetKey').addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));
+    $('momentAdd').addEventListener('click', async () => {
+      // Only web pages can take it (the page's address is known for this tab now).
+      if (!/^https?:/.test(tab.url || '')) { $('momentSay').textContent = (await LP.momentWords()).cannot; $('momentSay').hidden = false; return; }
+      // Done in the background with the popup closed: the page has the focus back (its
+      // clipboard needs it) and says what happened.
+      chrome.runtime.sendMessage({ type: 'moment', tabId: tab.id }).catch(() => {});
+      window.close();
+    });
+  }
 
   const days = (Date.now() - (+local.installedAt || Date.now())) / 864e5;
   if (!local.rateDone && (+local.viewed || 0) >= RATE_AFTER_VIEWED && days >= RATE_AFTER_DAYS) {

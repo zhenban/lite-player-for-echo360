@@ -113,7 +113,7 @@ ${parts.join('\n')}
 // { name: text }, icons: [file names in extension/], libs: { npm path: SHA-256 } } or null.
 // dev: with the test hooks (DEV_HOOKS), for dev/extension-check.mjs only.
 // The extension's own files (extension/), with their placeholders filled.
-const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'store.html', 'store.js', 'options.html', 'options.js', 'welcome.html', 'welcome.js'];
+const EXT_TEXT_FILES = ['shared.js', 'bridge.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'store.html', 'store.js', 'options.html', 'options.js', 'welcome.html', 'welcome.js', 'moment.js'];
 
 export function extensionFiles({ dev = false } = {}) {
   const r = assemble({ target: 'extension', dev });
@@ -126,6 +126,9 @@ export function extensionFiles({ dev = false } = {}) {
   const fill = (text) => text.replace(/\{\{VERSION\}\}/g, r.version)
     .replace(/\{\{TELEMETRY_URL\}\}/g, telemetry).replace(/"\{\{MATCHES\}\}"/g, JSON.stringify(matches)).replace(/"\{\{SITES\}\}"/g, JSON.stringify(sites));
   const manifest = JSON.parse(fill(readFileSync(join(extDir, 'manifest.json'), 'utf8')));
+  // Test builds only: the stand-in AI chat of dev/extension-check.mjs may be written to
+  // without a user's action (a released build gets one page at a time, activeTab).
+  if (dev) manifest.host_permissions.push('https://chat.test/*');
   const core = assemble({ target: 'options' });
   if (!core) return null;
   const files = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'player.js': r.out, 'core.js': core.out };

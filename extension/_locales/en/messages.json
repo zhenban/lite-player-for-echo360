@@ -6,5 +6,8 @@
   "description": {
     "message": "Unofficial, lightweight player for Echo360 lecture recordings: low CPU use, both views side by side, slide chapters.",
     "description": "The store summary; at most 132 characters."
+  },
+  "addMoment": {
+    "message": "Add lecture moment to this page's chat box"
   }
 }

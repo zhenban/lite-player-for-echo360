@@ -369,47 +369,56 @@ class MenuBar {
 
   // ---- copying (picture, what was said) ----
 
-  // Copies the current picture at the video's own resolution. Must run from a user action.
-  // Copies the picture the user is looking at: the larger one shown, a video frame or the
-  // PDF page (drawn PDF_COPY_WIDTH wide).
-  copyFrame() {
-    const x = this.x;
-    const f = x.focusView();
+  // The picture the user is looking at: the larger one shown, a video frame or the PDF page
+  // (drawn PDF_COPY_WIDTH wide). -> { blob: Promise of a PNG Blob, w, h, page } or null
+  // (no picture yet). The blob is a promise so that a clipboard item can be made at once,
+  // within the user's action.
+  framePicture() {
+    const f = this.x.focusView();
     if (f.page) {
       const pg = f.page;
-      const shot = pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png')));
-      navigator.clipboard.write([new ClipboardItem({ 'image/png': shot })])
-        .then(() => x.toast(tr('copiedPage', { n: pg.num, file: pg.file })))
-        .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
-      return;
+      return { blob: pg.render(PDF_COPY_WIDTH).then((c) => new Promise((resolve) => c.toBlob(resolve, 'image/png'))), w: 0, h: 0, page: pg };
     }
     const v = f.video;
-    if (!v.videoWidth) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
+    if (!v.videoWidth) return null;
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;
     c.getContext('2d').drawImage(v, 0, 0);
-    // The clipboard item is created synchronously (within the user action) from a promise.
-    const blob = new Promise((resolve) => c.toBlob(resolve, 'image/png'));
-    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-      .then(() => x.toast(tr('copiedFrame', { w: c.width, h: c.height })))
-      .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+    return { blob: new Promise((resolve) => c.toBlob(resolve, 'image/png')), w: c.width, h: c.height, page: null };
   }
 
-  // Copies what was said in the last copySpan seconds, in whole sentences, with the
-  // lecture's name and the time range.
-  copyCaptions() {
+  // What was said in the last copySpan seconds, in whole sentences, with the lecture's name
+  // and the time range: { text, from, to } or null (no captions there).
+  captionText() {
     const x = this.x;
     const cues = x.cues();
-    if (!cues.length) { x.toast(tr('copyNoCaptions')); return; }
+    if (!cues.length) return null;
     const ex = captionExcerpt(cues, x.video.currentTime, x.prefs.copySpan || 60);
-    if (!ex) { x.toast(tr('copyNoCaptions')); return; }
+    if (!ex) return null;
     const long = x.duration() >= 3600;
     const from = fmtTime(ex.start, long);
     const to = fmtTime(ex.end, long);
-    const text = x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n';
-    navigator.clipboard.writeText(text)
-      .then(() => x.toast(tr('copiedCaptions', { from, to })))
+    return { text: x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n', from, to };
+  }
+
+  // Copies the picture the user is looking at (framePicture). Must run from a user action.
+  copyFrame() {
+    const x = this.x;
+    const pic = this.framePicture();
+    if (!pic) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': pic.blob })])
+      .then(() => x.toast(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h })))
+      .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
+  }
+
+  // Copies what was said just before (captionText).
+  copyCaptions() {
+    const x = this.x;
+    const said = this.captionText();
+    if (!said) { x.toast(tr('copyNoCaptions')); return; }
+    navigator.clipboard.writeText(said.text)
+      .then(() => x.toast(tr('copiedCaptions', { from: said.from, to: said.to })))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 

@@ -31,6 +31,7 @@
   const asked = new Map();
   let askSeq = 0;
   const ASK_MS = 3000;
+  const MOMENT_MS = 10000;
 
   const toPage = (msg) => node.dispatchEvent(new CustomEvent(TO_PAGE, { detail: JSON.stringify(msg) }));
 
@@ -112,7 +113,8 @@
   function ask(name) {
     return new Promise((resolve) => {
       const id = ++askSeq;
-      const timer = setTimeout(() => done(null), ASK_MS);
+      // The moment's picture may be a PDF page to draw first.
+      const timer = setTimeout(() => done(null), name === 'moment' ? MOMENT_MS : ASK_MS);
       const done = (value) => { clearTimeout(timer); asked.delete(id); resolve(value); };
       asked.set(id, done);
       toPage({ type: 'ask', id, name });
@@ -120,7 +122,7 @@
   }
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (sender.id !== chrome.runtime.id || !msg || msg.type !== 'ask' || !present || !node) return false;
-    if (!['status', 'diagnostics'].includes(msg.name)) return false;
+    if (!['status', 'diagnostics', 'moment'].includes(msg.name)) return false;
     ask(msg.name).then(reply);
     return true;
   });

@@ -46,6 +46,11 @@ input[type=checkbox][role=switch]:checked::after { transform: translateX(16px); 
 
 button.secondary { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp3); cursor: pointer; min-height: 32px; }
 button.secondary:hover { background: var(--s1); }
+button.primary { background: var(--accent); color: var(--on-accent); border: 0; border-radius: var(--r1); padding: var(--sp2) var(--sp3); min-height: 36px; font-weight: 600; cursor: pointer; width: 100%; }
+button.primary:hover { filter: brightness(1.08); }
+.moment .desc { margin: var(--sp2) 0 0; }
+button.link.small, .desc.small { font-size: 12px; }
+button.link.small { color: var(--text-2); }
 button.link { background: none; border: 0; padding: var(--sp1) 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
 .rate { display: flex; align-items: center; justify-content: space-between; gap: var(--sp2); margin: var(--sp2) 0 0; padding: var(--sp2) var(--sp3); border-radius: var(--r2); background: var(--accent-soft); }

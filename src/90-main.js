@@ -34,8 +34,11 @@
         // A second copy (the userscript too) marks the page (00-boot.js).
         duplicate: !!boot.other || !!readDuplicateMark(),
         version: VERSION,
+        // For "Add lecture moment": which lecture to take (the one playing, or used last).
+        lecture: player && !player.destroyed ? { playing: player.clock.playing(), usedAt: player.usedAt } : null,
       }),
       diagnostics: () => (player ? diagnosticsText(player) : startupDiagnosticsText()),
+      moment: () => (player && !player.destroyed ? player.moment() : null),
     });
   }
   if (boot.other) { log.warn('another copy (' + boot.other + ') already runs on this page: this one (' + VERSION + ') does nothing. Installed twice? Keep either the extension or the userscript.'); return; }

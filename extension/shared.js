@@ -1,6 +1,6 @@
 // Lite Player for Echo360, the extension's own pages and its bridge: where the player's
 // settings are kept, in one place (loaded before bridge.js in the content script, and by the
-// toolbar popup, the options page and the welcome page).
+// toolbar popup, the options page, the welcome page and the service worker).
 //   chrome.storage.local  kv:<name>  the player's settings and saved positions (<name> is its
 //                                    page-storage name, lite-player-for-echo360:...)
 //   chrome.storage.sync   prefs      the settings that follow the Chrome account: all but
@@ -76,5 +76,32 @@ const LP = (() => {
     return kv;
   }
 
-  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs, coreKv };
+  // "Add lecture moment" (background.js, popup.js), in the player's language setting.
+  const MOMENT_WORDS = {
+    en: {
+      added: 'Lecture moment added: the picture and what was said ({from}–{to}).',
+      addedText: 'Added what was said ({from}–{to}). Press {key} to add the picture too.',
+      addedNoPicture: 'Added what was said ({from}–{to}). The picture could not be added here.',
+      copied: 'Lecture moment copied. Click the chat box and press {key}.',
+      noLecture: 'Open an Echo360 lecture recording first.',
+      fromLecture: 'This is the lecture. Go to your AI chat and add the moment there.',
+      cannot: 'Lite Player cannot add to this page.',
+    },
+    zh: {
+      added: '已添加课程片段：画面和讲的内容（{from}–{to}）。',
+      addedText: '已添加讲的内容（{from}–{to}）。按 {key} 再加上画面。',
+      addedNoPicture: '已添加讲的内容（{from}–{to}）。这里无法添加画面。',
+      copied: '已复制课程片段。点一下聊天框，按 {key}。',
+      noLecture: '请先打开一节 Echo360 课程回放。',
+      fromLecture: '这里是课程页面。请到你的 AI 聊天页面再添加。',
+      cannot: 'Lite Player 无法添加到这个页面。',
+    },
+  };
+  async function momentWords() {
+    const prefs = await readPrefs();
+    const lang = prefs.lang === 'en' || prefs.lang === 'zh' ? prefs.lang : /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+    return MOMENT_WORDS[lang];
+  }
+
+  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs, coreKv, momentWords };
 })();

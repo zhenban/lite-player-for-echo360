@@ -14,7 +14,7 @@ const src = (f) => readFileSync(new URL('../src/' + f, import.meta.url), 'utf8')
 const HELLO = 'lite-player-for-echo360:hello';
 const ACK = 'lite-player-for-echo360:ack';
 
-test('manifest: the userscript\'s pages, the usage-data server, storage, nothing else', () => {
+test('manifest: the userscript\'s pages, the usage-data server, storage, one page at a time for Add lecture moment, nothing else', () => {
   const m = x.manifest;
   assert.equal(m.manifest_version, 3);
   // The player's version, plain: the store already has 1.0.0.1 ("1.0 beta 1"), lower than 1.0.1.
@@ -32,7 +32,11 @@ test('manifest: the userscript\'s pages, the usage-data server, storage, nothing
     assert.ok(msgs.description.message.length <= 132, lang + ': the store allows 132 characters in a summary');
   }
   const matches = [...src('meta.txt').matchAll(/^\/\/ @match\s+(\S+)$/gm)].map((r) => r[1]);
-  assert.deepEqual(m.permissions, ['storage']);
+  // activeTab + scripting: "Add lecture moment" writes to the one page the user is on, when
+  // they ask (toolbar or shortcut); no access to any AI site, and no install warning.
+  assert.deepEqual(m.permissions, ['storage', 'activeTab', 'scripting']);
+  assert.deepEqual(Object.keys(m.commands), ['add-lecture-moment']);
+  assert.equal(m.commands['add-lecture-moment'].suggested_key.default, 'Alt+Shift+L');
   assert.deepEqual(m.host_permissions, [/const TELEMETRY_URL = '([^']+)'/.exec(src('87-telemetry.js'))[1] + '/*']);
   // In frames too: a learning system may show Echo360 in a frame (as the userscript does).
   assert.deepEqual(m.content_scripts.map((c) => [c.js.join(' '), c.world, c.run_at, c.matches, c.all_frames]),
@@ -298,10 +302,12 @@ test('service worker: posts only to the usage-data server, without cookies', asy
       runtime: { id: 'ext', onMessage: { addListener: (fn) => { listener = fn; } }, onInstalled: { addListener() {} } },
       storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: { addListener() {} } },
       action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+      commands: { onCommand: { addListener() {} } },
     },
     fetch: async (url, init) => { fetched.push({ url, init }); return { status: 200, text: async () => 'ok' }; },
     AbortSignal: { timeout: () => undefined }, Math,
   });
+  ctx.importScripts = (...files) => { for (const f of files) vm.runInContext(x.files[f], ctx); };
   vm.runInContext(x.files['background.js'], ctx);
   const server = /const TELEMETRY_URL = '([^']+)'/.exec(src('87-telemetry.js'))[1];
   const ask = (msg, sender = { id: 'ext' }) => new Promise((resolve) => { if (!listener(msg, sender, resolve)) resolve('refused'); });
@@ -323,12 +329,14 @@ function runWorker(store, version) {
   const ctx = vm.createContext({
     chrome: {
       runtime: { id: 'ext', getManifest: () => ({ version }), onMessage: { addListener() {} }, onInstalled: { addListener: (fn) => installed.push(fn) } },
+      commands: { onCommand: { addListener() {} } },
       storage: { local: { get: async (k) => (k in store ? { [k]: store[k] } : {}), set: async (o) => { Object.assign(store, o); } }, onChanged: { addListener: (fn) => changed.push(fn) } },
       action: { setBadgeText: async (o) => { badge.push(o.text); }, setBadgeBackgroundColor: async () => {} },
       tabs: { create: async (o) => { tabs.push(o.url); } },
     },
     fetch: async () => ({}), AbortSignal: { timeout: () => undefined }, Math, Date, String, Number,
   });
+  ctx.importScripts = (...files) => { for (const f of files) vm.runInContext(x.files[f], ctx); };
   vm.runInContext(x.files['background.js'], ctx);
   return { badge, changed, tabs, install: (details) => { for (const fn of installed) fn(details); } };
 }
@@ -387,4 +395,15 @@ test('data store frame: serves an Echo360 site only', () => {
     const r = runStore(other);
     assert.equal(r.posted.length + r.listeners.length, 0, other);
   }
+});
+
+test('Add lecture moment takes the lecture playing, or else the one used last; never the tab it adds to', async () => {
+  const answers = { 1: { lecture: { playing: false, usedAt: 300 } }, 2: { lecture: { playing: true, usedAt: 100 } }, 3: { lecture: { playing: false, usedAt: 500 } }, 4: null, 5: { state: 'courseList', lecture: null } };
+  const ctx = vm.createContext({
+    chrome: { tabs: { query: async () => [1, 2, 3, 4, 5].map((id) => ({ id })), sendMessage: async (id, msg) => (msg.name === 'status' ? answers[id] : null) } },
+    Promise, Object, Array,
+  });
+  vm.runInContext(x.files['moment.js'], ctx);
+  assert.deepEqual(plain(await vm.runInContext('lectureTabs(9)', ctx)).map((t) => t.id), [2, 3, 1]);
+  assert.deepEqual(plain(await vm.runInContext('lectureTabs(2)', ctx)).map((t) => t.id), [3, 1]);
 });
