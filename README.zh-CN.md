@@ -7,7 +7,7 @@
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/bbcmnjnijjfpnngkkgoahjljibfackbh?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-**看 Echo360 课程回放，风扇不再狂转。** Echo360 原播放器播放时一直占满一个 CPU 核心：风扇响、掉电快，边看边记笔记时电脑也变卡。轻量播放器换上一个新的播放器，让浏览器自己用硬件解码播放同样的视频流，开销接近直接播放一个视频文件。它还带来看回放学习时用得上的工具：两路画面并排、幻灯片章节、自动翻页的幻灯片 PDF、可搜索的转录。
+**更快、更流畅的 Echo360 课程回放播放器，还有帮你学习的工具：**两个画面并排、幻灯片章节、自动翻页的幻灯片 PDF、可搜索的转录。旧电脑也能流畅播放，边看边记笔记时电脑照样顺手。（原理：Echo360 原播放器播放时一直占满一个 CPU 核心；轻量播放器让浏览器自己用硬件解码播放同样的视频流，开销接近直接播放一个视频文件。）
 
 ![轻量播放器：屏幕和摄像机并排，切换布局，侧栏是幻灯片章节](docs/demo-player.gif)
 

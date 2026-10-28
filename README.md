@@ -7,7 +7,7 @@
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/bbcmnjnijjfpnngkkgoahjljibfackbh?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-**Watch Echo360 lecture recordings without the fan noise.** Echo360's own player keeps a whole CPU core busy for as long as the lecture plays: loud fans, a draining battery and a sluggish computer while you take notes. Lite Player replaces it with one that lets the browser play the same video streams itself, with hardware decoding, at about the cost of a plain video file. It also adds the tools you reach for when you study from a recording: both views side by side, slide chapters, a slide PDF that turns its own pages, and a searchable transcript.
+**A faster, smoother player for Echo360 lecture recordings, with tools that help you study:** both views side by side, slide chapters, a slide PDF that turns its own pages, and a searchable transcript. Lectures play smoothly even on older laptops, and your computer stays responsive while you take notes. (How: Echo360's own player keeps a whole CPU core busy while it plays; Lite Player lets the browser play the same video streams itself, with hardware decoding, at about the cost of a plain video file.)
 
 ![Lite Player: screen and camera side by side, switching layouts, slide chapters in the side panel](docs/demo-player.gif)
 

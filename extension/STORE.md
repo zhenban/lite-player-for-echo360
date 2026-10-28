@@ -22,9 +22,9 @@ the store shows a machine translation of the English one.
 ### Description: English
 
 ```text
-Watch Echo360 lecture recordings without the fan noise.
+A faster, smoother player for Echo360 lecture recordings, with tools that help you study.
 
-Lite Player replaces the video player on Echo360 lecture pages with one that uses the browser's own video playback, at a fraction of the CPU. It adds the tools you reach for when you study from a recording:
+Lite Player replaces the video player on Echo360 lecture pages. Lectures play smoothly, even on older laptops, and your computer stays responsive while you take notes. It also adds:
 
 • Screen and camera side by side, or picture in picture. Swap them with one key.
 • Slide chapters, found automatically, with previews on the timeline.
@@ -43,9 +43,9 @@ An independent project; Echo360 is a trademark of its owner.
 ### Description: Chinese (China)
 
 ```text
-看 Echo360 课程回放，风扇不再狂转。
+更快、更流畅的 Echo360 课程回放播放器，还有帮你学习的工具。
 
-Echo360 轻量播放器把 Echo360 课程回放页面上的播放器换成一个新的播放器，让浏览器自己用硬件解码播放同样的视频，CPU 占用只有原来的一小部分。它还带来看回放学习时用得上的工具：
+Echo360 轻量播放器替换 Echo360 课程回放页面上的播放器。回放播放流畅，旧电脑也不卡，边看边记笔记时电脑照样顺手。它还带来：
 
 • 屏幕和摄像机画面并排，或画中画；一个键交换两个画面。
 • 自动找到幻灯片切换，生成章节，进度条上可以预览。
@@ -62,9 +62,12 @@ Echo360 轻量播放器把 Echo360 课程回放页面上的播放器换成一个
 ```
 
 - **Icon:** `extension/icon-128.png` (the package has it too).
-- **Screenshots:** 1280 x 800 PNG, at least one, up to five. Made from the demo lecture (no
-  real lecture content): `node dev/demo/record-gifs.mjs stills` writes them to `docs/store/`.
-- **Small promotional tile** (440 x 280): optional.
+- **Screenshots** (1280 x 800, in this order): `docs/store/1-compare.png`, `2-slides.png`,
+  `3-pdf.png`, `4-ask-ai.png`, `5-revise.png`.
+- **Small promotional tile** (440 x 280): `docs/store/promo-small.png`.
+- **Marquee promotional tile** (1400 x 560): `docs/store/promo-marquee.png`.
+- All are made from the demo lecture (no real lecture content) by `dev/store-art/v3/`
+  (`capture.mjs` takes the player pictures, `render.mjs` the images; `dev/` is local only).
 
 ## Privacy practices
 - **Single purpose:** Replaces the video player on Echo360 lecture recording pages with a
