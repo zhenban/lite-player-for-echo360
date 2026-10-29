@@ -402,13 +402,20 @@ class MenuBar {
     return { text: x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n', from, to };
   }
 
+  // What a copy says: the first few (MOMENT_TIP_COPIES) add that the extension's shortcut
+  // puts the picture and the text into an AI chat at once.
+  copiedSay(msg) {
+    const key = platform.momentKey();
+    return key && platform.copied() < MOMENT_TIP_COPIES ? msg + ' ' + tr('momentTip', { key }) : msg;
+  }
+
   // Copies the picture the user is looking at (framePicture). Must run from a user action.
   copyFrame() {
     const x = this.x;
     const pic = this.framePicture();
     if (!pic) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
     navigator.clipboard.write([new ClipboardItem({ 'image/png': pic.blob })])
-      .then(() => x.toast(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h })))
+      .then(() => x.toast(this.copiedSay(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h }))))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 
@@ -418,7 +425,7 @@ class MenuBar {
     const said = this.captionText();
     if (!said) { x.toast(tr('copyNoCaptions')); return; }
     navigator.clipboard.writeText(said.text)
-      .then(() => x.toast(tr('copiedCaptions', { from: said.from, to: said.to })))
+      .then(() => x.toast(this.copiedSay(tr('copiedCaptions', { from: said.from, to: said.to }))))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 

@@ -1,0 +1,170 @@
+/* The options page: the player's light and dark tokens (as popup.css, from src/30-ui-assets.js),
+   following the system theme. System fonts only.
+   Wide windows: the title and a sticky list of the sections on the left, the page on the right.
+   Narrow windows: one column, the sections as a strip that sticks to the top.
+   Newer Chrome features are additions only (the manifest asks for Chrome 111): each sits in an
+   @supports block or is ignored where unknown, and the page works and reads the same without it.
+   No CSS nesting for the same reason (Chrome 112/120). */
+:root {
+  --s0: #F2F3F4; --s1: #E7E8EA; --s2: #F8F8F9; --line: rgba(0,0,0,.12); --fill: rgba(0,0,0,.06);
+  --text: #232529; --text-2: #555960; --accent: #076B75; --on-accent: #FFFFFF; --accent-soft: rgba(7,107,117,.12);
+  --accent-line: rgba(7,107,117,.35); --knob-on: #FFFFFF;
+  --warn-bg: rgba(181,120,0,.12); --warn-text: #6B4A00; --danger: #A8261B; --danger-line: rgba(168,38,27,.35); --danger-soft: rgba(168,38,27,.06);
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp6: 24px; --sp8: 32px; --sp10: 40px;
+  --r1: 4px; --r2: 8px; --r3: 12px; --t: 150ms; --t-vt: 180ms;
+  --target: 32px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --s0: #18191B; --s1: #222326; --s2: #2C2D31; --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10);
+    --text: #ECEDEF; --text-2: #A8ABB2; --accent: #3DBEC4; --on-accent: #0B2E30; --accent-soft: rgba(61,190,196,.16);
+    --accent-line: rgba(61,190,196,.40); --knob-on: #0B2E30;
+    --warn-bg: rgba(255,170,0,.14); --warn-text: #FFD38A; --danger: #FF8A80; --danger-line: rgba(255,138,128,.40); --danger-soft: rgba(255,138,128,.06);
+    color-scheme: dark;
+  }
+}
+@media (pointer: coarse) { :root { --target: 44px; } }
+@media (prefers-reduced-motion: reduce) { :root { --t: 0ms; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--s0); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+p { margin: 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- the frame ---- */
+main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "master" "toc" "sections";
+  max-width: 640px; margin: 0 auto; padding: var(--sp6) var(--sp4) var(--sp10); }
+header { grid-area: head; display: flex; align-items: center; gap: var(--sp3); margin-bottom: var(--sp4); }
+header h1 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 600; }
+.ver { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.master { grid-area: master; }
+.toc { grid-area: toc; }
+.sections { grid-area: sections; }
+section { scroll-margin-top: 64px; margin-top: var(--sp8); }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 var(--sp2); }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 var(--sp1); }
+.desc { color: var(--text-2); font-size: 13px; }
+
+@media (min-width: 720px) {
+  main { max-width: 920px; grid-template-columns: 184px minmax(0, 640px); column-gap: var(--sp10);
+    grid-template-areas: "head master" "toc sections"; padding-top: var(--sp8); }
+  header { flex-direction: column; align-items: flex-start; gap: var(--sp2); margin: 0; align-self: start; }
+  header img { width: 32px; height: 32px; }
+  .toc { position: sticky; top: var(--sp6); align-self: start; margin-top: var(--sp8); }
+  section { scroll-margin-top: var(--sp6); }
+}
+
+/* ---- the master switch: the one panel that carries colour, and only while Lite Player is on ---- */
+.master .opt { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r3); padding: var(--sp4);
+  transition: background-color var(--t) ease-out, border-color var(--t) ease-out; }
+.master .opt:has(#on:checked) { background: var(--accent-soft); border-color: var(--accent-line); }
+.master label { font-size: 16px; font-weight: 600; }
+.master .desc { margin-top: var(--sp1); }
+
+/* ---- the side navigation ---- */
+.toc .links { display: flex; flex-direction: column; gap: 2px; }
+.toc a { color: var(--text-2); text-decoration: none; padding: 6px var(--sp3); border-radius: var(--r1);
+  border-left: 2px solid transparent; min-height: var(--target); display: flex; align-items: center; }
+.toc a:hover { color: var(--text); background: var(--fill); }
+/* The current section: weight and the bar as well as colour. Two rules, so a browser without
+   :target-current still reads the second one. */
+.toc a[aria-current] { color: var(--text); font-weight: 600; background: var(--accent-soft); border-left-color: var(--accent); }
+.toc a:target-current { color: var(--text); font-weight: 600; background: var(--accent-soft); border-left-color: var(--accent); }
+.toc .gap { height: 1px; background: var(--line); margin: var(--sp2) var(--sp3); }
+@supports (scroll-target-group: auto) { .toc .links { scroll-target-group: auto; } }
+
+@media (max-width: 719px) {
+  /* A strip of the sections that sticks to the top; it scrolls sideways on its own, never the page. */
+  .toc { position: sticky; top: 0; z-index: 1; margin: var(--sp6) calc(-1 * var(--sp4)) 0; }
+  .toc .links { flex-direction: row; gap: var(--sp1); overflow-x: auto; scrollbar-width: none; background: var(--s0);
+    padding: var(--sp2) var(--sp4); border-bottom: 1px solid var(--line); }
+  .toc a { flex: none; border-left: 0; border-radius: 999px; padding: 4px var(--sp3); white-space: nowrap; }
+  .toc .gap { width: 1px; height: auto; margin: var(--sp1) var(--sp1); flex: none; }
+  section { margin-top: var(--sp6); }
+  /* The strip's edge only while it covers the page: a scroll-state query where there is one. */
+  @supports (container-type: scroll-state) {
+    .toc { container-type: scroll-state; }
+    .toc .links { border-bottom-color: transparent; transition: border-color var(--t) ease-out; }
+    @container scroll-state(stuck: top) { .toc .links { border-bottom-color: var(--line); } }
+  }
+}
+
+/* ---- settings: a panel of rows per section ---- */
+.group { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r2); }
+.group.pad { padding: var(--sp4); margin-top: var(--sp4); }
+.opt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; column-gap: var(--sp4); row-gap: var(--sp2);
+  padding: var(--sp3) var(--sp4); min-height: 52px; }
+.group > .opt + .opt { border-top: 1px solid var(--line); }
+.opt .text { flex: 1 1 0; min-width: 0; }
+.opt:has(> select) .text { flex-basis: 160px; }
+.opt > select { margin-left: auto; max-width: 100%; }
+.opt .desc { margin-top: 2px; }
+
+select { background: var(--s0); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp2); min-height: var(--target); cursor: pointer; }
+select:hover { border-color: var(--text-2); }
+
+/* A switch: the track and the knob, with the state also in the knob's position. The ::before is
+   an invisible, larger hit area for fingers. */
+input[type=checkbox][role=switch] { appearance: none; width: 36px; height: 20px; margin: 0; flex: none; border-radius: 10px; background: var(--fill); border: 1px solid var(--line);
+  position: relative; cursor: pointer; transition: background-color var(--t) ease-out, border-color var(--t) ease-out; }
+input[type=checkbox][role=switch]::before { content: ""; position: absolute; inset: -12px -4px; }
+input[type=checkbox][role=switch]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-2);
+  transition: transform var(--t) ease-out, background-color var(--t) ease-out; }
+input[type=checkbox][role=switch]:checked { background: var(--accent); border-color: var(--accent); }
+input[type=checkbox][role=switch]:checked::after { transform: translateX(16px); background: var(--knob-on); }
+#on { width: 44px; height: 24px; border-radius: 12px; }
+#on::after { width: 18px; height: 18px; }
+#on:checked::after { transform: translateX(20px); }
+
+/* ---- compatibility: read-only, so a plain list instead of a panel ---- */
+.compat { list-style: none; margin: 0; padding: 0; }
+.compat li { display: flex; gap: var(--sp3); padding: var(--sp2) 0; }
+.compat li + li { border-top: 1px solid var(--line); }
+.compat .mark { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.compat .ok .mark { background: var(--accent-soft); color: var(--accent); }
+.compat .no .mark { background: var(--warn-bg); color: var(--warn-text); }
+.compat .unknown .mark { background: var(--fill); color: var(--text-2); }
+.compat .what { display: flex; flex-direction: column; }
+.compat .what .desc { margin-top: 2px; }
+
+/* ---- your data ---- */
+#data > .desc { margin-bottom: var(--sp2); }
+.status { font-variant-numeric: tabular-nums; font-weight: 500; }
+/* The result of the last action: hidden while empty, faded in when it gets its text. */
+.note { margin-top: var(--sp2); padding: var(--sp2) var(--sp3); border-radius: var(--r1); background: var(--fill); font-variant-numeric: tabular-nums;
+  transition: opacity var(--t) ease-out, display var(--t) allow-discrete; }
+.note:empty { display: none; }
+@starting-style { .note { opacity: 0; } }
+.check { display: flex; align-items: center; gap: var(--sp2); margin: var(--sp3) 0 0; min-height: var(--target); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.buttons { display: flex; flex-wrap: wrap; gap: var(--sp2); margin-top: var(--sp3); }
+#data .group .desc { max-width: 60ch; }
+
+button.secondary { background: var(--s0); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp3); cursor: pointer; min-height: var(--target); }
+button.secondary:hover { background: var(--s1); }
+button.secondary:disabled { opacity: .55; cursor: default; }
+
+/* Deleting everything: set apart below the backup, in the danger colour, and asked here first. */
+.erase { margin-top: var(--sp6); padding-top: var(--sp6); border-top: 1px solid var(--line); }
+.erase .clear { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp3); }
+.erase .clear .desc { flex: 1 1 240px; }
+/* While the question is open it replaces the whole row: it says the same, more exactly. */
+.erase .clear:has(> button[hidden]) { display: none; }
+button.danger { color: var(--danger); border-color: var(--danger-line); }
+button.danger:hover { background: var(--danger-soft); }
+.erase .clear button.danger, .ask { view-transition-name: erase; }
+.ask { border: 1px solid var(--danger-line); background: var(--danger-soft); border-radius: var(--r2); padding: var(--sp3) var(--sp4); }
+.ask p { font-weight: 500; }
+.ask .buttons .danger { background: var(--danger); color: var(--s2); border-color: var(--danger); font-weight: 600; }
+.ask .buttons .danger:hover { filter: brightness(1.08); }
+
+/* View transitions (options.js swap()): short, and the morph of the delete button into its
+   question keeps its proportions. */
+::view-transition-group(*) { animation-duration: var(--t-vt); animation-timing-function: ease-out; }
+::view-transition-old(erase), ::view-transition-new(erase) { height: 100%; }
+@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none; } }

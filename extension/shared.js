@@ -103,5 +103,20 @@ const LP = (() => {
     return MOMENT_WORDS[lang];
   }
 
-  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs, coreKv, momentWords };
+  // A shortcut as Chrome gives it ("Alt+Shift+L", or "⌥⇧L" on a Mac) as the keys to draw
+  // one by one.
+  function keyCaps(key) {
+    return String(key || '').includes('+') ? key.split('+') : String(key || '').match(/[⌘⌥⇧⌃]|[^⌘⌥⇧⌃]+/g) || [];
+  }
+  // Those keys in a node: <kbd> for each, the whole shortcut as the node's accessible text.
+  function keysNode(key, tag) {
+    const n = document.createElement(tag || 'span');
+    n.className = 'keys';
+    n.setAttribute('role', 'img');
+    n.setAttribute('aria-label', key);
+    for (const k of keyCaps(key)) n.append(Object.assign(document.createElement('kbd'), { textContent: k }));
+    return n;
+  }
+
+  return { PREFS, KV, DEVICE_PREFS, parse, synced, merged, readPrefs, writePrefs, coreKv, momentWords, keyCaps, keysNode };
 })();

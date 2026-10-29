@@ -37,7 +37,7 @@ const WORDS = {
       other: 'this page was not recognised. Report a problem if it keeps happening.',
     },
     moment: 'Add lecture moment', momentHint: 'Adds the lecture\'s picture and what was said just before to the chat box on this page.',
-    momentKey: 'Shortcut: {key}', momentNoKey: 'Set a shortcut',
+    momentKey: 'Quicker: press {key} in the chat.', momentNoKey: 'Set a shortcut',
     copied: 'Diagnostics copied. Paste them into the form that just opened.',
     copyFailed: 'Could not copy the diagnostics. The form opened anyway.',
   },
@@ -69,7 +69,7 @@ const WORDS = {
       other: '没能识别这个页面。如果反复出现，请报告问题。',
     },
     moment: '添加课程片段', momentHint: '把课程画面和刚才讲的内容添加到这个页面的聊天框。',
-    momentKey: '快捷键：{key}', momentNoKey: '设置快捷键',
+    momentKey: '更快：在聊天页面按 {key}。', momentNoKey: '设置快捷键',
     copied: '诊断信息已复制。请粘贴到刚打开的表单里。',
     copyFailed: '没能复制诊断信息，表单已经打开。',
   },
@@ -173,11 +173,16 @@ async function main() {
   // "Add lecture moment" (moment.js): on a page other than a lecture, while one is open.
   if (!tabStatus && tab && (await lectureTabs(tab.id)).length) {
     $('moment').hidden = false;
-    let key = '';
-    try { key = ((await chrome.commands.getAll()).find((c) => c.name === 'add-lecture-moment') || {}).shortcut || ''; } catch (e) { /* none */ }
+    const key = await momentKey();
     // A lecture is open elsewhere: "open a lecture" would read wrong here.
     if (!off) $('status').parentElement.hidden = true;
-    $('momentKey').textContent = key ? fill(w.momentKey, { key }) : '';
+    // The shortcut drawn as keys: on the button, and in the line saying it is quicker.
+    if (key) {
+      const [before, after] = w.momentKey.split('{key}');
+      $('momentKey').replaceChildren(before, LP.keysNode(key), after || '');
+      $('momentAdd').append(LP.keysNode(key));
+      $('momentAdd').setAttribute('aria-keyshortcuts', LP.keyCaps(key).join('+'));
+    }
     $('momentKey').hidden = !key;
     $('momentSetKey').hidden = !!key;
     $('momentSetKey').addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));

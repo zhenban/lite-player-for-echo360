@@ -44,6 +44,8 @@ const extBridge = {
   kvRead: false,     // the settings were read, or no longer waited for (platform.whenKv)
   off: false,        // turned off with the toolbar button
   news: '',          // a version whose changes are told once (background.js), or ''
+  momentKey: '',     // the shortcut for "Add lecture moment", or '' (none set)
+  copies: 0,         // pictures and texts copied so far (the first ones tip that shortcut)
   answers: null,     // the toolbar's questions: name -> () => value (platform.toolbar)
   replies: new Map(),
   seq: 0,
@@ -95,6 +97,8 @@ const extBridge = {
       for (const [k, v] of Object.entries(shared)) if (typeof v === 'string' && EXT_SHARED(k) && !this.shared.has(k)) this.shared.set(k, v);
       this.off = msg.off === true;
       this.news = typeof msg.news === 'string' && /^\d+\.\d+$/.test(msg.news) ? msg.news : '';
+      this.momentKey = typeof msg.momentKey === 'string' && msg.momentKey.length <= 40 ? msg.momentKey : '';
+      this.copies = Math.max(this.copies, Number.isInteger(msg.copies) ? msg.copies : 0);
       this.readyResolve();
     } else if (msg.type === 'prefs' && typeof msg.name === 'string' && typeof msg.text === 'string' && EXT_SHARED(msg.name)) {
       // Changed in the toolbar or the options page (read again where it is used: whether
@@ -265,6 +269,9 @@ Object.assign(platform, {
   news() { return extBridge.news; },
   newsSeen() { extBridge.news = ''; extBridge.send({ type: 'newsSeen' }); },
   openNews() { extBridge.send({ type: 'news' }); },
+  momentKey() { return extBridge.momentKey; },
+  lectureShown() { extBridge.send({ type: 'lectureShown' }); },
+  copied() { extBridge.send({ type: 'copied' }); return extBridge.copies++; },
   privateKv: {
     get(name) { const v = extBridge.kv.get(name); return typeof v === 'string' ? v : null; },
     set(name, text) { extBridge.kv.set(name, text); extBridge.send({ type: 'set', name, text }); },

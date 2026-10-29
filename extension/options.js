@@ -33,24 +33,32 @@
     return n;
   };
   let uid = 0;
+  // One setting: its name and what it does on the left, its control on the right (below them
+  // when the window is too narrow for both).
+  const opt = (id, label, desc, control) => h('div', { class: 'opt' },
+    h('div', { class: 'text' }, h('label', { for: id, text: label }), desc ? h('p', { class: 'desc', id: id + 'd', text: desc }) : null), control);
   const toggle = (label, desc, on, set) => {
     const id = 'o' + (++uid);
     const input = h('input', { type: 'checkbox', role: 'switch', id, 'aria-describedby': desc ? id + 'd' : null });
     input.checked = on;
     input.addEventListener('change', () => set(input.checked));
-    return h('div', { class: 'opt' }, h('div', { class: 'row' }, h('label', { for: id, text: label }), input),
-      desc ? h('p', { class: 'desc', id: id + 'd', text: desc }) : null);
+    return opt(id, label, desc, input);
   };
   const choice = (label, options, value, set, desc) => {
     const id = 'o' + (++uid);
-    const sel = h('select', { id });
+    const sel = h('select', { id, 'aria-describedby': desc ? id + 'd' : null });
     for (const [v, text] of options) sel.append(h('option', { value: String(v), text }));
     sel.value = String(value);
     sel.addEventListener('change', () => set(options.find(([v]) => String(v) === sel.value)[0]));
-    return h('div', { class: 'opt' }, h('div', { class: 'row' }, h('label', { for: id, text: label }), sel),
-      desc ? h('p', { class: 'desc', text: desc }) : null);
+    return opt(id, label, desc, sel);
   };
-  const section = (title, ...kids) => h('section', { class: 'card' }, h('h2', { text: title }), ...kids);
+  // A section of the page, with an id for the side navigation. Settings sit in one panel of
+  // rows; the read-only and data sections pass their own content.
+  const section = (id, title, ...kids) => h('section', { id, 'aria-labelledby': id + '-h' }, h('h2', { id: id + '-h', text: title }), ...kids);
+  const group = (id, title, ...opts) => section(id, title, h('div', { class: 'group' }, ...opts));
+  // A change on the page shown as a short morph or cross-fade (View Transitions), at once
+  // where the browser has none or the user asked for less motion.
+  const swap = (fn) => (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches ? document.startViewTransition(fn) : fn());
   const seconds = (s) => (s < 60 ? tr('seconds', { n: s }) : s === 60 ? tr('minute') : tr('minutes', { n: s / 60 }));
 
   // ---- settings ----
@@ -59,25 +67,25 @@
     const audio = (k, on) => save({ audio: Object.assign({}, prefs().audio, { [k]: on, levelChosen: prefs().audio.levelChosen || k === 'level' }) });
     const silence = (k, v) => save({ silence: Object.assign({}, prefs().silence, { [k]: v }) });
     return [
-      section(tr('captionsPage'),
+      group('captions', tr('captionsPage'),
         toggle(tr('optCaptionsDefault'), '', p.captions, (on) => save({ captions: on })),
         toggle(tr('hideCaptionsPaused'), '', p.capHidePaused, (on) => save({ capHidePaused: on })),
         choice(tr('captionSize'), Object.keys(C.CAPTION_SIZES).map((s) => [s, tr('size' + s.toUpperCase())]), p.capSize, (v) => save({ capSize: v })),
         choice(tr('copyCaptionsSpan'), C.COPY_SPANS.map((s) => [s, C.spanLabel(s)]), p.copySpan, (v) => save({ copySpan: v }), tr('copyCaptionsSpanDesc'))),
-      section(tr('audio'),
+      group('audio', tr('audio'),
         toggle(tr('audioLevel'), tr('audioLevelDesc'), p.audio.level, (on) => audio('level', on)),
         toggle(tr('audioVoice'), tr('audioVoiceDesc'), p.audio.voice, (on) => audio('voice', on)),
         toggle(tr('audioMono'), tr('audioMonoDesc'), p.audio.mono, (on) => audio('mono', on))),
-      section(tr('silencePage'),
+      group('silence', tr('silencePage'),
         toggle(tr('silenceAuto'), tr('silenceAutoDesc'), p.silence.auto, (on) => silence('auto', on)),
         choice(tr('silenceMin'), C.SILENCE_MIN_CHOICES.map((s) => [s, seconds(s)]), p.silence.min, (v) => silence('min', v)),
         choice(tr('silenceSensitivity'), Object.keys(C.SILENCE_SENSITIVITY).map((k) => [k, tr(k)]), p.silence.sens, (v) => silence('sens', v))),
-      section(tr('layout'),
+      group('layout', tr('layout'),
         toggle(tr('emptyScreenAuto'), tr('emptyScreenAutoDesc'), p.emptyCamera, (on) => save({ emptyCamera: on }))),
-      section(tr('optAppearance'),
+      group('appearance', tr('optAppearance'),
         choice(tr('theme'), C.THEMES.map((t) => [t, tr(C.themeKey(t))]), p.theme, (v) => save({ theme: v }), tr('themeNote')),
         choice(tr('language'), C.UI_LANGS.map((l) => [l, C.langLabel(l)]), p.lang, (v) => { save({ lang: v }); location.reload(); })),
-      section(tr('telemetryMenu'),
+      group('usage', tr('telemetryMenu'),
         toggle(tr('telemetrySend'), tr('telemetryDesc'), p.telemetry, (on) => save({ telemetry: on }))),
     ];
   }
@@ -113,15 +121,16 @@
     tabStatuses().then((all) => {
       if (!all.length) return;
       const twice = all.some((s) => s.duplicate);
-      once.replaceWith(item(tr('compatOnce'), !twice, twice ? tr('compatOnceTwice') : ''));
+      swap(() => once.replaceWith(item(tr('compatOnce'), !twice, twice ? tr('compatOnceTwice') : '')));
     });
-    return section(tr('compatTitle'), list);
+    return section('compat', tr('compatTitle'), list);
   }
 
   // ---- your data ----
-  function data() {
+  // done: the result of the last action, kept across a re-render (the restore re-renders).
+  function data(done) {
     const used = h('p', { class: 'status', 'aria-live': 'polite', text: tr('dataMeasuring') });
-    const note = h('p', { class: 'note', role: 'status' });
+    const note = h('p', { class: 'note', role: 'status', text: done || '' });
     const say = (text) => { note.textContent = text; };
     async function measure() {
       const keys = (await C.idbCache.keys()).map(String);
@@ -156,19 +165,19 @@
       if (f.size > C.BACKUP_MAX_BYTES) throw new Error(tr('backupTooBig', { max: Math.round(C.BACKUP_MAX_BYTES / 1048576) }));
       const text = await f.text();
       const n = await locked(() => C.restoreBackup(JSON.parse(text)));
-      say(tr('dataRestored', { n }));
-      render();
+      render(tr('dataRestored', { n }));
     }));
 
     // Delete everything the user has (settings stay): asked here first, not in a dialog.
+    // The button and the question share a view-transition name, so the one morphs into the other.
     const clear = h('button', { class: 'secondary danger', text: tr('dataClear') });
     const ask = h('div', { class: 'ask', hidden: true });
-    clear.addEventListener('click', () => {
+    clear.addEventListener('click', () => swap(() => {
       ask.hidden = false;
       clear.hidden = true;
       ask.querySelector('button.danger').focus();
-    });
-    const no = () => { ask.hidden = true; clear.hidden = false; clear.focus(); };
+    }));
+    const no = () => swap(() => { ask.hidden = true; clear.hidden = false; clear.focus(); });
     const yes = h('button', { class: 'secondary danger', text: tr('dataClearYes') });
     yes.addEventListener('click', () => busy(yes, async () => {
       const keys = (await C.idbCache.keys()).map(String);
@@ -181,28 +190,71 @@
     }));
     ask.append(h('p', { text: tr('dataClearAsk') }), h('div', { class: 'buttons' }, yes, h('button', { class: 'secondary', text: tr('cancel'), onclick: no })));
 
-    return section(tr('dataTitle'),
-      h('p', { class: 'desc', text: tr('dataInfo') }), used,
-      h('h3', { text: tr('dataBackupTitle') }),
-      h('p', { class: 'desc', text: tr('backupInfo') }),
-      h('label', { class: 'check' }, pdfs, h('span', { text: tr('backupPdfs') })),
-      h('div', { class: 'buttons' }, backup, restore, file),
-      h('div', { class: 'buttons' }, clear), ask, note);
+    // The results sit under the counts they change; deleting is set apart below the backup.
+    return section('data', tr('dataTitle'),
+      h('p', { class: 'desc', text: tr('dataInfo') }), used, note,
+      h('div', { class: 'group pad' },
+        h('h3', { text: tr('dataBackupTitle') }),
+        h('p', { class: 'desc', text: tr('backupInfo') }),
+        h('label', { class: 'check' }, pdfs, h('span', { text: tr('backupPdfs') })),
+        h('div', { class: 'buttons' }, backup, restore, file)),
+      h('div', { class: 'erase' },
+        h('div', { class: 'clear' }, h('p', { class: 'desc', text: tr('dataClearInfo') }), clear), ask));
   }
 
-  function render() {
+  // ---- the side navigation ----
+  // The current section is marked by the browser where it can (scroll-target-group,
+  // :target-current in options.css); elsewhere by watching which section is at the top.
+  let stop = null;
+  function track(nav, sections) {
+    if (stop) stop.abort();
+    stop = new AbortController();
+    const strip = nav.firstChild;
+    // On a narrow window the links are a strip that scrolls sideways: once the page stops
+    // scrolling, the current link is brought into it (scrollend, Chrome 114; else it stays put).
+    const reveal = () => {
+      let a = nav.querySelector('a[aria-current]');
+      try { a = a || nav.querySelector('a:target-current'); } catch (e) { /* no :target-current */ }
+      if (!a || strip.scrollWidth <= strip.clientWidth) return;
+      const r = a.getBoundingClientRect();
+      const left = strip.scrollLeft + r.left - strip.getBoundingClientRect().left - (strip.clientWidth - r.width) / 2;
+      strip.scrollTo({ left, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    };
+    addEventListener('scrollend', reveal, { signal: stop.signal });
+    if (CSS.supports('scroll-target-group', 'auto') || typeof IntersectionObserver !== 'function') return;
+    const shown = new Set();
+    const watcher = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) shown.add(e.target); else shown.delete(e.target);
+      const top = sections.find((s) => shown.has(s));
+      if (!top) return;
+      for (const a of nav.querySelectorAll('a')) {
+        if (a.hash === '#' + top.id) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current');
+      }
+    }, { rootMargin: '-10% 0px -60% 0px' });
+    for (const s of sections) watcher.observe(s);
+    stop.signal.addEventListener('abort', () => watcher.disconnect());
+  }
+
+  function render(done) {
     document.documentElement.lang = C.uiLocale();
     document.title = tr('optTitle');
     const app = document.getElementById('app');
-    const on = h('input', { type: 'checkbox', role: 'switch', id: 'on' });
+    const on = h('input', { type: 'checkbox', role: 'switch', id: 'on', 'aria-describedby': 'ond' });
     chrome.storage.local.get('off').then((o) => { on.checked = o.off !== true; }, () => { on.checked = true; });
     on.addEventListener('change', () => chrome.storage.local.set({ off: !on.checked }));
+    const sections = [...settings(), compatibility(), data(done)];
+    // The settings, then what this browser can do and holds, as two groups of links.
+    const link = (s) => h('a', { href: '#' + s.id, text: s.querySelector('h2').textContent });
+    const nav = h('nav', { class: 'toc', 'aria-label': tr('optSections') },
+      h('div', { class: 'links' }, ...sections.slice(0, -2).map(link), h('span', { class: 'gap', 'aria-hidden': 'true' }), ...sections.slice(-2).map(link)));
     app.replaceChildren(
-      h('header', null, h('img', { src: 'icon-32.png', alt: '', width: 24, height: 24 }), h('h1', { text: tr('optTitle') }),
-        h('span', { class: 'ver', text: chrome.runtime.getManifest().version })),
-      h('section', { class: 'card' }, h('div', { class: 'row switch' }, h('label', { for: 'on', text: tr('optOn') }), on),
-        h('p', { class: 'desc', text: tr('optApplyNote') })),
-      ...settings(), compatibility(), data());
+      h('header', null, h('img', { src: 'icon-32.png', alt: '', width: 24, height: 24 }),
+        h('div', null, h('h1', { text: tr('optTitle') }), h('span', { class: 'ver', text: chrome.runtime.getManifest().version }))),
+      h('div', { class: 'master' }, h('div', { class: 'opt' },
+        h('div', { class: 'text' }, h('label', { for: 'on', text: tr('optOn') }), h('p', { class: 'desc', id: 'ond', text: tr('optApplyNote') })), on)),
+      nav,
+      h('div', { class: 'sections' }, ...sections));
+    track(nav, sections);
     app.removeAttribute('aria-busy');
   }
   render();

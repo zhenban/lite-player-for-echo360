@@ -922,6 +922,7 @@ class LitePlayer {
     d.listen(this.host, 'keydown', used, true);
     d.listen(v, 'playing', used);
     d.listen(v, 'pause', used);
+    platform.lectureShown();
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     // Updated to a new version (the extension): its changes, said once, in the first lecture

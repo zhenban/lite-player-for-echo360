@@ -7,7 +7,8 @@ New in the extension:
 - **A settings page** with every setting, a check of what your browser can do (and whether the userscript is installed too), the space your data takes, and backup, restore and delete. In the player, backups now point there.
 - **Your settings follow your Chrome account** to your other computers. The layout, volume and quality stay per computer.
 - **Tags, slide PDFs and what you watched are the same on every Echo360 site**, also inside a learning system's page. They move over by themselves on the first visit after the update.
-- A welcome page after installing, and a one-time note in the player about what is new.
+- **A welcome page with a short tour** after installing: open a lecture, copy with P or A, then add a lecture moment to an AI chat. Each step ticks itself when you have done it, and the tour can be skipped. After an update, a one-time note in the player says what is new.
+- The shortcut is easy to find: on the toolbar button, in the player's list of shortcuts (?), and in a tip the first few times you copy a picture or text.
 
 For both the extension and the userscript:
 - Slide PDFs, watched records and saved positions unused for a year are deleted, so they don't fill the browser's storage. Tags stay.

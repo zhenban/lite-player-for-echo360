@@ -38,7 +38,7 @@ export default [
   {
     // The extension's own parts (the player itself is src/).
     files: ['extension/**/*.js'],
-    languageOptions: { ecmaVersion: 2023, sourceType: 'script', globals: { ...globals.browser, ...globals.serviceworker, ...globals.webextensions, LP: 'readonly', addMoment: 'readonly', lectureTabs: 'readonly' } },
+    languageOptions: { ecmaVersion: 2023, sourceType: 'script', globals: { ...globals.browser, ...globals.serviceworker, ...globals.webextensions, LP: 'readonly', addMoment: 'readonly', lectureTabs: 'readonly', momentKey: 'readonly' } },
     rules,
   },
   {

@@ -1,0 +1,158 @@
+/* The welcome page (welcome.js): the player's light and dark tokens (src/30-ui-assets.js, as
+   popup.css), following the system theme. System fonts only. The pictures are SVG drawn by
+   welcome.js and coloured here; the video area stays dark in both themes, as in the player. */
+:root {
+  --s0: #F2F3F4; --s1: #E7E8EA; --s2: #F8F8F9; --line: rgba(0,0,0,.12); --fill: rgba(0,0,0,.06);
+  --text: #232529; --text-2: #555960; --accent: #076B75; --on-accent: #FFFFFF; --accent-soft: rgba(7,107,117,.12);
+  --video: #1B1C1F; --on-video: #3DBEC4; --slide: #F4F5F6; --slide-ink: #2B2E33; --slide-ink-2: #B9BCC2;
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp6: 24px; --sp8: 32px; --sp12: 48px; --r1: 4px; --r2: 8px; --r3: 12px;
+  --t: 180ms; --ease: cubic-bezier(.2, .7, .2, 1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --s0: #18191B; --s1: #222326; --s2: #2C2D31; --line: rgba(255,255,255,.10); --fill: rgba(255,255,255,.10);
+    --text: #ECEDEF; --text-2: #A8ABB2; --accent: #3DBEC4; --on-accent: #0B2E30; --accent-soft: rgba(61,190,196,.16);
+    --video: #0F1011;
+    color-scheme: dark;
+  }
+}
+@media (prefers-reduced-motion: reduce) { :root { --t: 0ms; } }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--s0); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: var(--sp8) var(--sp4) var(--sp12); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2 { text-wrap: balance; }
+p { text-wrap: pretty; }
+
+header { display: flex; align-items: center; gap: var(--sp3); margin-bottom: var(--sp4); }
+header h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.01em; flex: 1; }
+.lead { font-size: 17px; color: var(--text-2); margin: 0 0 var(--sp6); }
+
+button.link { background: none; border: 0; padding: var(--sp2) 0; min-height: 32px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+button.link.skip { color: var(--text-2); font-size: 14px; }
+button.secondary { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r1); padding: var(--sp1) var(--sp3); cursor: pointer; min-height: 36px; }
+button.secondary:hover { background: var(--s1); }
+@media (pointer: coarse) { button.link, button.secondary { min-height: 44px; } }
+
+/* Keys, drawn as keys (also shared.js keysNode). */
+kbd { display: inline-block; font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif; min-width: 26px; padding: 5px 7px; text-align: center;
+  border-radius: var(--r1); background: var(--s2); border: 1px solid var(--line); border-bottom-width: 3px; color: var(--text); font-variant-numeric: tabular-nums; }
+.keys { display: inline-flex; gap: var(--sp1); }
+.shortcut { margin: var(--sp3) 0; }
+.shortcut kbd { font-size: 18px; min-width: 40px; padding: 9px 12px; }
+.shortcut.none { color: var(--text-2); }
+
+/* The pictures. */
+figure { margin: 0; }
+figure svg { display: block; width: 100%; height: auto; }
+.hero { margin: 0 0 var(--sp8); }
+svg .win { fill: var(--s2); stroke: var(--line); }
+svg .dot { fill: var(--line); }
+svg .addr { fill: var(--fill); }
+svg .video { fill: var(--video); }
+svg .slide { fill: var(--slide); }
+svg .ink { fill: var(--slide-ink); }
+svg .ink2 { fill: var(--slide-ink-2); }
+svg .bar { fill: var(--slide-ink-2); }
+svg .bar.a { fill: #076B75; }
+svg .track { fill: rgba(255,255,255,.22); }
+svg .fill { fill: var(--on-video); }
+svg .ticks rect { fill: rgba(255,255,255,.75); }
+svg .panel { fill: var(--s0); }
+svg .tab { fill: var(--fill); }
+svg .tab.on { fill: var(--accent-soft); }
+svg .lines rect { fill: var(--text-2); opacity: .3; }
+svg .lines.strong rect { opacity: .6; }
+svg .now { fill: var(--accent-soft); }
+svg .arrow { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+svg .bubble { fill: var(--accent-soft); }
+svg .bubble.other { fill: var(--fill); }
+svg .box { fill: var(--s0); stroke: var(--accent); stroke-width: 1.5; }
+svg .typed rect { fill: var(--text-2); opacity: .55; }
+svg .caret { fill: var(--accent); }
+svg .edge { fill: none; stroke: var(--line); }
+
+/* The lecture moment, played over and over while on screen: the slide lifts off the lecture,
+   lands in the message box, and the text follows. Still (the end) with reduced motion. */
+.moment { margin: var(--sp4) 0 0; padding: var(--sp4); border-radius: var(--r3); background: var(--s1); }
+svg .fly { transform-box: view-box; transform-origin: 354px 124px; animation: fly 6s var(--ease) infinite; }
+svg .typed { animation: typed 6s linear infinite; }
+svg .caret { animation: caret 1s steps(1) infinite; }
+@keyframes fly {
+  0%, 8% { transform: translate(-328px, -100px) scale(3.125); opacity: 0; }
+  14% { transform: translate(-328px, -100px) scale(3.125); opacity: .9; }
+  40%, 90% { transform: none; opacity: 1; }
+  100% { transform: none; opacity: 0; }
+}
+@keyframes typed { 0%, 44% { opacity: 0; } 54%, 90% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { svg .fly, svg .typed, svg .caret { animation: none; } }
+
+/* The steps: a rail of numbers; the current one marked, the done ones ticked. */
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: none; }
+.step { display: grid; grid-template-columns: 40px 1fr; gap: var(--sp4); position: relative; padding-bottom: var(--sp8); }
+.step:not(:last-child)::before { content: ""; position: absolute; left: 19px; top: 44px; bottom: var(--sp2); width: 2px; border-radius: 1px; background: var(--line); }
+.step.done:not(:last-child)::before { background: var(--accent); }
+.num { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: var(--s2); border: 2px solid var(--line); color: var(--text-2); transition: background var(--t) var(--ease), border-color var(--t) var(--ease), color var(--t) var(--ease); }
+.step.current .num { border-color: var(--accent); color: var(--accent); }
+.step.done .num { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.step.done .num .n { display: none; }
+.step.done .num::after { content: ""; width: 14px; height: 8px; border: solid currentColor; border-width: 0 0 3px 3px; transform: translate(0, -2px) rotate(-45deg); }
+.step h2 { margin: 6px 0 var(--sp2); font-size: 19px; font-weight: 650; }
+.step p { margin: 0 0 var(--sp2); }
+.step .desc { color: var(--text-2); font-size: 14px; }
+.state { display: inline-flex; align-items: center; gap: var(--sp2); margin: var(--sp3) 0 0 !important; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); opacity: .5; }
+.step.current .state::before { background: var(--accent); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+.step.done .state { color: var(--accent); }
+.step.done .state::before { background: var(--accent); opacity: 1; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .step.current .state::before { animation: none; } }
+/* The tick, where Chrome animates the change (welcome.js: view transitions). */
+::view-transition-group(*) { animation-duration: 240ms; animation-timing-function: var(--ease); }
+.alldone { margin: 0 0 var(--sp8) 56px; font-weight: 600; color: var(--accent); }
+
+/* Key lists: the key, then what it does. */
+.keylist { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp2) var(--sp4); align-items: center; margin: var(--sp3) 0; }
+.keylist dt { display: flex; gap: var(--sp1); }
+.keylist dd { margin: 0; }
+.keylist.big kbd { font-size: 16px; min-width: 36px; padding: 8px 10px; }
+.more { border-top: 1px solid var(--line); padding-top: var(--sp6); margin-bottom: var(--sp8); }
+.more h2 { font-size: 17px; margin: 0 0 var(--sp2); }
+.more .keylist { grid-template-columns: max-content 1fr max-content 1fr; }
+.more .desc { color: var(--text-2); font-size: 14px; margin: var(--sp2) 0 0; }
+@media (max-width: 560px) { .more .keylist { grid-template-columns: max-content 1fr; } }
+
+/* What's new (welcome.html#new), the pin tip, usage data. */
+.card { background: var(--s2); border: 1px solid var(--line); border-radius: var(--r2); padding: var(--sp3) var(--sp4); margin: 0 0 var(--sp4); }
+.card h2 { font-size: 16px; font-weight: 650; margin: var(--sp1) 0 var(--sp2); }
+.card .desc { margin: 0 0 var(--sp2); color: var(--text-2); font-size: 14px; }
+.news { border-color: var(--accent); margin-bottom: var(--sp8); }
+ul.plain { margin: 0; padding-left: var(--sp4); }
+ul.plain li { margin: var(--sp1) 0; }
+.extras { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--sp4); }
+@media (max-width: 560px) { .extras { grid-template-columns: 1fr; } }
+.row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp3); min-height: 40px; }
+.row label { font-weight: 600; }
+.buttons { display: flex; gap: var(--sp2); }
+
+/* A switch: the track and the knob, with the state also in the knob's position. */
+input[type=checkbox][role=switch] { appearance: none; width: 36px; height: 20px; margin: 0; flex: none; border-radius: 10px; background: var(--fill); border: 1px solid var(--line);
+  position: relative; cursor: pointer; transition: background var(--t) ease-out; }
+input[type=checkbox][role=switch]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-2);
+  transition: transform var(--t) ease-out, background var(--t) ease-out; }
+input[type=checkbox][role=switch]:checked { background: var(--accent); border-color: var(--accent); }
+input[type=checkbox][role=switch]:checked::after { transform: translateX(16px); background: #FFFFFF; }
+
+/* Coming into view as the page scrolls, where Chrome has scroll-driven animations. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .step, .more, .extras { animation: rise linear both; animation-timeline: view(); animation-range: entry 0% entry 40%; }
+    @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
+  }
+}

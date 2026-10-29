@@ -95,7 +95,11 @@ class KeyboardShortcuts {
     if (on) {
       const list = box.querySelector('.khlist');
       list.textContent = '';
-      for (const [keys, label] of KEY_HELP) {
+      // The extension's "Add lecture moment" shortcut (the one set now), pressed in the chat.
+      const moment = platform.momentKey();
+      /** @type {[string[], string][]} */
+      const help = moment ? [...KEY_HELP.slice(0, -2), [[moment], 'keyMoment'], ...KEY_HELP.slice(-2)] : KEY_HELP;
+      for (const [keys, label] of help) {
         list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k === 'Space' ? tr('kbdSpace') : k }))), el('div', { text: tr(label) }));
       }
     }

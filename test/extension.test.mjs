@@ -83,7 +83,12 @@ function fakeChrome(syncStore = {}) {
   const syncWrites = [];
   const on = { message: [], changed: [] };
   const chrome = {
-    runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => { sent.push(m); return { status: 200, text: '{"ok":true}' }; },
+    runtime: { id: 'ext', getURL: (p) => 'chrome-extension://ext/' + p, sendMessage: async (m) => {
+      // The service worker's answer about the "Add lecture moment" shortcut (background.js).
+      if (m.type === 'momentKey') return 'Alt+Shift+L';
+      sent.push(m);
+      return { status: 200, text: '{"ok":true}' };
+    },
       onMessage: { addListener: (fn) => on.message.push(fn) } },
     storage: {
       onChanged: { addListener: (fn) => on.changed.push(fn) },
@@ -138,6 +143,23 @@ for (const order of ['bridge first', 'player first']) {
     assert.deepEqual(plain(sent), [{ type: 'post', url: 'https://server.test/v1/events', body: '{"a":1}', timeoutMs: 1000 }]);
   });
 }
+
+test('the shortcut and the copies so far reach the player; copies and a lecture shown are counted', async () => {
+  const w = newWindow();
+  const { chrome, store } = fakeChrome();
+  store.copies = 2;
+  runBridge(w, chrome);
+  const platform = runPlayer(w);
+  await platform.privateReady;
+  assert.equal(platform.momentKey(), 'Alt+Shift+L');
+  // The copies before each one: the first few (MOMENT_TIP_COPIES) tip the shortcut.
+  assert.equal(platform.copied(), 2);
+  assert.equal(platform.copied(), 3);
+  platform.lectureShown();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(store.copies, 4);
+  assert.equal(store.lectureSeen, true);
+});
 
 test('after they met, a page script posing as either side is not heard', async () => {
   const w = newWindow();

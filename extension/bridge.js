@@ -10,6 +10,8 @@
 //   off              true: turned off with the toolbar button (popup.js)
 //   viewed           lectures watched for a while (the toolbar's one rating line)
 //   news             a version whose changes the player tells about once (background.js)
+//   lectureSeen      true once a lecture was shown, copies: pictures and texts copied (the
+//                    welcome page's steps; the first copies tip the moment's shortcut)
 // It also answers the toolbar button about this page (status, diagnostics), when the page
 // is one the player handles (the player said so: 'present').
 (() => {
@@ -32,6 +34,13 @@
   let askSeq = 0;
   const ASK_MS = 3000;
   const MOMENT_MS = 10000;
+
+  // Counters (viewed, copies) are read and written one change at a time: two changes close
+  // together would otherwise read the same count and one would be lost.
+  let counting = Promise.resolve();
+  const count = (name) => {
+    counting = counting.then(() => chrome.storage.local.get(name)).then((o) => chrome.storage.local.set({ [name]: (+o[name] || 0) + 1 })).catch(() => {});
+  };
 
   const toPage = (msg) => node.dispatchEvent(new CustomEvent(TO_PAGE, { detail: JSON.stringify(msg) }));
 
@@ -64,9 +73,13 @@
       chrome.storage.local.remove(KV + msg.name).catch(() => {});
     } else if (msg.type === 'viewed') {
       // Counted for the toolbar's rating line (popup.js).
-      chrome.storage.local.get('viewed').then((o) => chrome.storage.local.set({ viewed: (+o.viewed || 0) + 1 })).catch(() => {});
+      count('viewed');
     } else if (msg.type === 'options' || msg.type === 'news') {
       chrome.runtime.sendMessage({ type: msg.type }).catch(() => {});
+    } else if (msg.type === 'lectureShown') {
+      chrome.storage.local.get('lectureSeen').then((o) => { if (o.lectureSeen !== true) chrome.storage.local.set({ lectureSeen: true }); }).catch(() => {});
+    } else if (msg.type === 'copied') {
+      count('copies');
     } else if (msg.type === 'newsSeen') {
       chrome.storage.local.remove('news').catch(() => {});
     } else if (msg.type === 'present') {
@@ -100,12 +113,16 @@
     } catch (e) { /* sync off or unavailable: this device's copy */ }
     let off = false;
     let news = '';
+    let copies = 0;
     try {
-      const o = await chrome.storage.local.get(['off', 'news']);
+      const o = await chrome.storage.local.get(['off', 'news', 'copies']);
       off = o.off === true;
       news = typeof o.news === 'string' ? o.news : '';
+      copies = Number.isInteger(o.copies) ? o.copies : 0;
     } catch (e) { /* on */ }
-    return { values, kv, off, news };
+    // The shortcut is the service worker's to read (chrome.commands).
+    const shortcut = await chrome.runtime.sendMessage({ type: 'momentKey' }).then((k) => (typeof k === 'string' ? k : ''), () => '');
+    return { values, kv, off, news, copies, momentKey: shortcut };
   }
 
   // The toolbar's questions (popup.js): answered by the page's player, when there is one
@@ -142,7 +159,7 @@
     n.setAttribute('data-base', chrome.runtime.getURL(''));
     n.addEventListener(TO_EXT, receive);
     window.removeEventListener(HELLO, onHello, true);
-    snapshot().then(({ values, kv, off, news }) => toPage({ type: 'kv', values, shared: kv, off, news }));
+    snapshot().then(({ values, kv, ...rest }) => toPage(Object.assign({ type: 'kv', values, shared: kv }, rest)));
     return true;
   }
 

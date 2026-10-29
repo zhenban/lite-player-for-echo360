@@ -17,6 +17,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id === chrome.runtime.id && msg && msg.type === 'options') { chrome.runtime.openOptionsPage().catch(() => {}); return false; }
   // The toolbar's "Add lecture moment" (moment.js), for the tab it was opened on.
   if (sender.id === chrome.runtime.id && msg && msg.type === 'moment' && Number.isInteger(msg.tabId)) { addMoment(msg.tabId).then(reply, () => reply(null)); return true; }
+  // The player's tips about that shortcut (bridge.js): the one set now, or '' if none.
+  if (sender.id === chrome.runtime.id && msg && msg.type === 'momentKey') { momentKey().then(reply); return true; }
   if (sender.id === chrome.runtime.id && msg && msg.type === 'news') { chrome.tabs.create({ url: 'welcome.html#new' }).catch(() => {}); return false; }
   if (sender.id !== chrome.runtime.id || !msg || msg.type !== 'post' || typeof msg.url !== 'string' || !msg.url.startsWith(SERVER) || typeof msg.body !== 'string') return false;
   const ms = Math.min(Math.max(+msg.timeoutMs || 0, 1000), MAX_MS);

@@ -286,6 +286,7 @@ const VIEWED_MIN = 10;                 // extension: minutes played that count a
 const EXT_STORE_WAIT_MS = 10000;       // extension: its data store (a frame of the extension, extension/store.js) not ready by then: the page's own storage is used for this visit
 const EXT_STORE_OP_MS = 120000;        // extension: one request to the data store unanswered by then (the frame was removed with the page's content) fails; the next one makes a new frame. Long: writing a large slide PDF takes a few seconds
 const NEWS_DELAY_MS = 4000;            // extension: the one "what's new" note waits this long after the player is up (past the loading screen; a product choice)
+const MOMENT_TIP_COPIES = 3;         // extension: the first this many copies (P, A) tip the "Add lecture moment" shortcut, then never again (a product choice: learnt by then, or not wanted)
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----

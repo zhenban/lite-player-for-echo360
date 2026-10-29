@@ -523,6 +523,7 @@ const STRINGS = {
     copiedFrame: 'Picture copied ({w} × {h})',
     copiedPage: 'Copied page {n} of {file} as a picture',
     copiedCaptions: 'Copied {from}–{to} of the transcript',
+    momentTip: 'In an AI chat, {key} adds the picture and the text at once.',
     copyFailed: 'Could not copy ({msg})',
     copyNoCaptions: 'This recording has no transcript to copy.',
     pausedHint: 'Paused',
@@ -751,6 +752,7 @@ const STRINGS = {
     keySlide: 'Previous / next slide',
     keyCopyFrame: 'Copy picture',
     keyCopyCaptions: 'Copy text',
+    keyMoment: 'Add lecture moment (pressed in the AI chat)',
     keyZoom: 'Zoom in / out (main picture; or the mouse wheel over any picture, drag to move)',
     keyZoomReset: 'Whole picture again (or double-click)',
     keyLoop: 'Start loop here / end loop here (also in the settings menu, or right-click the progress bar)',
@@ -799,25 +801,38 @@ const STRINGS = {
     backupInvalid: 'This is not a Lite Player for Echo360 backup file',
     backupTooBig: 'This file is too large for a backup (at most {max} MB)',
     welTitle: 'Lite Player is ready',
-    welLead: 'Open any Echo360 lecture recording and Lite Player starts by itself. Echo360\'s own player is always one click away: Settings and more (⋯), then Switch to the original player.',
-    welTour: 'What it does',
-    welSlidesT: 'Slides as chapters',
-    welSlides: 'The slide changes are found in the recording and listed as chapters, with previews on the timeline.',
-    welPdfT: 'Your PDF follows along',
-    welPdf: 'Drop the lecture\'s slide PDF on the player and it turns to the page being talked about.',
-    welAskT: 'Ask an AI about this moment',
-    welAsk: 'P copies the slide picture and A copies the last minute of what was said, ready to paste into a chat.',
-    welStudyT: 'Made for studying',
-    welStudy: 'A transcript you can search, skipping breaks and blank screens, clearer sound and zoom. Press ? in the player for every keyboard shortcut.',
+    welLead: 'Lectures that are lighter, quicker to get around and easier to study. Three steps to get going:',
+    welStep1T: 'Open a lecture',
+    welStep1: 'Open a recording from your course page as usual, and Lite Player starts by itself. Echo360\'s own player is always one click away: ⋯, then Switch to the original player.',
+    welStep1Wait: 'Waiting for a lecture…',
+    welStep1Done: 'Lecture opened',
+    welStep2T: 'Copy what matters',
+    welStep2P: 'The picture you see: the slide or the video',
+    welStep2A: 'The text: the last minute of what was said',
+    welStep2Wait: 'Press P or A in the player',
+    welStep2Done: 'Copied',
+    welStep3T: 'Ask an AI about it',
+    welStep3: 'Keep the lecture open. In a chat (ChatGPT, Claude, Gemini or any other), click the message box and press:',
+    welStep3After: 'The picture and the text go in together, ready for your question. Nothing is sent until you send it.',
+    welStep3NoKey: 'No shortcut is set for this yet.',
+    welSetKey: 'Set a shortcut',
+    welStep3Wait: 'Waiting for your first lecture moment…',
+    welStep3Done: 'Lecture moment added',
+    welKeysT: 'More keys worth knowing',
+    welKeysAll: 'Press ? in the player for every shortcut.',
+    welSkip: 'Skip the tour',
+    welShow: 'Show the tour',
+    welAllDone: 'All set. That\'s everything you need.',
     welPin: 'Pin the toolbar button',
     welPinText: 'Click the puzzle piece next to the address bar and pin Lite Player. The button turns it on or off and says what it is doing on the page.',
     welSettings: 'Open settings',
     welNew: 'New in {version}',
+    welNew0: 'Add lecture moment: in an AI chat, one shortcut adds the lecture\'s picture and what was just said to the message box.',
     welNew1: 'A toolbar button: turn Lite Player on or off, and see what it is doing on the page.',
     welNew2: 'A settings page with every setting, a compatibility check, and backups.',
     welNew3: 'Your settings follow your Chrome account to your other computers (not the layout, volume or quality, which suit each screen).',
     welNew4: 'Tags, slide PDFs and what you watched are the same on every Echo360 site, and are deleted after a year unused.',
-    newsToast: 'Lite Player {version}: a toolbar button, a settings page, and your settings on every computer.',
+    newsToast: 'Lite Player {version}: add the lecture to an AI chat in one step, a toolbar button and a settings page.',
     newsSee: 'See what\'s new',
     optTitle: 'Lite Player settings',
     optOn: 'Use Lite Player on Echo360',
@@ -845,6 +860,8 @@ const STRINGS = {
     dataClearYes: 'Delete',
     dataCleared: 'Deleted {n} items.',
     dataBackupTitle: 'Backup',
+    dataClearInfo: 'Remove tags, slide files, watched records and saved positions from this browser.',
+    optSections: 'On this page',
     dataRestored: 'Restored {n} items. Open lectures use them the next time they are loaded.',
     backupInSettings: 'Backup and restore are on the extension\'s settings page.',
     backupOpenSettings: 'Open settings page',
@@ -1089,6 +1106,7 @@ STRINGS.zh = {
   copiedFrame: '已复制画面（{w} × {h}）',
   copiedPage: '已把 {file} 第 {n} 页复制为图片',
   copiedCaptions: '已复制转录 {from}–{to}',
+  momentTip: '在 AI 聊天里按 {key}，画面和文字一次加进去。',
   copyFailed: '复制失败（{msg}）',
   copyNoCaptions: '这个录像没有可复制的转录。',
   pausedHint: '已暂停',
@@ -1317,6 +1335,7 @@ STRINGS.zh = {
   keySlide: '上一张 / 下一张幻灯片',
   keyCopyFrame: '复制画面',
   keyCopyCaptions: '复制文字',
+  keyMoment: '添加课程片段（在 AI 聊天页面按）',
   keyZoom: '放大 / 缩小（主画面；也可以在任一画面上滚动滚轮，拖动可移动）',
   keyZoomReset: '恢复完整画面（或双击）',
   keyLoop: '从这里开始循环 / 在这里结束循环（也可以用设置菜单，或右键点进度条）',
@@ -1365,25 +1384,38 @@ STRINGS.zh = {
   backupInvalid: '这不是 Echo360 轻量播放器的备份文件',
   backupTooBig: '这个文件太大，不能作为备份文件（最多 {max} MB）',
     welTitle: 'Lite Player 已就绪',
-    welLead: '打开任意一节 Echo360 课程回放，Lite Player 会自动启动。Echo360 自带的播放器随时可以切回：设置和更多（⋯）→ 切换到原播放器。',
-    welTour: '它能做什么',
-    welSlidesT: '幻灯片变成章节',
-    welSlides: '自动找出录像里的幻灯片切换，列成章节，进度条上可以预览。',
-    welPdfT: '你的 PDF 跟着翻页',
-    welPdf: '把这节课的幻灯片 PDF 拖到播放器上，讲到哪一页就翻到哪一页。',
-    welAskT: '就这一刻问 AI',
-    welAsk: 'P 复制幻灯片画面，A 复制最近一分钟讲的内容，直接粘贴到聊天里。',
-    welStudyT: '为学习而做',
-    welStudy: '可搜索的转录、跳过课间和黑屏、人声更清晰、画面缩放。在播放器里按 ? 查看所有快捷键。',
+    welLead: '更轻、更好找、更方便复习的课程回放。三步上手：',
+    welStep1T: '打开一节课',
+    welStep1: '像平时一样从课程页面打开回放，Lite Player 会自动启动。Echo360 自带的播放器随时可以切回：⋯ → 切换到原播放器。',
+    welStep1Wait: '等你打开一节课…',
+    welStep1Done: '已打开课程',
+    welStep2T: '复制要点',
+    welStep2P: '你看到的画面：幻灯片或视频',
+    welStep2A: '文字：最近一分钟讲的内容',
+    welStep2Wait: '在播放器里按 P 或 A',
+    welStep2Done: '已复制',
+    welStep3T: '就这一刻问 AI',
+    welStep3: '课程保持打开。在聊天页面（ChatGPT、Claude、Gemini 或其他）点一下输入框，然后按：',
+    welStep3After: '画面和文字一起放进输入框，等你写问题。你按发送之前什么都不会发出去。',
+    welStep3NoKey: '还没有为它设置快捷键。',
+    welSetKey: '设置快捷键',
+    welStep3Wait: '等你添加第一个课程片段…',
+    welStep3Done: '已添加课程片段',
+    welKeysT: '其他好用的按键',
+    welKeysAll: '在播放器里按 ? 查看所有快捷键。',
+    welSkip: '跳过引导',
+    welShow: '显示引导',
+    welAllDone: '都设置好了，需要的就这些。',
     welPin: '固定工具栏按钮',
     welPinText: '点击地址栏旁边的拼图图标，固定 Lite Player。这个按钮可以开关它，并显示它在当前页面上的状态。',
     welSettings: '打开设置',
     welNew: '{version} 新功能',
+    welNew0: '添加课程片段：在 AI 聊天里按一个快捷键，课程画面和刚才讲的内容就进了输入框。',
     welNew1: '工具栏按钮：开关 Lite Player，查看它在当前页面上的状态。',
     welNew2: '设置页：所有设置、兼容性检查和备份。',
     welNew3: '设置跟随你的 Chrome 账户同步到其他电脑（布局、音量和画质除外，它们按每台电脑的屏幕来）。',
     welNew4: '标签、幻灯片 PDF 和观看记录在所有 Echo360 站点上都一样，一年没用到会被删除。',
-    newsToast: 'Lite Player {version}：工具栏按钮、设置页，设置在每台电脑上都一样。',
+    newsToast: 'Lite Player {version}：一步把课程加到 AI 聊天，还有工具栏按钮和设置页。',
     newsSee: '看看有什么新功能',
     optTitle: 'Lite Player 设置',
     optOn: '在 Echo360 上使用 Lite Player',
@@ -1411,6 +1443,8 @@ STRINGS.zh = {
     dataClearYes: '删除',
     dataCleared: '已删除 {n} 项。',
     dataBackupTitle: '备份',
+    dataClearInfo: '从这个浏览器里删除标签、幻灯片文件、观看记录和播放位置。',
+    optSections: '本页内容',
     dataRestored: '已恢复 {n} 项。打开着的课程下次加载时使用。',
     backupInSettings: '备份和恢复在扩展的设置页里。',
     backupOpenSettings: '打开设置页',
@@ -1810,6 +1844,7 @@ const VIEWED_MIN = 10;                 // extension: minutes played that count a
 const EXT_STORE_WAIT_MS = 10000;       // extension: its data store (a frame of the extension, extension/store.js) not ready by then: the page's own storage is used for this visit
 const EXT_STORE_OP_MS = 120000;        // extension: one request to the data store unanswered by then (the frame was removed with the page's content) fails; the next one makes a new frame. Long: writing a large slide PDF takes a few seconds
 const NEWS_DELAY_MS = 4000;            // extension: the one "what's new" note waits this long after the player is up (past the loading screen; a product choice)
+const MOMENT_TIP_COPIES = 3;         // extension: the first this many copies (P, A) tip the "Add lecture moment" shortcut, then never again (a product choice: learnt by then, or not wanted)
 const EXT_KV_WAIT_MS = 3000;           // extension: its settings (chrome.storage, read in a few ms) not there by then: the page's copy is used, and the player starts
 
 // ---- anonymous usage data (87-telemetry.js) ----
@@ -2463,6 +2498,13 @@ const platform = {
   news() { return ''; },
   newsSeen() {},
   openNews() {},
+  // Extension only: the keyboard shortcut for "Add lecture moment" ('' if none is set), and
+  // telling the extension that a lecture was shown or a picture or text copied (the welcome
+  // page's steps tick, and the first copies tip that shortcut: copied() gives the copies
+  // made before this one).
+  momentKey() { return ''; },
+  lectureShown() {},
+  copied() { return Infinity; },
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');
@@ -5851,6 +5893,7 @@ class LitePlayer {
     d.listen(this.host, 'keydown', used, true);
     d.listen(v, 'playing', used);
     d.listen(v, 'pause', used);
+    platform.lectureShown();
     let playedMin = 0;
     d.interval(() => { if (this.clock.playing() && ++playedMin === VIEWED_MIN) platform.viewed(); }, 60000);
     // Updated to a new version (the extension): its changes, said once, in the first lecture
@@ -6640,7 +6683,11 @@ class KeyboardShortcuts {
     if (on) {
       const list = box.querySelector('.khlist');
       list.textContent = '';
-      for (const [keys, label] of KEY_HELP) {
+      // The extension's "Add lecture moment" shortcut (the one set now), pressed in the chat.
+      const moment = platform.momentKey();
+      /** @type {[string[], string][]} */
+      const help = moment ? [...KEY_HELP.slice(0, -2), [[moment], 'keyMoment'], ...KEY_HELP.slice(-2)] : KEY_HELP;
+      for (const [keys, label] of help) {
         list.append(el('div', null, ...keys.map((k) => el('kbd', { text: k === 'Space' ? tr('kbdSpace') : k }))), el('div', { text: tr(label) }));
       }
     }
@@ -7399,13 +7446,20 @@ class MenuBar {
     return { text: x.title + '\n' + from + '–' + to + '\n\n' + ex.text + '\n', from, to };
   }
 
+  // What a copy says: the first few (MOMENT_TIP_COPIES) add that the extension's shortcut
+  // puts the picture and the text into an AI chat at once.
+  copiedSay(msg) {
+    const key = platform.momentKey();
+    return key && platform.copied() < MOMENT_TIP_COPIES ? msg + ' ' + tr('momentTip', { key }) : msg;
+  }
+
   // Copies the picture the user is looking at (framePicture). Must run from a user action.
   copyFrame() {
     const x = this.x;
     const pic = this.framePicture();
     if (!pic) { x.toast(tr('copyFailed', { msg: tr('noPictureYet') })); return; }
     navigator.clipboard.write([new ClipboardItem({ 'image/png': pic.blob })])
-      .then(() => x.toast(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h })))
+      .then(() => x.toast(this.copiedSay(pic.page ? tr('copiedPage', { n: pic.page.num, file: pic.page.file }) : tr('copiedFrame', { w: pic.w, h: pic.h }))))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 
@@ -7415,7 +7469,7 @@ class MenuBar {
     const said = this.captionText();
     if (!said) { x.toast(tr('copyNoCaptions')); return; }
     navigator.clipboard.writeText(said.text)
-      .then(() => x.toast(tr('copiedCaptions', { from: said.from, to: said.to })))
+      .then(() => x.toast(this.copiedSay(tr('copiedCaptions', { from: said.from, to: said.to }))))
       .catch((e) => x.toast(tr('copyFailed', { msg: (e && e.message) || e })));
   }
 

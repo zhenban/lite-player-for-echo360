@@ -189,6 +189,13 @@ const platform = {
   news() { return ''; },
   newsSeen() {},
   openNews() {},
+  // Extension only: the keyboard shortcut for "Add lecture moment" ('' if none is set), and
+  // telling the extension that a lecture was shown or a picture or text copied (the welcome
+  // page's steps tick, and the first copies tip that shortcut: copied() gives the copies
+  // made before this one).
+  momentKey() { return ''; },
+  lectureShown() {},
+  copied() { return Infinity; },
   manager() {
     try {
       if (typeof GM_info !== 'undefined' && GM_info) return (GM_info.scriptHandler || 'userscript manager') + ' ' + (GM_info.version || '');

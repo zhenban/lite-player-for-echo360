@@ -11,6 +11,11 @@
 /* eslint-disable no-redeclare -- declared global for the files that use it (eslint.config.mjs) */
 const MOMENT_ASK = { type: 'ask' };
 
+// The shortcut set for it now (chrome://extensions/shortcuts), or '' if none.
+async function momentKey() {
+  try { return ((await chrome.commands.getAll()).find((c) => c.name === 'add-lecture-moment') || {}).shortcut || ''; } catch (e) { return ''; }
+}
+
 async function lectureTabs(exceptId) {
   let tabs = [];
   try { tabs = await chrome.tabs.query({}); } catch (e) { return []; }
@@ -34,6 +39,8 @@ async function addMoment(tabId) {
   if (!m || typeof m.text !== 'string') return { ok: false, say: w.noLecture };
   try {
     const [r] = await chrome.scripting.executeScript({ target: { tabId }, func: insertMoment, args: [m, w] });
+    // Counted for the welcome page's last step (welcome.js).
+    if (r && r.result && r.result.ok) chrome.storage.local.get('moments').then((o) => chrome.storage.local.set({ moments: (+o.moments || 0) + 1 })).catch(() => {});
     return r && r.result ? r.result : { ok: false, say: w.cannot, moment: m };
   } catch (e) {
     return { ok: false, say: w.cannot, moment: m };

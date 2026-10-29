@@ -87,7 +87,24 @@ The manager keeps it up to date; each [release](https://github.com/zhenban/lite-
 
 ### Only in the extension
 
-- **Add lecture moment.** In an AI chat (ChatGPT, Claude, Gemini or any other), press **Alt+Shift+L** or click **Add lecture moment** on the toolbar button: the lecture's picture and what was said just before go into the chat box, ready for your question. Nothing is sent until you send it. It takes the lecture that is playing (or the one you used last), and the extension gets into the chat's page only at that moment. Change the shortcut at `chrome://extensions/shortcuts`.
+#### Ask an AI about the lecture: Alt+Shift+L
+
+![The lecture's slide and what was just said, added to an AI chat's message box with Alt+Shift+L](docs/store/4-ask-ai.png)
+
+1. Keep the lecture open (playing or paused) in its tab.
+2. In another tab, open an AI chat (ChatGPT, Claude, Gemini or any other) and click its message box.
+3. Press **Alt+Shift+L**. The lecture's picture and what was said in the last minute go into the box, with the lecture's name and times. Type your question and send it.
+
+- Nothing is sent until you send it.
+- It takes the lecture that is playing, or else the one you used last.
+- The extension gets into the chat's page only at the moment you press the keys; it asks for no access to any AI site.
+- **Add lecture moment** on the toolbar button does the same thing.
+- If a chat does not take pasted pictures, you get the text, and the picture is put on the clipboard, ready to paste.
+- To change the shortcut, open `chrome://extensions/shortcuts`; in Edge, `edge://extensions/shortcuts`.
+- In the player, **P** and **A** copy the picture or the text alone.
+
+#### And also
+
 - **A toolbar button:** turn Lite Player on or off (off means Echo360's own player, with nothing added), see what it is doing on the page and why, and report a problem with the diagnostics already copied.
 - **A settings page** with every setting, a check of what your browser can do, the space your data takes, backup, restore and delete.
 - **Your settings follow your Chrome account** to your other computers, except the layout, volume and quality, which suit each screen.
@@ -107,6 +124,8 @@ The manager keeps it up to date; each [release](https://github.com/zhenban/lite-
 | `W` | Floating window | `P` | Copy the current picture |
 | `E` | Export and backup | `A` | Copy the last 60 s of transcript |
 | `?` | All shortcuts | `Esc` | Close menus |
+
+In the extension, **Alt+Shift+L**, pressed in an AI chat, adds the lecture moment to it ([above](#ask-an-ai-about-the-lecture-altshiftl)).
 
 ## Privacy
 
