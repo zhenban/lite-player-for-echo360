@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lite Player for Echo360
 // @namespace    lite-player-for-echo360
-// @version      1.0.1
+// @version      1.1.0
 // @updateURL    https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @downloadURL  https://github.com/zhenban/lite-player-for-echo360/releases/latest/download/lite-player-for-echo360.user.js
 // @description  Unofficial, lightweight player for Echo360 lecture recordings: far lower CPU use, both views side by side, slide chapters, a PDF that follows the lecture. Falls back to the original player automatically if anything is not recognised.
@@ -29,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.1.0';
   const DEV_HOOKS = false;
 
 // ---- 00-boot.js ----
