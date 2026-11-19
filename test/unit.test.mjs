@@ -50,7 +50,7 @@ function loadSources(names, overrides) {
   const files = readdirSync(join(root, 'src')).filter((f) => f.startsWith('00-boot') || f.startsWith('02-tuning') || f.startsWith('03-common') || f.startsWith('04-libs') || f.startsWith('05-platform') || names.some((n) => f === n + '.js' || f.startsWith(n + '-'))).sort();
   const code = files.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n')
     + '\n;globalThis.__exports = {};'
-    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'parseMaster', 'fetchRange', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'pageSimilarity', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
+    + ['clamp', 'fmtTime', 'parseIsoDuration', 'Disposer', 'PlayedRanges', 'Reporter', 'FollowerSync', 'CueIndex', 'parseVtt', 'parseMaster', 'fetchRange', 'echo360ClassroomAdapter', 'AudioChain', 'seg', 'Echo360Api', 'thumbnailFor', 'pickAudioRendition', 'parseMediaPlaylist', 'Envelope', 'findSilences', 'silencesFromCues', 'speechSpans', 'silenceIndexAt', 'mp4Boxes', 'parseFragment', 'videoVariants', 'Stream', 'pickScreen', 'viewFrozen', 'slightChange', 'thumbChange', 'learnThreshold', 'sampleChanges', 'groupSegments', 'sampleIndexAt', 'HlsVideoReader', 'avcConfig', 'toAnnexB', 'buildScenes', 'chapterIndexAt', 'SessionKeeper', 'mediaSession', 'TagStore', 'watchedShare', 'makeZip', 'crc32', 'lectureMarkdown', 'mdTag', 'followSamples', 'followLecture', 'textScores', 'pageSimilarity', 'slideWords', 'ocrLanguage', 'TESS_LANGS', 'slideTextWorkerSource', 'FORCE_OFF', 'captionExcerpt',
       'sanitizePrefs', 'sanitizePos', 'prefDefaults', 'guard', 'guardCore', 'featureGuard', 'unexpected', 'featureErrors', 'eventLog', 'SilenceAnalyzer', 'skipStretches', 'contentEndAt', 'frameUniform', 'uniformStretches', 'maskUrls', 'diagnosticsText', 'cacheTouched', 'cacheLastUse', 'cacheValid', 'userData', 'restoreBackup', 'makeBackup', 'idbCache', 'LitePlayer', 'NotesPane', 'DiscussionPane', 'SlideTextReader', 'SlideTextWorker', 'SlideDeckController', 'playerTemplate', 'NS', 'platform', 'store', 'loadPdfJs', 'loadTesseract', 'log', 'errorText', 'LIB_SHA256', 'STRINGS', 'uiLang', 'uiLocale', 'tr', 'featureName', 'FEATURE_NAMES', 'UI_LANGS', 'TESS_FILES', 'TESS_LANG_DIR', 'PDFJS_DIR', 'tessWorkerGuard', 'tessPinnedData', 'isTransient', 'ApiError', 'playbackFailReason', 'emptyScreenPlan', 'EmptyScreenLayout', 'EMPTY_SCREEN_MIN_SEC']
       .map((n) => `if (typeof ${n} !== 'undefined') globalThis.__exports.${n} = ${n};`).join('\n');
   vm.runInContext(code, ctx);
@@ -1081,6 +1081,25 @@ test('which view is the screen: still between changes beats a camera, on every m
   const a = { source: { index: 1 }, vals: [5, 6, 7] };
   const b = { source: { index: 2 }, vals: [5, 7, 8] };  // median higher, but beats a in only 2/3 of pairs
   assert.equal(m.pickScreen([a], true, 2).sure, false);
+  // Bug (1.0.1, ELEC lecture with a failed camera): the camera showed its "no camera" picture
+  // all lecture, the stillest view of all, and was taken as the screen. Measured there:
+  // the slides changed a little between keyframes and 13-18% between probes, the camera 0.
+  const slidesView = { source: { index: 1 }, vals: [0.0591, 0.0199, 0.003, 0.0015, 0.1467, 0.0026], frozen: m.viewFrozen([2060, 1832, 2186, 2341, 2549]) };
+  const deadCam = { source: { index: 2 }, vals: [0, 0, 0, 0, 0, 0], frozen: m.viewFrozen([0, 0, 3, 0, 0]) };
+  assert.equal(slidesView.frozen, false);
+  assert.equal(deadCam.frozen, true);
+  for (const order of [[slidesView, deadCam], [deadCam, slidesView]]) {
+    const res = m.pickScreen(order, true, 2);
+    assert.equal(res.best.source.index, 1, 'a view showing one picture throughout is not the screen');
+    assert.equal(res.sure, true);
+    assert.equal(JSON.stringify(res.dead), '[2]');
+  }
+  // Every view frozen: still an answer (nothing to tell them apart by), none dead.
+  const both = m.pickScreen([deadCam, Object.assign({}, slidesView, { frozen: true })], true, 2);
+  assert.equal(both.best.source.index, 2);
+  assert.equal(JSON.stringify(both.dead), '[]');
+  // Too few probes say nothing.
+  assert.equal(m.viewFrozen([0]), false);
   const tie = m.pickScreen([b, a], true, 2);
   assert.equal(tie.best.source.index, 1);
   assert.equal(tie.sure, false);
@@ -2126,6 +2145,31 @@ test('camera for an empty screen: only long stretches, planned ahead; a hand-cho
   assert.equal(g.st.shown, 0, 'the camera is whichever view is not the screen');
   g.d.dispose();
   assert.equal(g.st.shown, null);
+  // Bug (1.0.1): a camera that shows the same picture all lecture (dead) stayed in the
+  // layout. Now the screen plays alone, said once with Undo, and an empty screen never
+  // switches to that camera.
+  const dc = make('lesson-dead', { deadViews: () => dc.dead });
+  dc.dead = [];
+  dc.st.screen = 0;
+  dc.e.tick(1);
+  assert.equal(dc.st.shown, null, 'nothing dead: the layout stays');
+  dc.dead = [1];
+  dc.st.uniform = [{ start: 400, end: 700 }];
+  dc.e.tick(2);
+  assert.equal(dc.st.shown, 0, 'the screen alone');
+  assert.match(dc.st.toasts.at(-1).msg, /same picture all lecture/);
+  dc.e.tick(450);
+  assert.equal(dc.st.shown, 0, 'an empty screen does not switch to a dead camera');
+  assert.equal(dc.st.toasts.length, 1, 'said once');
+  dc.st.toasts.at(-1).fn();
+  assert.equal(dc.st.shown, null, 'Undo: back to the layout');
+  dc.e.tick(10);
+  assert.equal(dc.st.shown, null, 'and not again in this recording');
+  // A screen without sound of its own cannot play alone: nothing changes.
+  const ns = make('lesson-dead-2', { deadViews: () => [1], sources: [{ index: 0, v: 'screen.m3u8' }, { index: 1, av: 'camera.m3u8' }] });
+  ns.st.screen = 0;
+  ns.e.tick(1);
+  assert.equal(ns.st.shown, null);
 });
 
 test('touch: the shared controls are at least 44 px high on a coarse pointer (DESIGN.md)', () => {

@@ -177,6 +177,16 @@ test('touch release keeps controls visible so a second tap can pause; mouse leav
     assert.equal(p.stage.classList.contains('idle'), true, 'a mouse leaving during playback still hides controls');
     p.stage.dispatchEvent(pointer('pointermove', 'mouse'));
     assert.equal(p.stage.classList.contains('idle'), false, 'mouse movement still wakes controls');
+    // Bug (1.0.1): with a menu open (the "..." menu, the speed menu), the mouse moving into
+    // the side panel hid the controls and the menu with them.
+    p.root.querySelector('.morebtn').click();
+    assert.equal(p.pops.isOpen(), true, 'the menu is open');
+    p.stage.dispatchEvent(pointer('pointerleave', 'mouse'));
+    assert.equal(p.stage.classList.contains('idle'), false, 'an open menu keeps the controls');
+    p.pops.close(false);
+    assert.equal(p.pops.isOpen(), false);
+    p.stage.dispatchEvent(pointer('pointerleave', 'mouse'));
+    assert.equal(p.stage.classList.contains('idle'), true, 'closed: leaving hides them again');
   } finally {
     p.destroy();
     await closeWindow(w);

@@ -2,13 +2,14 @@
 // The camera alone while the screen view shows nothing: the slide analysis' empty-screen
 // stretches (a black screen, "no signal") are planned ahead, and only long ones switch
 // (EMPTY_SCREEN_MIN_SEC), so the layout does not flip back and forth. Until the analysis
-// has found them nothing switches. A layout chosen by hand in a recording turns this off
+// has found them nothing switches. And the screen alone, throughout, when the camera shows
+// the same picture all lecture (the analysis' dead views: a failed camera's picture). A layout chosen by hand in a recording turns this off
 // for that recording (remembered); each switch says so, with Undo. On by default; the
 // switch is on the layout page of the settings menu.
 //
 // deps: { lesson, prefs (prefs.emptyCamera), savePrefs(), uniform() (empty-screen
 //         stretches, [] until known), duration(), sources, primaryPos(), screenIndex()
-//         (null until known), layout() (the chosen one), canSwitch() (two views, no PDF
+//         (null until known), deadViews() (source indexes, [] until known), layout() (the chosen one), canSwitch() (two views, no PDF
 //         in the picture area), showOnly(pos | null), toast(msg, action, fn, valid())
 //         (valid: whether a message that had to wait is still true) }
 // ===================================================================================
@@ -33,7 +34,7 @@ class EmptyScreenLayout {
   constructor(deps, disposer) {
     this.x = deps;
     this.d = disposer;
-    this.on = false;          // showing the camera alone now
+    this.on = false;          // showing one view alone now (the camera, or the screen when the camera is dead)
     this.known = null;        // the uniform list the plan was made from
     this.plan = [];
     this.cameraPos = -1;
@@ -58,6 +59,17 @@ class EmptyScreenLayout {
     return this.x.layout() !== 'single' || this.x.primaryPos() !== cameraPos;
   }
 
+  // The screen's position when the camera is dead and the screen can play alone (it has
+  // sound), or -1. The camera need not have sound of its own.
+  deadCameraScreen() {
+    const x = this.x;
+    const dead = x.deadViews ? x.deadViews() : [];
+    const screen = x.sources.findIndex((s) => s.index === x.screenIndex());
+    if (screen < 0 || !x.sources[screen].av) return -1;
+    // Every other view is dead (two views: the camera; a third that shows something stays).
+    return x.sources.every((s, i) => i === screen || dead.includes(s.index)) ? screen : -1;
+  }
+
   // Called as playback moves (timeupdate, seeked) and when the stretches become known.
   tick(t) {
     const x = this.x;
@@ -70,6 +82,14 @@ class EmptyScreenLayout {
       this.plan = emptyScreenPlan(u, x.duration(), EMPTY_SCREEN_MIN_SEC, CHAPTER_STEP_SEC);
     }
     if (!x.prefs.emptyCamera || !x.canSwitch()) return;
+    // A dead camera: the screen alone all along (and never the camera for an empty screen).
+    const screen = this.deadCameraScreen();
+    if (screen >= 0) {
+      if (this.on && !this.dead) this.leave(false);
+      if (!this.on && (x.layout() !== 'single' || x.primaryPos() !== screen)) this.enter(screen, true, true);
+      return;
+    }
+    if (this.on && this.dead) this.leave(false);
     let inside = false;
     for (const s of this.plan) if (t >= s.start && t < s.end) { inside = true; break; }
     if (inside && !this.on) {
@@ -81,15 +101,18 @@ class EmptyScreenLayout {
     }
   }
 
-  enter(cam, say) {
+  // pos: the view shown alone; dead: it is the screen, for a dead camera (said once, kept).
+  enter(pos, say, dead) {
     this.on = true;
-    this.cameraPos = cam;
-    this.x.showOnly(cam);
-    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
+    this.dead = !!dead;
+    this.cameraPos = pos;
+    this.x.showOnly(pos);
+    if (say) this.x.toast(tr(dead ? 'deadCamera' : 'emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
   }
 
   leave(say) {
     this.on = false;
+    this.dead = false;
     this.x.showOnly(null);
     // Undo keeps the camera alone, as if chosen by hand.
     if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.undos++; this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);

@@ -636,6 +636,17 @@ function bitmapToBlob(canvas) {
 // The screen among scored views [{ vals, ... }] (see findScreen): the one with the lowest
 // (lowerIsScreen) or highest median; sure if every view was scored and the chosen one's
 // values beat each other view's in SCREEN_CLEARLY of all pairs. { best, sure }.
+// A view whose pictures, taken across the whole recording, are all the same picture shows
+// nothing: a camera that failed shows its "no camera" picture (each make of hardware has
+// its own), a projector input its "no signal" screen. Counted in changed pixels between
+// consecutive probes (`far`); fewer than SAME_TEXT_MAX is the same picture.
+function viewFrozen(far) {
+  return far.length >= 2 && far.every((n) => n < SAME_TEXT_MAX);
+}
+
+// scored: [{ source, vals, frozen }]. A frozen view is never the screen while another view
+// shows something (it is the stillest of all, so it would win otherwise); those views come
+// back as `dead`.
 function pickScreen(scored, lowerIsScreen, viewCount) {
   const median = (v) => { const a = v.slice().sort((x, y) => x - y); return (a[(a.length - 1) >> 1] + a[a.length >> 1]) / 2; };
   // Share of pairs in which a value of `a` is above one of `b` (ties count half).
@@ -644,10 +655,13 @@ function pickScreen(scored, lowerIsScreen, viewCount) {
     for (const x of a) for (const y of b) w += x > y ? 1 : x === y ? 0.5 : 0;
     return w / (a.length * b.length);
   };
-  const order = scored.slice().sort((a, b) => (lowerIsScreen ? median(a.vals) - median(b.vals) : median(b.vals) - median(a.vals)));
+  const live = scored.filter((o) => !o.frozen);
+  const pool = live.length ? live : scored;
+  const dead = live.length ? scored.filter((o) => o.frozen).map((o) => o.source.index) : [];
+  const order = pool.slice().sort((a, b) => (lowerIsScreen ? median(a.vals) - median(b.vals) : median(b.vals) - median(a.vals)));
   const best = order[0];
-  const sure = order.length === viewCount && order.slice(1).every((o) => (lowerIsScreen ? above(o.vals, best.vals) : above(best.vals, o.vals)) >= SCREEN_CLEARLY);
-  return { best, sure };
+  const sure = scored.length === viewCount && order.slice(1).every((o) => (lowerIsScreen ? above(o.vals, best.vals) : above(best.vals, o.vals)) >= SCREEN_CLEARLY);
+  return { best, sure, dead };
 }
 
 // ---- the controller used by the player ----
@@ -680,6 +694,7 @@ class SlideAnalyzer {
     /** @type {Chapter[]} */
     this.chapters = [];
     this.uniform = [];       // stretches where the screen shows (almost) one colour
+    this.deadViews = [];     // source indexes of views that show the same picture throughout (viewFrozen)
     this.screenIndex = null;
     this.guessScreen = null;
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
@@ -748,6 +763,7 @@ class SlideAnalyzer {
     if (hit) {
       cacheTouch(key);
       this.uniform = Array.isArray(cached.uniform) ? cached.uniform : [];
+      this.deadViews = Array.isArray(cached.dead) ? cached.dead.filter((i) => i !== cached.screen) : [];
       this.screenIndex = cached.screen;
       this.screenSure = cached.sure !== false;
       this.chapters = cached.chapters.map((c) => Object.assign({}, c, { thumb: c.blob ? this.thumbUrl(c.blob) : c.thumb }));
@@ -767,6 +783,7 @@ class SlideAnalyzer {
     if (!screen) { this.state = 'unavailable'; this.onChange(); return; }
     this.screenIndex = screen.source.index;
     this.screenSure = screen.sure;
+    this.deadViews = (screen.dead || []).filter((i) => i !== screen.source.index);
     this.onChange();
     await gate.wait(BG_START_DELAY_MS); // let playback start first
     if (screen.thumbs) this.fromThumbnails(screen.thumbs, signal, gate);
@@ -847,12 +864,14 @@ class SlideAnalyzer {
     const decide = (scored, lowerIsScreen) => {
       const r = pickScreen(scored, lowerIsScreen, sources.length);
       this.guessScreen = r.best.source.index;
-      return { source: r.best.source, thumbs: setOf(r.best.source), sure: r.sure, reader: r.best.reader || null };
+      return { source: r.best.source, thumbs: setOf(r.best.source), sure: r.sure, dead: r.dead, reader: r.best.reader || null };
     };
     if (HlsVideoReader.supported()) {
       const scored = [];
       for (const src of sources) {
         const vals = [];
+        const far = [];   // changed pixels between consecutive probes (viewFrozen)
+        let prev = null;
         let rd = null;
         try {
           rd = await new HlsVideoReader(src.v || src.av, 360).open(signal);
@@ -866,9 +885,11 @@ class SlideAnalyzer {
               await rd.keyframe(picks[q + 1], signal, (f) => { b = frameLuma(f); });
             } catch (e) { if (signal.aborted) throw e; continue; }
             vals.push(slightChange(a, b));
+            if (prev) far.push(thumbChange(prev, a, SAME_TEXT_MAX));
+            prev = a;
           }
         } catch (e) { if (signal.aborted) throw e; }
-        if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, reader: rd });
+        if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, frozen: viewFrozen(far), reader: rd });
       }
       if (scored.length) return decide(scored, true);
     }
@@ -878,15 +899,20 @@ class SlideAnalyzer {
       if (!set) continue;
       const ts = set.timesInSeconds;
       const vals = [];
+      const far = [];
+      let prev = null;
       for (let k = 0; k < SCREEN_PROBES; k++) {
         // One picture that cannot be read does not decide anything.
         let img = null;
         try { img = await this.loadThumb(set, ts[Math.floor(((k + 0.5) * ts.length) / SCREEN_PROBES)], signal); } catch (e) { if (signal.aborted) throw e; }
         if (!img) continue;
         vals.push(flatShare(img));
+        const luma = frameLuma(img);
+        if (prev) far.push(thumbChange(prev, luma, SAME_TEXT_MAX));
+        prev = luma;
         img.close();
       }
-      if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals });
+      if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, frozen: viewFrozen(far) });
     }
     return scored.length ? decide(scored, false) : null;
   }
@@ -1072,6 +1098,7 @@ class SlideAnalyzer {
       used: Date.now(),
       v: cacheVersion('slides'),
       uniform: this.uniform,
+      dead: this.deadViews,
       screen: this.screenIndex,
       sure: this.screenSure !== false,
       at: Date.now(),

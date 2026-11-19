@@ -116,6 +116,7 @@ class LitePlayer {
         lesson, prefs: this.prefs, savePrefs: () => this.savePrefs(), duration: () => this.duration(), sources: this.sources,
         uniform: () => (this.slides ? this.slides.uniform : []),
         screenIndex: () => (this.slides ? this.slides.screenIndex : null),
+        deadViews: () => (this.slides ? this.slides.deadViews : []),
         primaryPos: () => this.primaryPos, layout: () => this.prefs.layout,
         canSwitch: () => this.dual && !this.followerFailed && !this.pdfMode,
         showOnly: (pos) => this.showOnly(pos), toast: (msg, action, fn, valid) => this.toast(msg, action, fn, { later: true, from: 'emptyScreen', valid }),
@@ -900,9 +901,13 @@ class LitePlayer {
 
   armIdle() {
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(guard(() => {
-      if (!this.video.paused && !this.ui.dragging && !this.pops.isOpen()) this.stage.classList.add('idle');
-    }), CONTROLS_HIDE_MS);
+    this.idleTimer = setTimeout(guard(() => this.hideControls()), CONTROLS_HIDE_MS);
+  }
+
+  // Hides the controls, unless they are in use: paused, a drag, or a menu open (it would be
+  // hidden with them, and the button that closes it too).
+  hideControls() {
+    if (!this.video.paused && !this.ui.dragging && !this.pops.isOpen()) this.stage.classList.add('idle');
   }
 
   // The plain buttons, clicks on the pictures, zoom, the side panel chips.
@@ -1006,7 +1011,7 @@ class LitePlayer {
     d.listen(this.stage, 'pointerleave', (e) => {
       // Touch ends with pointerleave even when the finger was lifted inside the player.
       // Keep the controls until the idle timer expires so the next tap can pause.
-      if (e.pointerType !== 'touch' && !v.paused) this.stage.classList.add('idle');
+      if (e.pointerType !== 'touch') this.hideControls();
     });
   }
 
@@ -1095,6 +1100,7 @@ class LitePlayer {
     let empty = false;
     if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; empty = true; if (this.silence) this.silence.update(); }
     // The screen view is known now: the per-view quality settings may apply differently.
+    if (a.deadViews !== this.knownDead) { this.knownDead = a.deadViews; empty = true; }
     if (a.screenIndex !== this.knownScreen) {
       this.knownScreen = a.screenIndex;
       empty = true;

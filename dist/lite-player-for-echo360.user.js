@@ -464,7 +464,8 @@ const STRINGS = {
     swapViews: 'Swap views',
     emptyScreenCamera: 'The screen shows nothing: showing the camera only.',
     emptyScreenBack: 'The screen shows a picture again: back to your layout.',
-    emptyScreenAuto: 'Camera only while the screen is empty',
+    emptyScreenAuto: 'Hide a view that shows nothing',
+    deadCamera: 'The camera shows the same picture all lecture: showing the screen only.',
     telemetryMenu: 'Usage data',
     telemetrySend: 'Send anonymous usage data',
     telemetryDesc: 'How well the player runs on this computer, which features are used, and errors. No names, no recordings or courses, nothing you write. Kept on Cloudflare; only the country, region and network provider are kept, not the address.',
@@ -493,7 +494,7 @@ const STRINGS = {
     telemetryResetDelete: 'Delete my data, then reset',
     telemetryResetOnly: 'Reset only',
     telemetryResetDone: 'New ID in use.',
-    emptyScreenAutoDesc: 'Long stretches without a picture on the screen show the camera alone. Choosing a layout yourself turns this off for that recording.',
+    emptyScreenAutoDesc: 'Long stretches without a picture on the screen show the camera alone, and a camera that shows the same picture all lecture is hidden. Choosing a layout yourself turns this off for that recording.',
     swapViewsKey: 'Swap views (S)',
     layout: 'Layout',
     layoutNow: 'Layout: {layout}',
@@ -1047,7 +1048,8 @@ STRINGS.zh = {
   swapViews: '交换画面',
   emptyScreenCamera: '屏幕没有画面，暂时只显示摄像机画面。',
   emptyScreenBack: '屏幕又有画面了，已恢复你的布局。',
-  emptyScreenAuto: '屏幕没有画面时只显示摄像机',
+  emptyScreenAuto: '隐藏没有内容的画面',
+  deadCamera: '摄像机整节课都是同一个画面，只显示屏幕。',
   telemetryMenu: '使用数据',
   telemetrySend: '发送匿名使用数据',
   telemetryDesc: '播放器在这台电脑上运行得怎样、用了哪些功能、出过什么错误。不含姓名、录像和课程，也不含你写的任何内容。存放在 Cloudflare；只保存国家、地区和网络运营商，不保存 IP 地址。',
@@ -1076,7 +1078,7 @@ STRINGS.zh = {
   telemetryResetDelete: '先删除我的数据，再重置',
   telemetryResetOnly: '只重置',
   telemetryResetDone: '已使用新的 ID。',
-  emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机画面。在一个录像里自己选过布局后，这个录像不再自动切换。',
+  emptyScreenAutoDesc: '屏幕长时间没有画面时只显示摄像机画面；摄像机整节课都是同一个画面时隐藏摄像机。在一个录像里自己选过布局后，这个录像不再自动切换。',
   swapViewsKey: '交换画面（S）',
   layout: '布局',
   layoutNow: '布局：{layout}',
@@ -5087,6 +5089,7 @@ class LitePlayer {
         lesson, prefs: this.prefs, savePrefs: () => this.savePrefs(), duration: () => this.duration(), sources: this.sources,
         uniform: () => (this.slides ? this.slides.uniform : []),
         screenIndex: () => (this.slides ? this.slides.screenIndex : null),
+        deadViews: () => (this.slides ? this.slides.deadViews : []),
         primaryPos: () => this.primaryPos, layout: () => this.prefs.layout,
         canSwitch: () => this.dual && !this.followerFailed && !this.pdfMode,
         showOnly: (pos) => this.showOnly(pos), toast: (msg, action, fn, valid) => this.toast(msg, action, fn, { later: true, from: 'emptyScreen', valid }),
@@ -5871,9 +5874,13 @@ class LitePlayer {
 
   armIdle() {
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(guard(() => {
-      if (!this.video.paused && !this.ui.dragging && !this.pops.isOpen()) this.stage.classList.add('idle');
-    }), CONTROLS_HIDE_MS);
+    this.idleTimer = setTimeout(guard(() => this.hideControls()), CONTROLS_HIDE_MS);
+  }
+
+  // Hides the controls, unless they are in use: paused, a drag, or a menu open (it would be
+  // hidden with them, and the button that closes it too).
+  hideControls() {
+    if (!this.video.paused && !this.ui.dragging && !this.pops.isOpen()) this.stage.classList.add('idle');
   }
 
   // The plain buttons, clicks on the pictures, zoom, the side panel chips.
@@ -5977,7 +5984,7 @@ class LitePlayer {
     d.listen(this.stage, 'pointerleave', (e) => {
       // Touch ends with pointerleave even when the finger was lifted inside the player.
       // Keep the controls until the idle timer expires so the next tap can pause.
-      if (e.pointerType !== 'touch' && !v.paused) this.stage.classList.add('idle');
+      if (e.pointerType !== 'touch') this.hideControls();
     });
   }
 
@@ -6066,6 +6073,7 @@ class LitePlayer {
     let empty = false;
     if (a.uniform !== this.knownUniform) { this.knownUniform = a.uniform; empty = true; if (this.silence) this.silence.update(); }
     // The screen view is known now: the per-view quality settings may apply differently.
+    if (a.deadViews !== this.knownDead) { this.knownDead = a.deadViews; empty = true; }
     if (a.screenIndex !== this.knownScreen) {
       this.knownScreen = a.screenIndex;
       empty = true;
@@ -6707,13 +6715,14 @@ class KeyboardShortcuts {
 // The camera alone while the screen view shows nothing: the slide analysis' empty-screen
 // stretches (a black screen, "no signal") are planned ahead, and only long ones switch
 // (EMPTY_SCREEN_MIN_SEC), so the layout does not flip back and forth. Until the analysis
-// has found them nothing switches. A layout chosen by hand in a recording turns this off
+// has found them nothing switches. And the screen alone, throughout, when the camera shows
+// the same picture all lecture (the analysis' dead views: a failed camera's picture). A layout chosen by hand in a recording turns this off
 // for that recording (remembered); each switch says so, with Undo. On by default; the
 // switch is on the layout page of the settings menu.
 //
 // deps: { lesson, prefs (prefs.emptyCamera), savePrefs(), uniform() (empty-screen
 //         stretches, [] until known), duration(), sources, primaryPos(), screenIndex()
-//         (null until known), layout() (the chosen one), canSwitch() (two views, no PDF
+//         (null until known), deadViews() (source indexes, [] until known), layout() (the chosen one), canSwitch() (two views, no PDF
 //         in the picture area), showOnly(pos | null), toast(msg, action, fn, valid())
 //         (valid: whether a message that had to wait is still true) }
 // ===================================================================================
@@ -6738,7 +6747,7 @@ class EmptyScreenLayout {
   constructor(deps, disposer) {
     this.x = deps;
     this.d = disposer;
-    this.on = false;          // showing the camera alone now
+    this.on = false;          // showing one view alone now (the camera, or the screen when the camera is dead)
     this.known = null;        // the uniform list the plan was made from
     this.plan = [];
     this.cameraPos = -1;
@@ -6763,6 +6772,17 @@ class EmptyScreenLayout {
     return this.x.layout() !== 'single' || this.x.primaryPos() !== cameraPos;
   }
 
+  // The screen's position when the camera is dead and the screen can play alone (it has
+  // sound), or -1. The camera need not have sound of its own.
+  deadCameraScreen() {
+    const x = this.x;
+    const dead = x.deadViews ? x.deadViews() : [];
+    const screen = x.sources.findIndex((s) => s.index === x.screenIndex());
+    if (screen < 0 || !x.sources[screen].av) return -1;
+    // Every other view is dead (two views: the camera; a third that shows something stays).
+    return x.sources.every((s, i) => i === screen || dead.includes(s.index)) ? screen : -1;
+  }
+
   // Called as playback moves (timeupdate, seeked) and when the stretches become known.
   tick(t) {
     const x = this.x;
@@ -6775,6 +6795,14 @@ class EmptyScreenLayout {
       this.plan = emptyScreenPlan(u, x.duration(), EMPTY_SCREEN_MIN_SEC, CHAPTER_STEP_SEC);
     }
     if (!x.prefs.emptyCamera || !x.canSwitch()) return;
+    // A dead camera: the screen alone all along (and never the camera for an empty screen).
+    const screen = this.deadCameraScreen();
+    if (screen >= 0) {
+      if (this.on && !this.dead) this.leave(false);
+      if (!this.on && (x.layout() !== 'single' || x.primaryPos() !== screen)) this.enter(screen, true, true);
+      return;
+    }
+    if (this.on && this.dead) this.leave(false);
     let inside = false;
     for (const s of this.plan) if (t >= s.start && t < s.end) { inside = true; break; }
     if (inside && !this.on) {
@@ -6786,15 +6814,18 @@ class EmptyScreenLayout {
     }
   }
 
-  enter(cam, say) {
+  // pos: the view shown alone; dead: it is the screen, for a dead camera (said once, kept).
+  enter(pos, say, dead) {
     this.on = true;
-    this.cameraPos = cam;
-    this.x.showOnly(cam);
-    if (say) this.x.toast(tr('emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
+    this.dead = !!dead;
+    this.cameraPos = pos;
+    this.x.showOnly(pos);
+    if (say) this.x.toast(tr(dead ? 'deadCamera' : 'emptyScreenCamera'), tr('undo'), () => { this.undos++; this.leave(false); this.choose(); }, () => this.on);
   }
 
   leave(say) {
     this.on = false;
+    this.dead = false;
     this.x.showOnly(null);
     // Undo keeps the camera alone, as if chosen by hand.
     if (say) this.x.toast(tr('emptyScreenBack'), tr('undo'), () => { this.undos++; this.choose(); this.enter(this.cameraPos, false); }, () => !this.on);
@@ -10863,7 +10894,7 @@ class SilenceAnalyzer {
 // ===================================================================================
 
 const CACHE_KINDS = {
-  slides: 4,          // chapters (2: screen view chosen per recording, tolerant scanning; 3: uniform stretches; 4: 160 x 90, learnt threshold)
+  slides: 5,          // chapters (2: screen view chosen per recording, tolerant scanning; 3: uniform stretches; 4: 160 x 90, learnt threshold; 5: frozen views never the screen, kept as dead)
   'silence-env': 1,   // audio level envelope
   ocr: 1,             // text read on screen
 };
@@ -11632,6 +11663,17 @@ function bitmapToBlob(canvas) {
 // The screen among scored views [{ vals, ... }] (see findScreen): the one with the lowest
 // (lowerIsScreen) or highest median; sure if every view was scored and the chosen one's
 // values beat each other view's in SCREEN_CLEARLY of all pairs. { best, sure }.
+// A view whose pictures, taken across the whole recording, are all the same picture shows
+// nothing: a camera that failed shows its "no camera" picture (each make of hardware has
+// its own), a projector input its "no signal" screen. Counted in changed pixels between
+// consecutive probes (`far`); fewer than SAME_TEXT_MAX is the same picture.
+function viewFrozen(far) {
+  return far.length >= 2 && far.every((n) => n < SAME_TEXT_MAX);
+}
+
+// scored: [{ source, vals, frozen }]. A frozen view is never the screen while another view
+// shows something (it is the stillest of all, so it would win otherwise); those views come
+// back as `dead`.
 function pickScreen(scored, lowerIsScreen, viewCount) {
   const median = (v) => { const a = v.slice().sort((x, y) => x - y); return (a[(a.length - 1) >> 1] + a[a.length >> 1]) / 2; };
   // Share of pairs in which a value of `a` is above one of `b` (ties count half).
@@ -11640,10 +11682,13 @@ function pickScreen(scored, lowerIsScreen, viewCount) {
     for (const x of a) for (const y of b) w += x > y ? 1 : x === y ? 0.5 : 0;
     return w / (a.length * b.length);
   };
-  const order = scored.slice().sort((a, b) => (lowerIsScreen ? median(a.vals) - median(b.vals) : median(b.vals) - median(a.vals)));
+  const live = scored.filter((o) => !o.frozen);
+  const pool = live.length ? live : scored;
+  const dead = live.length ? scored.filter((o) => o.frozen).map((o) => o.source.index) : [];
+  const order = pool.slice().sort((a, b) => (lowerIsScreen ? median(a.vals) - median(b.vals) : median(b.vals) - median(a.vals)));
   const best = order[0];
-  const sure = order.length === viewCount && order.slice(1).every((o) => (lowerIsScreen ? above(o.vals, best.vals) : above(best.vals, o.vals)) >= SCREEN_CLEARLY);
-  return { best, sure };
+  const sure = scored.length === viewCount && order.slice(1).every((o) => (lowerIsScreen ? above(o.vals, best.vals) : above(best.vals, o.vals)) >= SCREEN_CLEARLY);
+  return { best, sure, dead };
 }
 
 // ---- the controller used by the player ----
@@ -11676,6 +11721,7 @@ class SlideAnalyzer {
     /** @type {Chapter[]} */
     this.chapters = [];
     this.uniform = [];       // stretches where the screen shows (almost) one colour
+    this.deadViews = [];     // source indexes of views that show the same picture throughout (viewFrozen)
     this.screenIndex = null;
     this.guessScreen = null;
     this.screenSure = true;     // false: the views did not differ clearly (the screen is a guess)
@@ -11744,6 +11790,7 @@ class SlideAnalyzer {
     if (hit) {
       cacheTouch(key);
       this.uniform = Array.isArray(cached.uniform) ? cached.uniform : [];
+      this.deadViews = Array.isArray(cached.dead) ? cached.dead.filter((i) => i !== cached.screen) : [];
       this.screenIndex = cached.screen;
       this.screenSure = cached.sure !== false;
       this.chapters = cached.chapters.map((c) => Object.assign({}, c, { thumb: c.blob ? this.thumbUrl(c.blob) : c.thumb }));
@@ -11763,6 +11810,7 @@ class SlideAnalyzer {
     if (!screen) { this.state = 'unavailable'; this.onChange(); return; }
     this.screenIndex = screen.source.index;
     this.screenSure = screen.sure;
+    this.deadViews = (screen.dead || []).filter((i) => i !== screen.source.index);
     this.onChange();
     await gate.wait(BG_START_DELAY_MS); // let playback start first
     if (screen.thumbs) this.fromThumbnails(screen.thumbs, signal, gate);
@@ -11843,12 +11891,14 @@ class SlideAnalyzer {
     const decide = (scored, lowerIsScreen) => {
       const r = pickScreen(scored, lowerIsScreen, sources.length);
       this.guessScreen = r.best.source.index;
-      return { source: r.best.source, thumbs: setOf(r.best.source), sure: r.sure, reader: r.best.reader || null };
+      return { source: r.best.source, thumbs: setOf(r.best.source), sure: r.sure, dead: r.dead, reader: r.best.reader || null };
     };
     if (HlsVideoReader.supported()) {
       const scored = [];
       for (const src of sources) {
         const vals = [];
+        const far = [];   // changed pixels between consecutive probes (viewFrozen)
+        let prev = null;
         let rd = null;
         try {
           rd = await new HlsVideoReader(src.v || src.av, 360).open(signal);
@@ -11862,9 +11912,11 @@ class SlideAnalyzer {
               await rd.keyframe(picks[q + 1], signal, (f) => { b = frameLuma(f); });
             } catch (e) { if (signal.aborted) throw e; continue; }
             vals.push(slightChange(a, b));
+            if (prev) far.push(thumbChange(prev, a, SAME_TEXT_MAX));
+            prev = a;
           }
         } catch (e) { if (signal.aborted) throw e; }
-        if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, reader: rd });
+        if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, frozen: viewFrozen(far), reader: rd });
       }
       if (scored.length) return decide(scored, true);
     }
@@ -11874,15 +11926,20 @@ class SlideAnalyzer {
       if (!set) continue;
       const ts = set.timesInSeconds;
       const vals = [];
+      const far = [];
+      let prev = null;
       for (let k = 0; k < SCREEN_PROBES; k++) {
         // One picture that cannot be read does not decide anything.
         let img = null;
         try { img = await this.loadThumb(set, ts[Math.floor(((k + 0.5) * ts.length) / SCREEN_PROBES)], signal); } catch (e) { if (signal.aborted) throw e; }
         if (!img) continue;
         vals.push(flatShare(img));
+        const luma = frameLuma(img);
+        if (prev) far.push(thumbChange(prev, luma, SAME_TEXT_MAX));
+        prev = luma;
         img.close();
       }
-      if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals });
+      if (vals.length >= SCREEN_PROBES / 2) scored.push({ source: src, vals, frozen: viewFrozen(far) });
     }
     return scored.length ? decide(scored, false) : null;
   }
@@ -12068,6 +12125,7 @@ class SlideAnalyzer {
       used: Date.now(),
       v: cacheVersion('slides'),
       uniform: this.uniform,
+      dead: this.deadViews,
       screen: this.screenIndex,
       sure: this.screenSure !== false,
       at: Date.now(),

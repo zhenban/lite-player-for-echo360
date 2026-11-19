@@ -16,7 +16,7 @@
 // ===================================================================================
 
 const CACHE_KINDS = {
-  slides: 4,          // chapters (2: screen view chosen per recording, tolerant scanning; 3: uniform stretches; 4: 160 x 90, learnt threshold)
+  slides: 5,          // chapters (2: screen view chosen per recording, tolerant scanning; 3: uniform stretches; 4: 160 x 90, learnt threshold; 5: frozen views never the screen, kept as dead)
   'silence-env': 1,   // audio level envelope
   ocr: 1,             // text read on screen
 };

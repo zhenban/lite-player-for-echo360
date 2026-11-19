@@ -12,6 +12,8 @@ New in the extension:
 
 For both the extension and the userscript:
 - Slide PDFs, watched records and saved positions unused for a year are deleted, so they don't fill the browser's storage. Tags stay.
+- A camera that shows the same picture all lecture (a failed camera's "no camera" picture) is no longer taken for the slides. It is hidden and the slides play alone, with Undo.
+- With a menu open (settings, speed), moving the mouse off the video, for example into the side panel, no longer hides the controls and the menu.
 
 ## 1.0.1
 - **The extension is in the Chrome Web Store** and is no longer marked beta: [Lite Player for Echo360](https://chromewebstore.google.com/detail/lite-player-for-echo360/bbcmnjnijjfpnngkkgoahjljibfackbh). It updates itself. If you loaded the zip by hand, remove that copy and install it from the store.
